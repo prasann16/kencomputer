@@ -164,6 +164,8 @@ async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
         CLAUDE_BIN, "-p", prompt,
         "--dangerously-skip-permissions",
         "--append-system-prompt", system,
+        # Don't boot the user's global MCP servers on every reply — big spawn cost.
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
     ]
     if current_model:
         cmd += ["--model", current_model]
@@ -239,9 +241,18 @@ async def apply_name_request(update: Update) -> None:
         log.warning("rename failed: %s", e)
 
 
+async def ack(update: Update) -> None:
+    """Instant feedback: react 👀 to the message before any work starts."""
+    try:
+        await update.effective_message.set_reaction("👀")
+    except Exception:
+        pass
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
+    await ack(update)
     await handle_prompt(update, update.effective_message.text)
 
 
@@ -252,6 +263,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     voice = msg.voice or msg.audio
     if voice is None:
         return
+    await ack(update)
     await update.effective_chat.send_action(ChatAction.TYPING)
     if _whisper is None:
         await msg.reply_text("🎙️ First voice note — warming up transcription (one-time, can take a minute)…")
