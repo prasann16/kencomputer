@@ -312,18 +312,9 @@ def apply_model_request() -> None:
         log.info("model switched to %s", want)
 
 
-async def ack(update: Update) -> None:
-    """Instant feedback: react 👀 to the message before any work starts."""
-    try:
-        await update.effective_message.set_reaction("👀")
-    except Exception:
-        pass
-
-
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    await ack(update)
     await handle_prompt(update, update.effective_message.text)
 
 
@@ -334,10 +325,12 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     voice = msg.voice or msg.audio
     if voice is None:
         return
-    await ack(update)
     await update.effective_chat.send_action(ChatAction.TYPING)
-    if _whisper is None:
-        await msg.reply_text("🎙️ First voice note — warming up transcription (one-time, can take a minute)…")
+    model_cached = (
+        Path.home() / ".cache" / "huggingface" / "hub" / f"models--Systran--faster-whisper-{WHISPER_MODEL}"
+    ).exists()
+    if _whisper is None and not model_cached:
+        await msg.reply_text("🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
     tg_file = await voice.get_file()
     with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
         path = f.name
@@ -413,6 +406,11 @@ def get_oauth_token() -> str:
     return ""
 
 
+async def startup(app=None) -> None:
+    asyncio.create_task(asyncio.to_thread(get_whisper))
+    await refresh_models_file()
+
+
 async def refresh_models_file(app=None) -> None:
     """Fetch the live model list with Claude Code's own auth; leave it on disk
     for the assistant to read when asked about switching."""
@@ -442,7 +440,6 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """No canned menu — /model is just a nudge into the conversation."""
     if not authorized(update):
         return
-    await ack(update)
     wish = " ".join(context.args) if context.args else ""
     await handle_prompt(
         update,
@@ -458,7 +455,7 @@ def main() -> None:
         Application.builder()
         .token(BOT_TOKEN)
         .concurrent_updates(True)
-        .post_init(refresh_models_file)
+        .post_init(startup)
         .build()
     )
     app.add_handler(CommandHandler("start", cmd_start))
