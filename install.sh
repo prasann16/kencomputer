@@ -110,10 +110,12 @@ if [ -f "$KEN_HOME/.env" ] && grep -q "^TELEGRAM_BOT_TOKEN=." "$KEN_HOME/.env"; 
 else
   say ""
   say "── Step 1 of 2: create your bot (1 minute) ──"
-  dim "  1. Open Telegram and message @BotFather"
+  dim "  1. In the Telegram chat with @BotFather (opening it for you…)"
   dim "  2. Send:  /newbot   — pick any name (e.g. Ken), any username"
   dim "  3. BotFather replies with a token like 123456:ABC-xyz…"
   say ""
+  if [ "$OS" = "Darwin" ]; then open "https://t.me/BotFather" 2>/dev/null || true
+  else xdg-open "https://t.me/BotFather" >/dev/null 2>&1 || true; fi
   while true; do
     ask "Paste your bot token:"
     BOT_TOKEN="$REPLY"
