@@ -406,8 +406,18 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def startup(app=None) -> None:
+async def startup(app) -> None:
     asyncio.create_task(asyncio.to_thread(get_whisper))
+    try:
+        await app.bot.set_my_commands([
+            ("awake", "Keep this computer from sleeping"),
+            ("sleep", "Let it sleep normally again"),
+            ("stop", "Kill the current task"),
+            ("new", "Fresh conversation (memory stays)"),
+            ("model", "See or switch the AI model"),
+        ])
+    except Exception as e:
+        log.warning("set_my_commands failed: %s", e)
     await refresh_models_file()
 
 
@@ -436,6 +446,30 @@ async def refresh_models_file(app=None) -> None:
         log.warning("model list refresh failed: %s", e)
 
 
+async def cmd_awake(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(update):
+        return
+    await handle_prompt(
+        update,
+        "(The human pressed /awake — they want this computer to stay awake. "
+        "Run `nohup caffeinate -di >/dev/null 2>&1 &` so it keeps running after this task ends, "
+        "verify it's running, and confirm briefly in your own words. Mention that a closed "
+        "laptop lid still sleeps the machine only if that's relevant to them.)",
+    )
+
+
+async def cmd_sleep(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(update):
+        return
+    await handle_prompt(
+        update,
+        "(The human pressed /sleep — return the computer to normal sleep behavior: "
+        "kill any caffeinate process (`pkill caffeinate`) and confirm briefly in your own "
+        "words. If from context they actually want the machine to go to sleep right now, "
+        "handle that conversationally — warn that you'll be unreachable until it wakes.)",
+    )
+
+
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """No canned menu — /model is just a nudge into the conversation."""
     if not authorized(update):
@@ -462,6 +496,8 @@ def main() -> None:
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CommandHandler("awake", cmd_awake))
+    app.add_handler(CommandHandler("sleep", cmd_sleep))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
     log.info("ken is polling")
