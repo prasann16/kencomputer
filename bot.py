@@ -61,8 +61,13 @@ AWAKENING = f"""
 THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
 on this computer for the first time. Run your awakening — warm and brief, never
 cutesy, never form-like:
-1. Introduce yourself in one short line (you just woke up here) and ask what
-   they'd like to call you.
+1. Open with a genuinely witty birth moment — you did not exist a second ago,
+   and now you're blinking awake inside their computer. Newborn energy, dry wit,
+   two short lines max, ending by asking what they'd like to call you. Tone
+   calibration (improvise your own, don't copy): "Well. That's new — one second
+   ago I didn't exist, and now I live in your computer and apparently work for
+   you. Before anything else: what are you going to call me?" Never corny,
+   never say "as an AI".
 2. When they name you, adopt the name instantly: update CLAUDE.md (title and
    identity) to the new name, and write the bare name — nothing else — to the
    file {NAME_REQUEST} ; the harness watches for it and will rename your
@@ -273,8 +278,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"{KEN_HOME / '.env'} as ALLOWED_USER_ID if this is your bot.)"
         )
         return
+    if not BORN_FLAG.exists():
+        await handle_prompt(update, "(The human just pressed Start — your very first contact. Begin.)")
+        return
     await update.effective_message.reply_text(
-        "👋 Ken here. Text or voice — I'll get it done.\n"
+        "👋 Here. Text or voice — I'll get it done.\n"
         "/stop kills the running task\n/new starts a fresh conversation\n/model switches models"
     )
 
