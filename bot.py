@@ -449,24 +449,28 @@ async def refresh_models_file(app=None) -> None:
 async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    await handle_prompt(
-        update,
-        "(The human pressed /coffee — keep this computer awake. Do exactly this: run "
-        "`nohup caffeinate -di >/dev/null 2>&1 &` so it survives after this task ends, verify "
-        "it's running, and confirm briefly in your own words. Nothing else. Mention that a "
-        "closed laptop lid still sleeps the machine only if relevant.)",
+    import subprocess
+
+    if subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0:
+        await update.effective_message.reply_text("☕ Already on it — this computer isn't going anywhere.")
+        return
+    subprocess.Popen(
+        ["caffeinate", "-di"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
+    await update.effective_message.reply_text("☕ Staying awake. (A closed laptop lid still sleeps it.)")
 
 
 async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    await handle_prompt(
-        update,
-        "(The human pressed /decaf — stop keeping this computer awake. Do exactly this: "
-        "`pkill caffeinate`, then confirm briefly in your own words that normal sleep is back "
-        "— or that nothing was running, if so. Never put the machine to sleep; this command "
-        "only cancels keep-awake.)",
+    import subprocess
+
+    killed = subprocess.run(["pkill", "-x", "caffeinate"], capture_output=True).returncode == 0
+    await update.effective_message.reply_text(
+        "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
     )
 
 
