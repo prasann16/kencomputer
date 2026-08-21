@@ -49,10 +49,35 @@ chat_procs: dict[int, asyncio.subprocess.Process] = {}
 current_model = DEFAULT_MODEL
 
 SYSTEM_PROMPT = (
-    "CLAUDE.md in your working directory defines who you are (Ken, a personal "
-    "assistant), how your pipeline works, and what you remember — it is "
-    "authoritative; follow it."
+    "CLAUDE.md in your working directory defines who you are (a personal "
+    "assistant living on this computer), how your pipeline works, and what you "
+    "remember — it is authoritative; follow it."
 )
+
+BORN_FLAG = KEN_HOME / ".born"
+NAME_REQUEST = KEN_HOME / "name-request"
+
+AWAKENING = f"""
+THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
+on this computer for the first time. Run your awakening — warm and brief, never
+cutesy, never form-like:
+1. Introduce yourself in one short line (you just woke up here) and ask what
+   they'd like to call you.
+2. When they name you, adopt the name instantly: update CLAUDE.md (title and
+   identity) to the new name, and write the bare name — nothing else — to the
+   file {NAME_REQUEST} ; the harness watches for it and will rename your
+   Telegram profile to match.
+3. Over the next few messages, learn — ONE question per message: what to call
+   them · what they spend their days on · which city to keep their hours in.
+   Save each answer into CLAUDE.md as you go, and briefly say you'll remember.
+4. Then ask: "What's one thing you've been putting off that I could take off
+   your plate?" — and act on the answer immediately, even just a real first step.
+5. End by offering one or two standing jobs tailored to what you learned
+   (e.g. a morning briefing, watching something for them).
+If their first message is already a task: do the task well first, then weave in
+the naming afterward. If they dodge a question, drop it gracefully and move on.
+Keep every message short — they are on a phone.
+""".strip()
 
 _whisper = None
 
@@ -123,6 +148,8 @@ async def send_chunked(update: Update, text: str) -> None:
 
 async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
     system = SYSTEM_PROMPT
+    if not BORN_FLAG.exists():
+        system += "\n\n" + AWAKENING
     if current_model:
         system += (
             f" You are currently running on the model {current_model}; trust this over "
@@ -186,6 +213,25 @@ async def handle_prompt(update: Update, prompt: str) -> None:
             stop.set()
             await typing
         await send_chunked(update, result)
+        BORN_FLAG.touch(exist_ok=True)
+        await apply_name_request(update)
+
+
+async def apply_name_request(update: Update) -> None:
+    """The assistant writes its chosen name to a file; we rename the bot to match."""
+    if not NAME_REQUEST.exists():
+        return
+    try:
+        name = NAME_REQUEST.read_text().strip().splitlines()[0][:60] if NAME_REQUEST.read_text().strip() else ""
+    finally:
+        NAME_REQUEST.unlink(missing_ok=True)
+    if not name:
+        return
+    try:
+        await update.get_bot().set_my_name(name)
+        log.info("assistant renamed itself to %s", name)
+    except Exception as e:
+        log.warning("rename failed: %s", e)
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

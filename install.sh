@@ -232,10 +232,10 @@ fi
 
 sleep 3
 say ""
-say "  ● Ken is alive."
+say "  ● It's alive."
 say ""
-dim "  Open Telegram and talk to your bot — text or voice notes."
-dim "  Try: \"what computer are you running on?\""
+dim "  Open Telegram — your assistant is waking up for the first time."
+dim "  Say hello. It has a question for you."
 dim ""
 dim "  Manage it:  ken status · ken logs · ken update · ken restart"
 dim "  Its memory: $KEN_HOME/work/CLAUDE.md  (or just tell it to remember things)"
