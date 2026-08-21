@@ -49,16 +49,22 @@ chat_has_session: dict[int, bool] = {}
 chat_procs: dict[int, asyncio.subprocess.Process] = {}
 current_model = DEFAULT_MODEL
 
+BORN_FLAG = KEN_HOME / ".born"
+BOTNAME_CACHE = KEN_HOME / ".botname"
+MODELS_FILE = KEN_HOME / "available-models.txt"
+MODEL_REQUEST = KEN_HOME / "model-request"
+
 SYSTEM_PROMPT = (
     "CLAUDE.md in your working directory defines who you are (a personal "
     "assistant living on this computer), how your pipeline works, and what you "
     "remember — it is authoritative; follow it. Your messages are delivered as "
     "you write them: before starting anything that takes a while, say one short "
-    "natural line about what you're about to do — then do it."
+    "natural line about what you're about to do — then do it. "
+    f"Your Telegram profile name automatically follows the '# You are <Name>' title of CLAUDE.md. "
+    f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
+    f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
+    "and confirm — the switch applies from the next task."
 )
-
-BORN_FLAG = KEN_HOME / ".born"
-NAME_REQUEST = KEN_HOME / "name-request"
 
 AWAKENING = f"""
 THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
@@ -71,10 +77,9 @@ cutesy, never form-like:
    ago I didn't exist, and now I live in your computer and apparently work for
    you. Before anything else: what are you going to call me?" Never corny,
    never say "as an AI".
-2. When they name you, adopt the name instantly: update CLAUDE.md (title and
-   identity) to the new name, and write the bare name — nothing else — to the
-   file {NAME_REQUEST} ; the harness watches for it and will rename your
-   Telegram profile to match.
+2. When they name you, adopt the name instantly: rewrite CLAUDE.md so its title
+   is exactly "# You are <YourNewName>" and update your identity throughout —
+   the harness reads that title and renames your Telegram profile to match.
 3. Over the next few messages, learn — ONE question per message: what to call
    them · what they spend their days on · which city to keep their hours in.
    Save each answer into CLAUDE.md as you go, and briefly say you'll remember.
@@ -269,24 +274,42 @@ async def handle_prompt(update: Update, prompt: str) -> None:
         if status:
             await send_chunked(update, status)
         BORN_FLAG.touch(exist_ok=True)
-        await apply_name_request(update)
+        await sync_identity(update)
+        apply_model_request()
 
 
-async def apply_name_request(update: Update) -> None:
-    """The assistant writes its chosen name to a file; we rename the bot to match."""
-    if not NAME_REQUEST.exists():
-        return
+async def sync_identity(update: Update) -> None:
+    """The soul file is the source of truth: if its '# You are <Name>' title
+    changed, rename the Telegram bot to match."""
     try:
-        name = NAME_REQUEST.read_text().strip().splitlines()[0][:60] if NAME_REQUEST.read_text().strip() else ""
-    finally:
-        NAME_REQUEST.unlink(missing_ok=True)
-    if not name:
+        title = (WORKSPACE / "CLAUDE.md").read_text().splitlines()[0]
+    except Exception:
+        return
+    m = re.match(r"#\s*You are\s+([^(\n]+)", title)
+    if not m:
+        return
+    name = m.group(1).strip().rstrip(",.")[:60]
+    known = BOTNAME_CACHE.read_text().strip() if BOTNAME_CACHE.exists() else ""
+    if not name or name == known:
         return
     try:
         await update.get_bot().set_my_name(name)
-        log.info("assistant renamed itself to %s", name)
+        BOTNAME_CACHE.write_text(name)
+        log.info("assistant is now named %s", name)
     except Exception as e:
-        log.warning("rename failed: %s", e)
+        log.warning("telegram rename failed: %s", e)
+
+
+def apply_model_request() -> None:
+    """The assistant writes a model id to MODEL_REQUEST when asked to switch."""
+    global current_model
+    if not MODEL_REQUEST.exists():
+        return
+    want = MODEL_REQUEST.read_text().strip().splitlines()[0].strip() if MODEL_REQUEST.read_text().strip() else ""
+    MODEL_REQUEST.unlink(missing_ok=True)
+    if want:
+        current_model = want
+        log.info("model switched to %s", want)
 
 
 async def ack(update: Update) -> None:
@@ -365,69 +388,79 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("Nothing is running.")
 
 
-_model_cache: tuple[float, list[str]] = (0.0, [])
+def get_oauth_token() -> str:
+    """Claude Code's own credentials: env var, credentials file, or macOS Keychain."""
+    tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if tok:
+        return tok
+    creds = Path.home() / ".claude" / ".credentials.json"
+    if creds.exists():
+        try:
+            return json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
+        except Exception:
+            pass
+    try:
+        import subprocess
 
-
-async def list_models() -> list[str]:
-    """Live model list for this account, cached for an hour."""
-    global _model_cache
-    ts, models = _model_cache
-    if models and time.time() - ts < 3600:
-        return models
-    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if not token:
-        return []
-    async with httpx.AsyncClient() as h:
-        r = await h.get(
-            "https://api.anthropic.com/v1/models",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "anthropic-beta": "oauth-2025-04-20",
-                "anthropic-version": "2023-06-01",
-            },
-            timeout=15,
+        out = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, text=True, timeout=5,
         )
-        r.raise_for_status()
-        models = [m["id"] for m in r.json()["data"]]
-    _model_cache = (time.time(), models)
-    return models
+        if out.returncode == 0:
+            return json.loads(out.stdout)["claudeAiOauth"]["accessToken"]
+    except Exception:
+        pass
+    return ""
+
+
+async def refresh_models_file(app=None) -> None:
+    """Fetch the live model list with Claude Code's own auth; leave it on disk
+    for the assistant to read when asked about switching."""
+    try:
+        token = await asyncio.to_thread(get_oauth_token)
+        if not token:
+            return
+        async with httpx.AsyncClient() as h:
+            r = await h.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                    "anthropic-version": "2023-06-01",
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            models = [m["id"] for m in r.json()["data"]]
+        MODELS_FILE.write_text("\n".join(models) + "\n")
+        log.info("refreshed model list (%d models)", len(models))
+    except Exception as e:
+        log.warning("model list refresh failed: %s", e)
 
 
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global current_model
+    """No canned menu — /model is just a nudge into the conversation."""
     if not authorized(update):
         return
-    try:
-        models = await list_models()
-    except Exception as e:
-        log.warning("model list fetch failed: %s", e)
-        models = []
-    if not context.args:
-        lines = [f"{'👉' if m == current_model else '  '} {m}" for m in models]
-        await update.effective_message.reply_text(
-            f"Current: {current_model or '(claude default)'}\n\n"
-            + ("\n".join(lines) if lines else "(model list unavailable — you can still switch)")
-            + "\n\nSwitch with /model <name> — partial names work (e.g. /model opus). /model default reverts."
-        )
-        return
-    want = context.args[0].lower()
-    if want == "default":
-        current_model = DEFAULT_MODEL
-        await update.effective_message.reply_text(f"🧠 Back to the default: {DEFAULT_MODEL or 'CLI choice'}.")
-        return
-    match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
-    if match is None and models:
-        await update.effective_message.reply_text(
-            f"No model matching “{want}”. Available:\n" + "\n".join(models)
-        )
-        return
-    current_model = match or context.args[0]
-    await update.effective_message.reply_text(f"🧠 Model set to {current_model} for new tasks.")
+    await ack(update)
+    wish = " ".join(context.args) if context.args else ""
+    await handle_prompt(
+        update,
+        f"(The human typed /model {wish} — they're asking about which Claude model you run on"
+        + (f", and want to switch to something matching '{wish}'" if wish else "")
+        + ". Handle it conversationally.)",
+    )
 
 
 def main() -> None:
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    app = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .post_init(refresh_models_file)
+        .build()
+    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CommandHandler("stop", cmd_stop))
