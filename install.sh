@@ -106,6 +106,12 @@ fi
 "$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
 ok "Python environment ready"
 
+if [ ! -d "$HOME/.cache/huggingface/hub/models--Systran--faster-whisper-small" ]; then
+  dim "  Fetching the voice-transcription model (one-time, ~460MB — hang tight)…"
+  "$KEN_HOME/venv/bin/python" -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" </dev/null >/dev/null 2>&1 || true
+fi
+ok "Voice transcription ready"
+
 # ---------- 4. telegram bot ----------
 if [ -f "$KEN_HOME/.env" ] && grep -q "^TELEGRAM_BOT_TOKEN=." "$KEN_HOME/.env"; then
   ok "Telegram already configured (delete ~/.ken/.env to redo)"

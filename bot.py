@@ -202,6 +202,8 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if voice is None:
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
+    if _whisper is None:
+        await msg.reply_text("🎙️ First voice note — warming up transcription (one-time, can take a minute)…")
     tg_file = await voice.get_file()
     with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
         path = f.name
