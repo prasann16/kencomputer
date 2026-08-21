@@ -159,11 +159,83 @@ async def send_chunked(update: Update, text: str) -> None:
             await update.effective_message.reply_text(chunk)
 
 
-async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
-    """Run Claude Code, streaming each assistant utterance to `deliver` as it happens.
+class WarmSession:
+    """A persistent Claude Code session (Agent SDK) — no per-message cold start."""
 
-    Returns an optional trailing status string (timeout/stop/error), or None.
-    """
+    def __init__(self) -> None:
+        self.client = None
+        self.model = ""
+        self.busy = False
+
+    async def ensure(self) -> None:
+        if self.client is not None:
+            return
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+        system = SYSTEM_PROMPT
+        if not BORN_FLAG.exists():
+            system += "\n\n" + AWAKENING
+        options = ClaudeAgentOptions(
+            system_prompt={"type": "preset", "preset": "claude_code", "append": system},
+            permission_mode="bypassPermissions",
+            cwd=str(WORKSPACE),
+            setting_sources=["project"],
+            model=current_model or None,
+        )
+        self.client = ClaudeSDKClient(options=options)
+        await self.client.connect()
+        self.model = current_model
+
+    async def dispose(self) -> None:
+        client, self.client = self.client, None
+        self.busy = False
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    async def ask(self, prompt: str, deliver) -> str | None:
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        await self.ensure()
+        if current_model != self.model:
+            await self.client.set_model(current_model or None)
+            self.model = current_model
+        self.busy = True
+        last_text = ""
+        sent_any = False
+        try:
+            await self.client.query(prompt)
+            async for msg in self.client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    text = "\n".join(
+                        b.text for b in msg.content if isinstance(b, TextBlock) and b.text
+                    ).strip()
+                    if text and text != last_text:
+                        last_text = text
+                        sent_any = True
+                        await deliver(text)
+                elif isinstance(msg, ResultMessage):
+                    result = (msg.result or "").strip()
+                    if result and result != last_text:
+                        await deliver(result)
+                        sent_any = True
+        finally:
+            self.busy = False
+        return None if sent_any else "(done — no output)"
+
+
+warm_sessions: dict[int, WarmSession] = {}
+
+
+def get_warm(chat_id: int) -> WarmSession:
+    return warm_sessions.setdefault(chat_id, WarmSession())
+
+
+async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
+    """Cold-spawn fallback: run Claude Code as a one-shot process, streaming
+    each assistant utterance to `deliver`. Used when the warm session fails."""
     system = SYSTEM_PROMPT
     if not BORN_FLAG.exists():
         system += "\n\n" + AWAKENING
@@ -266,7 +338,18 @@ async def handle_prompt(update: Update, prompt: str) -> None:
             async def deliver(text: str) -> None:
                 await send_chunked(update, text)
 
-            status = await run_claude(prompt, chat_has_session.get(chat_id, False), chat_id, deliver)
+            warm = get_warm(chat_id)
+            try:
+                status = await asyncio.wait_for(warm.ask(prompt, deliver), timeout=TASK_TIMEOUT)
+            except asyncio.TimeoutError:
+                await warm.dispose()
+                status = f"⏰ Task timed out after {TASK_TIMEOUT // 60} minutes."
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("warm session failed (%s) — cold fallback", e)
+                await warm.dispose()
+                status = await run_claude(prompt, chat_has_session.get(chat_id, False), chat_id, deliver)
             chat_has_session[chat_id] = True
         finally:
             stop.set()
@@ -366,14 +449,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    chat_has_session[update.effective_chat.id] = False
+    chat_id = update.effective_chat.id
+    chat_has_session[chat_id] = False
+    if chat_id in warm_sessions:
+        await warm_sessions.pop(chat_id).dispose()
     await update.effective_message.reply_text("🆕 Fresh conversation.")
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    proc = chat_procs.get(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+    warm = warm_sessions.get(chat_id)
+    if warm is not None and warm.busy and warm.client is not None:
+        try:
+            await warm.client.interrupt()
+            await update.effective_message.reply_text("🛑 Stopping the current task.")
+            return
+        except Exception:
+            await warm.dispose()
+            await update.effective_message.reply_text("🛑 Stopped.")
+            return
+    proc = chat_procs.get(chat_id)
     if proc is not None and proc.returncode is None:
         proc.kill()
         await update.effective_message.reply_text("🛑 Stopping the current task.")
