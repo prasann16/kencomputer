@@ -33,10 +33,33 @@ case "$OS" in
   Darwin|Linux) ok "OS: $OS" ;;
   *) fail "Unsupported OS: $OS (macOS and Linux only)" ;;
 esac
-command -v python3 >/dev/null || fail "python3 is required — install it and re-run"
 command -v git >/dev/null || fail "git is required — install it and re-run"
 command -v curl >/dev/null || fail "curl is required"
-ok "python3, git, curl found"
+
+# Find a Python >= 3.9 — people's default python3 is often ancient (conda, old distros).
+find_python() {
+  for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3 \
+           /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if command -v "$p" >/dev/null 2>&1; then
+      if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
+        command -v "$p"; return 0
+      fi
+    fi
+  done
+  return 1
+}
+PY="$(find_python || true)"
+if [ -n "$PY" ]; then
+  ok "Python found: $PY ($("$PY" -V 2>&1))"
+else
+  say "→ No modern Python found — installing a private one (via uv, no sudo needed)…"
+  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v uv >/dev/null || fail "couldn't install uv — install Python 3.10+ manually and re-run"
+  ok "uv installed (manages its own Python)"
+  PY="uv"
+fi
+ok "git, curl found"
 
 # ---------- 1. claude code ----------
 if command -v claude >/dev/null || [ -x "$HOME/.local/bin/claude" ]; then
@@ -60,8 +83,19 @@ else
 fi
 
 # ---------- 3. python env ----------
+# Rebuild the venv if it exists but was made with a too-old Python.
+if [ -d "$KEN_HOME/venv" ]; then
+  if ! "$KEN_HOME/venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
+    dim "  (rebuilding environment — previous one used an old Python)"
+    rm -rf "$KEN_HOME/venv"
+  fi
+fi
 if [ ! -d "$KEN_HOME/venv" ]; then
-  python3 -m venv "$KEN_HOME/venv"
+  if [ "$PY" = "uv" ]; then
+    uv venv --seed --python 3.12 "$KEN_HOME/venv" >/dev/null
+  else
+    "$PY" -m venv "$KEN_HOME/venv"
+  fi
 fi
 "$KEN_HOME/venv/bin/pip" install -q --upgrade pip
 "$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
