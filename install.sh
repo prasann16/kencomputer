@@ -23,6 +23,11 @@ tg() { curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/$1" "${@:2}"; }
 
 json_get() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1" 2>/dev/null; }
 
+# Everything lives inside main() so bash parses the whole script before running
+# any of it — otherwise, under `curl | bash`, any command that reads stdin
+# (claude, pip, …) can swallow the rest of the script mid-flight.
+main() {
+
 say ""
 say "  ken ●  — give your AI its own computer"
 dim "  ~2 minutes. You'll need: the Telegram app, and a Claude subscription."
@@ -126,12 +131,12 @@ else
   tg deleteWebhook >/dev/null || true
   say ""
   say "── Step 2 of 2: introduce yourself ──"
-  dim "  Open @$BOT_USER in Telegram and send it any message (a 👋 works)."
-  printf "  waiting" > /dev/tty
+  dim "  Open @$BOT_USER in Telegram — https://t.me/$BOT_USER — and send it"
+  dim "  any message (a 👋 works). Take your time; I'll wait up to 15 minutes."
+  printf "  waiting for your message to @%s " "$BOT_USER" > /dev/tty
   USER_ID=""; FIRST_NAME=""
-  OFFSET=0
-  for _ in $(seq 1 120); do
-    UPD="$(tg "getUpdates?timeout=2&offset=$OFFSET" || true)"
+  for _ in $(seq 1 450); do
+    UPD="$(tg "getUpdates?timeout=2" || true)"
     USER_ID="$(printf '%s' "$UPD" | json_get "d['result'][-1]['message']['from']['id']" || true)"
     FIRST_NAME="$(printf '%s' "$UPD" | json_get "d['result'][-1]['message']['from']['first_name']" || true)"
     [ -n "$USER_ID" ] && break
@@ -139,7 +144,12 @@ else
     sleep 2
   done
   printf "\n" > /dev/tty
-  [ -n "$USER_ID" ] || fail "Didn't see a message. Re-run the installer and message the bot when asked."
+  if [ -z "$USER_ID" ]; then
+    printf "\n  \033[31m✗ SETUP DID NOT FINISH — no message arrived.\033[0m\n" > /dev/tty
+    printf "  \033[31m  Re-run the installer and message the bot when asked:\033[0m\n" > /dev/tty
+    printf "  \033[31m  curl -fsSL kencomputer.dev/install | bash\033[0m\n\n" > /dev/tty
+    exit 1
+  fi
   ok "Hi ${FIRST_NAME:-there}! Locked to your Telegram account ($USER_ID)"
 fi
 
@@ -147,7 +157,7 @@ fi
 say ""
 say "── Connecting Claude ──"
 OAUTH_TOKEN=""
-if "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku >/dev/null 2>&1; then
+if "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
   ok "Claude is already signed in on this machine"
 else
   dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
@@ -224,3 +234,6 @@ dim ""
 dim "  Manage it:  ken status · ken logs · ken update · ken restart"
 dim "  Its memory: $KEN_HOME/work/CLAUDE.md  (or just tell it to remember things)"
 say ""
+
+}
+main
