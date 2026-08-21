@@ -7,6 +7,7 @@ is just plumbing. https://kencomputer.dev
 
 import asyncio
 import html
+import json
 import logging
 import os
 import re
@@ -51,7 +52,9 @@ current_model = DEFAULT_MODEL
 SYSTEM_PROMPT = (
     "CLAUDE.md in your working directory defines who you are (a personal "
     "assistant living on this computer), how your pipeline works, and what you "
-    "remember — it is authoritative; follow it."
+    "remember — it is authoritative; follow it. Your messages are delivered as "
+    "you write them: before starting anything that takes a while, say one short "
+    "natural line about what you're about to do — then do it."
 )
 
 BORN_FLAG = KEN_HOME / ".born"
@@ -151,7 +154,11 @@ async def send_chunked(update: Update, text: str) -> None:
             await update.effective_message.reply_text(chunk)
 
 
-async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
+async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
+    """Run Claude Code, streaming each assistant utterance to `deliver` as it happens.
+
+    Returns an optional trailing status string (timeout/stop/error), or None.
+    """
     system = SYSTEM_PROMPT
     if not BORN_FLAG.exists():
         system += "\n\n" + AWAKENING
@@ -160,12 +167,16 @@ async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
             f" You are currently running on the model {current_model}; trust this over "
             "your own guess about which model you are."
         )
+    # MCP: never boot the user's global dev servers (slow); ~/.ken/mcp.json is the
+    # deliberate way to grant this assistant MCP tools.
+    mcp_file = KEN_HOME / "mcp.json"
+    mcp_arg = str(mcp_file) if mcp_file.exists() else '{"mcpServers":{}}'
     cmd = [
         CLAUDE_BIN, "-p", prompt,
         "--dangerously-skip-permissions",
         "--append-system-prompt", system,
-        # Don't boot the user's global MCP servers on every reply — big spawn cost.
-        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config", "--mcp-config", mcp_arg,
+        "--output-format", "stream-json", "--verbose",
     ]
     if current_model:
         cmd += ["--model", current_model]
@@ -176,10 +187,40 @@ async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
         cwd=WORKSPACE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=2 ** 21,
     )
     chat_procs[chat_id] = proc
+    sent_any = False
+    last_text = ""
+    result_text = ""
+
+    async def read_stream() -> None:
+        nonlocal sent_any, last_text, result_text
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            try:
+                evt = json.loads(line)
+            except ValueError:
+                continue
+            if evt.get("type") == "assistant":
+                parts = [
+                    b.get("text", "")
+                    for b in evt.get("message", {}).get("content", [])
+                    if b.get("type") == "text"
+                ]
+                text = "\n".join(p for p in parts if p).strip()
+                if text and text != last_text:
+                    last_text = text
+                    sent_any = True
+                    await deliver(text)
+            elif evt.get("type") == "result":
+                result_text = (evt.get("result") or "").strip()
+        await proc.wait()
+
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TASK_TIMEOUT)
+        await asyncio.wait_for(read_stream(), timeout=TASK_TIMEOUT)
     except asyncio.TimeoutError:
         proc.kill()
         return f"⏰ Task timed out after {TASK_TIMEOUT // 60} minutes."
@@ -187,10 +228,13 @@ async def run_claude(prompt: str, continue_session: bool, chat_id: int) -> str:
         chat_procs.pop(chat_id, None)
     if proc.returncode and proc.returncode < 0:
         return "🛑 Task stopped."
-    out = stdout.decode(errors="replace").strip()
-    if proc.returncode != 0 and not out:
-        return f"❌ claude exited {proc.returncode}:\n{stderr.decode(errors='replace')[-1500:]}"
-    return out
+    if result_text and result_text != last_text:
+        await deliver(result_text)
+        sent_any = True
+    if not sent_any:
+        err = (await proc.stderr.read()).decode(errors="replace").strip()
+        return f"❌ claude exited {proc.returncode}:\n{err[-1500:]}" if err else "(done — no output)"
+    return None
 
 
 async def keep_typing(update: Update, stop: asyncio.Event) -> None:
@@ -214,12 +258,16 @@ async def handle_prompt(update: Update, prompt: str) -> None:
         stop = asyncio.Event()
         typing = asyncio.create_task(keep_typing(update, stop))
         try:
-            result = await run_claude(prompt, chat_has_session.get(chat_id, False), chat_id)
+            async def deliver(text: str) -> None:
+                await send_chunked(update, text)
+
+            status = await run_claude(prompt, chat_has_session.get(chat_id, False), chat_id, deliver)
             chat_has_session[chat_id] = True
         finally:
             stop.set()
             await typing
-        await send_chunked(update, result)
+        if status:
+            await send_chunked(update, status)
         BORN_FLAG.touch(exist_ok=True)
         await apply_name_request(update)
 
