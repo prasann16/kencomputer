@@ -1,0 +1,56 @@
+#!/bin/bash
+# ken — manage your Ken installation. https://kencomputer.dev
+set -euo pipefail
+KEN_HOME="${KEN_HOME:-$HOME/.ken}"
+OS="$(uname -s)"
+PLIST="$HOME/Library/LaunchAgents/dev.kencomputer.ken.plist"
+
+svc() {
+  if [ "$OS" = "Linux" ]; then systemctl --user "$1" ken
+  else
+    case "$1" in
+      start) launchctl load -w "$PLIST" ;;
+      stop) launchctl unload "$PLIST" ;;
+      restart) launchctl unload "$PLIST" 2>/dev/null || true; launchctl load -w "$PLIST" ;;
+      status) launchctl list | grep -q dev.kencomputer.ken && echo "● ken is running" || echo "○ ken is stopped" ;;
+    esac
+  fi
+}
+
+case "${1:-help}" in
+  start|stop|restart) svc "$1"; echo "done." ;;
+  status) svc status ;;
+  logs)
+    if [ "$OS" = "Linux" ]; then journalctl --user -u ken -n "${2:-50}" --no-pager
+    else tail -n "${2:-50}" "$KEN_HOME/logs/ken.log"; fi ;;
+  update)
+    echo "→ updating ken…"
+    git -C "$KEN_HOME/app" pull
+    "$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
+    cp "$KEN_HOME/app/ken" "$HOME/.local/bin/ken" 2>/dev/null || true
+    svc restart
+    echo "✓ updated and restarted." ;;
+  config) "${EDITOR:-nano}" "$KEN_HOME/.env" ;;
+  memory) "${EDITOR:-nano}" "$KEN_HOME/work/CLAUDE.md" ;;
+  uninstall)
+    read -r -p "Remove the ken service? Your memory & config in ~/.ken stay. [y/N] " a
+    [ "$a" = "y" ] || exit 0
+    svc stop 2>/dev/null || true
+    if [ "$OS" = "Linux" ]; then systemctl --user disable ken 2>/dev/null || true; rm -f "$HOME/.config/systemd/user/ken.service"
+    else rm -f "$PLIST"; fi
+    echo "✓ service removed. (rm -rf ~/.ken to delete everything)" ;;
+  help|*)
+    cat <<'EOF'
+ken — your AI's computer
+
+  ken status     is it running?
+  ken logs [n]   recent activity
+  ken update     pull the latest version and restart
+  ken restart    restart the service
+  ken start/stop
+  ken config     edit settings (.env)
+  ken memory     edit what Ken knows about you (CLAUDE.md)
+  ken uninstall  remove the service (keeps your data)
+EOF
+    ;;
+esac

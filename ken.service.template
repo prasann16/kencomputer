@@ -1,0 +1,14 @@
+[Unit]
+Description=Ken - your AI's computer
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{KEN_HOME}}/venv/bin/python {{KEN_HOME}}/app/bot.py
+Restart=always
+RestartSec=5
+Environment=KEN_HOME={{KEN_HOME}}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

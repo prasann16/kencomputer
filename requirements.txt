@@ -1,0 +1,4 @@
+python-telegram-bot>=21
+python-dotenv
+httpx
+faster-whisper
