@@ -31,7 +31,7 @@ case "${1:-help}" in
     svc restart
     echo "✓ updated and restarted." ;;
   config) "${EDITOR:-nano}" "$KEN_HOME/.env" ;;
-  memory) "${EDITOR:-nano}" "$KEN_HOME/work/CLAUDE.md" ;;
+  memory) "${EDITOR:-nano}" "$KEN_HOME/work/SOUL.md" ;;
   uninstall)
     read -r -p "Remove the ken service? Your memory & config in ~/.ken stay. [y/N] " a
     [ "$a" = "y" ] || exit 0
@@ -49,7 +49,7 @@ ken — your AI's computer
   ken restart    restart the service
   ken start/stop
   ken config     edit settings (.env)
-  ken memory     edit what Ken knows about you (CLAUDE.md)
+  ken memory     edit your assistant's soul file (identity + memory)
   ken uninstall  remove the service (keeps your data)
 EOF
     ;;

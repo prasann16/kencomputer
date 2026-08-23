@@ -193,8 +193,12 @@ TASK_TIMEOUT_SECONDS=1800
 EOF
 chmod 600 "$KEN_HOME/.env"
 
-if [ ! -f "$KEN_HOME/work/CLAUDE.md" ]; then
-  sed "s/{{NAME}}/${FIRST_NAME:-my human}/g" "$KEN_HOME/app/CLAUDE.template.md" > "$KEN_HOME/work/CLAUDE.md"
+# migrate older installs: CLAUDE.md -> SOUL.md
+if [ -f "$KEN_HOME/work/CLAUDE.md" ] && [ ! -f "$KEN_HOME/work/SOUL.md" ]; then
+  mv "$KEN_HOME/work/CLAUDE.md" "$KEN_HOME/work/SOUL.md"
+fi
+if [ ! -f "$KEN_HOME/work/SOUL.md" ]; then
+  sed "s/{{NAME}}/${FIRST_NAME:-my human}/g" "$KEN_HOME/app/SOUL.template.md" > "$KEN_HOME/work/SOUL.md"
 fi
 ok "Config and memory written to ~/.ken"
 
@@ -238,7 +242,7 @@ dim "  Open Telegram — your assistant is waking up for the first time."
 dim "  Say hello. It has a question for you."
 dim ""
 dim "  Manage it:  ken status · ken logs · ken update · ken restart"
-dim "  Its memory: $KEN_HOME/work/CLAUDE.md  (or just tell it to remember things)"
+dim "  Its soul: $KEN_HOME/work/SOUL.md  (or just tell it to remember things)"
 say ""
 
 }

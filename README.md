@@ -28,7 +28,7 @@ Then just talk to it.
 
 - **A real assistant on a real computer** — it runs Claude Code (Anthropic's own agent) with full access to its machine: installs tools, runs code, browses the web, manages projects, sets up its own cron jobs.
 - **Voice notes** — transcribed locally on your machine (never sent to a third party), then handled like text.
-- **Persistent memory** — Ken keeps notes on you, your projects, and your rules in `~/.ken/work/CLAUDE.md`. Tell it once — it knows tomorrow. It updates its own memory when you say "remember…".
+- **Persistent memory** — Ken keeps notes on you, your projects, and your rules in `~/.ken/work/SOUL.md` — its soul file. Tell it once — it knows tomorrow. It updates its own memory when you say "remember…".
 - **Model switching** — `/model opus`, `/model haiku`, `/model default`. Live list from your own account.
 - **Controls** — `/stop` kills the running task, `/new` starts a fresh conversation.
 

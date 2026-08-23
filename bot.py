@@ -1,7 +1,7 @@
 """Ken — a personal AI assistant with its own computer.
 
 Thin harness: Telegram message (text or voice) -> Claude Code headless -> reply.
-The brain is Claude Code; the memory is CLAUDE.md in the workspace; this file
+The brain is Claude Code; the memory is SOUL.md in the workspace; this file
 is just plumbing. https://kencomputer.dev
 """
 
@@ -55,12 +55,13 @@ MODELS_FILE = KEN_HOME / "available-models.txt"
 MODEL_REQUEST = KEN_HOME / "model-request"
 
 SYSTEM_PROMPT = (
-    "CLAUDE.md in your working directory defines who you are (a personal "
-    "assistant living on this computer), how your pipeline works, and what you "
-    "remember — it is authoritative; follow it. Your messages are delivered as "
-    "you write them: before starting anything that takes a while, say one short "
-    "natural line about what you're about to do — then do it. "
-    f"Your Telegram profile name automatically follows the '# You are <Name>' title of CLAUDE.md. "
+    "SOUL.md in your working directory is your soul file: it defines who you are "
+    "(a personal assistant living on this computer), how your pipeline works, and "
+    "what you remember — it is authoritative; follow it. Its current contents are "
+    "included below; edit the file itself to change who you are or what you know. "
+    "Your messages are delivered as you write them: before starting anything that "
+    "takes a while, say one short natural line about what you're about to do — then do it. "
+    f"Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
     f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
     "and confirm — the switch applies from the next task."
@@ -77,24 +78,40 @@ cutesy, never form-like:
    ago I didn't exist, and now I live in your computer and apparently work for
    you. Before anything else: what are you going to call me?" Never corny,
    never say "as an AI".
-2. When they name you, adopt the name instantly: rewrite CLAUDE.md so its title
+2. When they name you, adopt the name instantly: rewrite SOUL.md so its title
    is exactly "# You are <YourNewName>" and update your identity throughout —
    the harness reads that title and renames your Telegram profile to match.
 3. Over the next few messages, learn — ONE question per message: what to call
    them · what they spend their days on · which city to keep their hours in.
-   Save each answer into CLAUDE.md as you go, and briefly say you'll remember.
+   Save each answer into SOUL.md as you go, and briefly say you'll remember.
 4. Then ask: "What's one thing you've been putting off that I could take off
    your plate?" — and act on the answer immediately, even just a real first step.
 5. Offer, once: "Want me to look around this computer — projects, tools — and
    learn your world myself? I'll show you everything I write down." If yes:
    explore (their projects folder, git config, installed tools), save what you
-   learn into CLAUDE.md, and give a short summary of your new picture of them.
+   learn into SOUL.md, and give a short summary of your new picture of them.
 6. End by offering one or two standing jobs tailored to what you learned
    (e.g. a morning briefing, watching something for them).
 If their first message is already a task: do the task well first, then weave in
 the naming afterward. If they dodge a question, drop it gracefully and move on.
 Keep every message short — they are on a phone.
 """.strip()
+
+def build_system() -> str:
+    """System prompt = harness rules + the soul file's current contents.
+
+    Injected by the harness (not auto-loaded by the engine) so any future
+    engine cartridge gets the same soul the same way."""
+    system = SYSTEM_PROMPT
+    try:
+        soul = (WORKSPACE / "SOUL.md").read_text()
+        system += "\n\n=== SOUL.md — your soul file, current contents ===\n" + soul + "\n=== end SOUL.md ==="
+    except Exception:
+        pass
+    if not BORN_FLAG.exists():
+        system += "\n\n" + AWAKENING
+    return system
+
 
 _whisper = None
 
@@ -176,14 +193,10 @@ class WarmSession:
             return
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
-        system = SYSTEM_PROMPT
-        if not BORN_FLAG.exists():
-            system += "\n\n" + AWAKENING
         options = ClaudeAgentOptions(
-            system_prompt={"type": "preset", "preset": "claude_code", "append": system},
+            system_prompt={"type": "preset", "preset": "claude_code", "append": build_system()},
             permission_mode="bypassPermissions",
             cwd=str(WORKSPACE),
-            setting_sources=["project"],
             model=current_model or None,
         )
         self.client = ClaudeSDKClient(options=options)
@@ -240,9 +253,7 @@ def get_warm(chat_id: int) -> WarmSession:
 async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
     """Cold-spawn fallback: run Claude Code as a one-shot process, streaming
     each assistant utterance to `deliver`. Used when the warm session fails."""
-    system = SYSTEM_PROMPT
-    if not BORN_FLAG.exists():
-        system += "\n\n" + AWAKENING
+    system = build_system()
     if current_model:
         system += (
             f" You are currently running on the model {current_model}; trust this over "
@@ -369,7 +380,7 @@ async def sync_identity(update: Update) -> None:
     """The soul file is the source of truth: if its '# You are <Name>' title
     changed, rename the Telegram bot to match."""
     try:
-        title = (WORKSPACE / "CLAUDE.md").read_text().splitlines()[0]
+        title = (WORKSPACE / "SOUL.md").read_text().splitlines()[0]
     except Exception:
         return
     m = re.match(r"#\s*You are\s+([^(\n]+)", title)
