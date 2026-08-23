@@ -54,6 +54,45 @@ BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
 MODELS_FILE = KEN_HOME / "available-models.txt"
 MODEL_REQUEST = KEN_HOME / "model-request"
+HISTORY_DIR = KEN_HOME / "history"
+SESSIONS_FILE = KEN_HOME / ".sessions.json"
+
+
+def log_history(role: str, text: str) -> None:
+    """Harness-owned raw transcript: boring, bulletproof, engine-neutral."""
+    try:
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        day = time.strftime("%Y-%m-%d")
+        with open(HISTORY_DIR / f"{day}.md", "a") as f:
+            f.write(f"\n**{time.strftime('%H:%M')} {role}:**\n{text}\n")
+    except Exception as e:
+        log.warning("history write failed: %s", e)
+
+
+def load_sessions() -> dict:
+    try:
+        return json.loads(SESSIONS_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_session_id(chat_id: int, sid: str) -> None:
+    try:
+        d = load_sessions()
+        if sid and d.get(str(chat_id)) != sid:
+            d[str(chat_id)] = sid
+            SESSIONS_FILE.write_text(json.dumps(d))
+    except Exception:
+        pass
+
+
+def clear_session_id(chat_id: int) -> None:
+    try:
+        d = load_sessions()
+        if d.pop(str(chat_id), None) is not None:
+            SESSIONS_FILE.write_text(json.dumps(d))
+    except Exception:
+        pass
 
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: it defines who you are "
@@ -65,7 +104,13 @@ SYSTEM_PROMPT = (
     f"Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
     f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
-    "and confirm — the switch applies from the next task."
+    "and confirm — the switch applies from the next task. "
+    f"YOUR MEMORY SYSTEM, three layers: (1) full transcripts of every conversation are "
+    f"kept automatically by the harness in {HISTORY_DIR}/<date>.md — the receipts; "
+    "(2) journal.md in your workspace is your own diary — when a thread ends you append "
+    "a 2–3 line summary there; (3) SOUL.md is your essence, the only layer always loaded. "
+    "When asked about past conversations: skim journal.md first, then open the right "
+    "history file for exact details."
 )
 
 AWAKENING = f"""
@@ -184,14 +229,13 @@ async def send_chunked(update: Update, text: str) -> None:
 class WarmSession:
     """A persistent Claude Code session (Agent SDK) — no per-message cold start."""
 
-    def __init__(self) -> None:
+    def __init__(self, chat_id: int) -> None:
+        self.chat_id = chat_id
         self.client = None
         self.model = ""
         self.busy = False
 
-    async def ensure(self) -> None:
-        if self.client is not None:
-            return
+    async def _connect(self, resume: str | None) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
         options = ClaudeAgentOptions(
@@ -199,10 +243,28 @@ class WarmSession:
             permission_mode="bypassPermissions",
             cwd=str(WORKSPACE),
             model=current_model or None,
+            resume=resume,
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
         self.model = current_model
+
+    async def ensure(self) -> None:
+        if self.client is not None:
+            return
+        resume = load_sessions().get(str(self.chat_id))
+        try:
+            await self._connect(resume)
+            if resume:
+                log.info("resumed session %s for chat %s", resume, self.chat_id)
+        except Exception as e:
+            self.client = None
+            if resume:
+                log.warning("resume failed (%s) — starting fresh", e)
+                clear_session_id(self.chat_id)
+                await self._connect(None)
+            else:
+                raise
 
     async def dispose(self) -> None:
         client, self.client = self.client, None
@@ -235,6 +297,8 @@ class WarmSession:
                         sent_any = True
                         await deliver(text)
                 elif isinstance(msg, ResultMessage):
+                    if msg.session_id:
+                        save_session_id(self.chat_id, msg.session_id)
                     result = (msg.result or "").strip()
                     if result and result != last_text:
                         await deliver(result)
@@ -248,7 +312,7 @@ warm_sessions: dict[int, WarmSession] = {}
 
 
 def get_warm(chat_id: int) -> WarmSession:
-    return warm_sessions.setdefault(chat_id, WarmSession())
+    return warm_sessions.setdefault(chat_id, WarmSession(chat_id))
 
 
 async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
@@ -347,11 +411,14 @@ async def handle_prompt(update: Update, prompt: str) -> None:
     lock = chat_locks.setdefault(chat_id, asyncio.Lock())
     if lock.locked():
         await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
+    if not prompt.startswith("("):
+        log_history("you", prompt)
     async with lock:
         stop = asyncio.Event()
         typing = asyncio.create_task(keep_typing(update, stop))
         try:
             async def deliver(text: str) -> None:
+                log_history("assistant", text)
                 await send_chunked(update, text)
 
             warm = get_warm(chat_id)
@@ -467,8 +534,27 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     chat_id = update.effective_chat.id
     chat_has_session[chat_id] = False
-    if chat_id in warm_sessions:
-        await warm_sessions.pop(chat_id).dispose()
+    warm = warm_sessions.pop(chat_id, None)
+    if warm is not None:
+        if warm.client is not None and not warm.busy:
+            try:
+                async def silent(_text: str) -> None:
+                    pass
+
+                await asyncio.wait_for(
+                    warm.ask(
+                        "(This thread is ending. Append a 2–3 line dated summary of this "
+                        "conversation — topics, decisions, anything worth finding later — to "
+                        "journal.md in your workspace (create it if needed). Output nothing "
+                        "else; your reply will not be shown.)",
+                        silent,
+                    ),
+                    timeout=90,
+                )
+            except Exception as e:
+                log.warning("journal-on-new failed: %s", e)
+        await warm.dispose()
+    clear_session_id(chat_id)
     await update.effective_message.reply_text("🆕 Fresh conversation.")
 
 
