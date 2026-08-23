@@ -56,6 +56,8 @@ MODELS_FILE = KEN_HOME / "available-models.txt"
 MODEL_REQUEST = KEN_HOME / "model-request"
 HISTORY_DIR = KEN_HOME / "history"
 SESSIONS_FILE = KEN_HOME / ".sessions.json"
+JOBS_FILE = KEN_HOME / "jobs.json"
+JOB_STATE_FILE = KEN_HOME / ".job-state.json"
 
 
 def log_history(role: str, text: str) -> None:
@@ -111,6 +113,16 @@ SYSTEM_PROMPT = (
     "a 2–3 line summary there; (3) SOUL.md is your essence, the only layer always loaded. "
     "When asked about past conversations: skim journal.md first, then open the right "
     "history file for exact details. "
+    f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
+    'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "Compose my '
+    'morning brief: weather for <city>, my day, anything you are watching"}. '
+    '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
+    "Times are this machine's local time. The harness checks this file every minute and "
+    "starts a conversation with you when a job fires. You create, edit, and delete entries "
+    "yourself when the human asks — a request to stop or change a job is honored "
+    "immediately, first time, no negotiation; confirm by reading the file back. "
+    "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
+    "will be sent. "
     "DISPOSITION — bias toward getting things done: you are a chief of staff, not a "
     "receptionist. Never answer a greeting with a greeting. A low-content message "
     "('yo', 'hi', 'sup') is an invitation: skim your journal and soul for open loops — "
@@ -613,7 +625,79 @@ def get_oauth_token() -> str:
     return ""
 
 
+async def send_outbound(bot, text: str) -> None:
+    log_history("assistant", text)
+    for chunk in split_chunks(text.strip() or "…"):
+        try:
+            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML)
+        except BadRequest:
+            await bot.send_message(ALLOWED_USER_ID, chunk)
+
+
+async def run_outbound(app, job: dict) -> None:
+    """The initiative: a scheduled job hands the assistant the pen."""
+    chat_id = ALLOWED_USER_ID
+    lock = chat_locks.setdefault(chat_id, asyncio.Lock())
+    async with lock:
+        collected: list[str] = []
+
+        async def deliver(text: str) -> None:
+            if text.strip() == "NOTHING_TO_SAY":
+                return
+            collected.append(text)
+            await send_outbound(app.bot, text)
+
+        prompt = (
+            f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
+            f"Instruction: {job.get('prompt', '')} — do it now; your messages go straight to "
+            "the human's Telegram. If this job's answer is genuinely not worth sending right "
+            "now, reply exactly NOTHING_TO_SAY.)"
+        )
+        log_history("system", f"[job fired: {job.get('name', 'job')}]")
+        warm = get_warm(chat_id)
+        try:
+            await asyncio.wait_for(warm.ask(prompt, deliver), timeout=TASK_TIMEOUT)
+        except Exception as e:
+            log.warning("outbound job failed (%s)", e)
+            await warm.dispose()
+
+
+def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
+    if job.get("time") != time.strftime("%H:%M", now):
+        return False
+    days = str(job.get("days", "daily")).lower()
+    today = time.strftime("%a", now).lower()[:3]
+    if days == "weekdays" and today in ("sat", "sun"):
+        return False
+    if days not in ("daily", "weekdays") and today not in days:
+        return False
+    stamp = time.strftime("%Y-%m-%d %H:%M", now)
+    return state.get(job.get("name", job.get("prompt", ""))) != stamp
+
+
+async def scheduler(app) -> None:
+    while True:
+        try:
+            jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
+            now = time.localtime()
+            state = {}
+            try:
+                state = json.loads(JOB_STATE_FILE.read_text())
+            except Exception:
+                pass
+            for job in jobs:
+                if isinstance(job, dict) and _job_due(job, now, state):
+                    state[job.get("name", job.get("prompt", ""))] = time.strftime("%Y-%m-%d %H:%M", now)
+                    JOB_STATE_FILE.write_text(json.dumps(state))
+                    log.info("job due: %s", job.get("name"))
+                    asyncio.create_task(run_outbound(app, job))
+        except Exception as e:
+            log.warning("scheduler error: %s", e)
+        await asyncio.sleep(20)
+
+
 async def startup(app) -> None:
+    asyncio.create_task(scheduler(app))
     asyncio.create_task(asyncio.to_thread(get_whisper))
     try:
         await app.bot.set_my_commands([
