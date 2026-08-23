@@ -17,11 +17,12 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -586,17 +587,54 @@ async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def available_models() -> list[str]:
+    try:
+        return [m.strip() for m in MODELS_FILE.read_text().splitlines() if m.strip()]
+    except Exception:
+        return []
+
+
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """No canned menu — /model is just a nudge into the conversation."""
+    """Native picker, like Claude Code's /model: tap a model, it switches."""
+    global current_model
     if not authorized(update):
         return
-    wish = " ".join(context.args) if context.args else ""
-    await handle_prompt(
-        update,
-        f"(The human typed /model {wish} — they're asking about which Claude model you run on"
-        + (f", and want to switch to something matching '{wish}'" if wish else "")
-        + ". Handle it conversationally.)",
+    models = available_models()
+    if not models:
+        await refresh_models_file()
+        models = available_models()
+    if context.args:  # fast path: /model opus
+        want = context.args[0].lower()
+        match = next((m for m in models if m == want), None) or next(
+            (m for m in models if want in m), None
+        )
+        if match:
+            current_model = match
+            await update.effective_message.reply_text(f"✓ {match} — from the next task.")
+        else:
+            await update.effective_message.reply_text(f"No model matching “{want}”.")
+        return
+    keyboard = [
+        [InlineKeyboardButton(("👉 " if m == current_model else "") + m, callback_data=f"model:{m}")]
+        for m in models
+    ]
+    await update.effective_message.reply_text(
+        f"Model — current: {current_model or 'default'}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global current_model
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    current_model = q.data.split(":", 1)[1]
+    await q.answer(f"Switched to {current_model}")
+    try:
+        await q.edit_message_text(f"✓ {current_model} — from the next task.")
+    except Exception:
+        pass
 
 
 def main() -> None:
@@ -612,6 +650,7 @@ def main() -> None:
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
     app.add_handler(CommandHandler("coffee", cmd_coffee))
     app.add_handler(CommandHandler("decaf", cmd_decaf))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
