@@ -537,6 +537,7 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     warm = warm_sessions.pop(chat_id, None)
     if warm is not None:
         if warm.client is not None and not warm.busy:
+            await update.effective_message.reply_text("📓 Saving notes from this conversation…")
             try:
                 async def silent(_text: str) -> None:
                     pass
