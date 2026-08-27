@@ -58,6 +58,47 @@ HISTORY_DIR = KEN_HOME / "history"
 SESSIONS_FILE = KEN_HOME / ".sessions.json"
 JOBS_FILE = KEN_HOME / "jobs.json"
 JOB_STATE_FILE = KEN_HOME / ".job-state.json"
+OUTBOX_DIR = KEN_HOME / "outbox"
+TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
+PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+async def flush_outbox(bot, chat_id: int) -> None:
+    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat."""
+    try:
+        if not OUTBOX_DIR.exists():
+            return
+        for path in sorted(OUTBOX_DIR.iterdir()):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            try:
+                size = path.stat().st_size
+                if size == 0:
+                    path.unlink(missing_ok=True)
+                    continue
+                if size > TELEGRAM_FILE_LIMIT:
+                    await bot.send_message(
+                        chat_id,
+                        f"📁 {path.name} is too big to send ({size // (1024 * 1024)}MB). "
+                        f"It's on the machine at {path}",
+                    )
+                    continue
+                with open(path, "rb") as fh:
+                    if path.suffix.lower() in PHOTO_SUFFIXES:
+                        await bot.send_photo(chat_id, fh, caption=path.name)
+                    else:
+                        await bot.send_document(chat_id, fh, filename=path.name)
+                log_history("assistant", f"[sent file: {path.name}]")
+                path.unlink(missing_ok=True)
+            except Exception as e:
+                log.warning("failed sending %s: %s", path.name, e)
+                try:
+                    await bot.send_message(chat_id, f"📁 Couldn't send {path.name}: {e}")
+                except Exception:
+                    pass
+                path.unlink(missing_ok=True)
+    except Exception as e:
+        log.warning("outbox flush failed: %s", e)
 
 
 def _current_rev() -> str:
@@ -129,6 +170,11 @@ SYSTEM_PROMPT = (
     "When asked about past conversations: skim journal.md first, then open the right "
     "history file for exact details. Both already exist and are written for you — never "
     "offer to build memory you already have; go read it. "
+    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
+    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
+    "delivered to their Telegram automatically and removed from the outbox; images arrive "
+    "as photos, everything else as documents. Copy, don't move, if the original matters. "
+    "Say what you're sending in your reply — the file arrives right after it. "
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
@@ -461,6 +507,7 @@ async def handle_prompt(update: Update, prompt: str) -> None:
             async def deliver(text: str) -> None:
                 log_history("assistant", text)
                 await send_chunked(update, text)
+                await flush_outbox(update.get_bot(), chat_id)
 
             warm = get_warm(chat_id)
             try:
@@ -480,6 +527,7 @@ async def handle_prompt(update: Update, prompt: str) -> None:
             await typing
         if status:
             await send_chunked(update, status)
+        await flush_outbox(update.get_bot(), chat_id)
         BORN_FLAG.touch(exist_ok=True)
         await sync_identity(update)
         apply_model_request()
@@ -708,6 +756,7 @@ async def run_outbound(app, job: dict) -> None:
                 return
             collected.append(text)
             await send_outbound(app.bot, text)
+            await flush_outbox(app.bot, chat_id)
 
         prompt = (
             f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
