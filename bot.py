@@ -60,6 +60,21 @@ JOBS_FILE = KEN_HOME / "jobs.json"
 JOB_STATE_FILE = KEN_HOME / ".job-state.json"
 
 
+def _current_rev() -> str:
+    try:
+        import subprocess
+
+        return subprocess.run(
+            ["git", "-C", str(KEN_HOME / "app"), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        return ""
+
+
+RUNNING_REV = _current_rev()
+
+
 def log_history(role: str, text: str) -> None:
     """Harness-owned raw transcript: boring, bulletproof, engine-neutral."""
     try:
@@ -485,6 +500,46 @@ async def sync_identity(update: Update) -> None:
         log.warning("telegram rename failed: %s", e)
 
 
+async def self_update(app) -> None:
+    """Pull-based updates: check the repo hourly, restart into the new version.
+
+    The service manager (systemd/launchd) restarts us, so exiting is the update.
+    Never interrupts a task in flight."""
+    if os.environ.get("KEN_NO_AUTOUPDATE"):
+        return
+    app_dir = KEN_HOME / "app"
+    await asyncio.sleep(300)  # settle after boot
+    while True:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(app_dir), "pull", "--ff-only", "-q",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            head = await asyncio.create_subprocess_exec(
+                "git", "-C", str(app_dir), "rev-parse", "HEAD",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await head.communicate()
+            new_rev = out.decode().strip()
+            if new_rev and new_rev != RUNNING_REV:
+                if any(w.busy for w in warm_sessions.values()):
+                    log.info("update available but a task is running — waiting")
+                else:
+                    log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
+                    pip = KEN_HOME / "venv" / "bin" / "pip"
+                    if pip.exists():
+                        p = await asyncio.create_subprocess_exec(
+                            str(pip), "install", "-q", "-r", str(app_dir / "requirements.txt"),
+                            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        await p.communicate()
+                    os._exit(0)  # service manager restarts us into the new code
+        except Exception as e:
+            log.warning("self-update check failed: %s", e)
+        await asyncio.sleep(3600)
+
+
 def apply_model_request() -> None:
     """The assistant writes a model id to MODEL_REQUEST when asked to switch."""
     global current_model
@@ -698,6 +753,7 @@ async def scheduler(app) -> None:
 
 async def startup(app) -> None:
     asyncio.create_task(scheduler(app))
+    asyncio.create_task(self_update(app))
     asyncio.create_task(asyncio.to_thread(get_whisper))
     try:
         await app.bot.set_my_commands([
