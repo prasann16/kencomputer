@@ -39,7 +39,13 @@ only they can read. Then ask for it, and never repeat it back.
 
 ## Step 3 — store it
 
-Write `~/.ken/credentials/email` as a small JSON file: address, imap host and port
+One file per mailbox: `~/.ken/credentials/email-<label>`, where the label is whatever they
+call that account — `personal`, `work`, `newsletter`. Record in `SOUL.md` which accounts
+exist and which is the default, so later recipes and conversations can rely on it. Someone
+with one mailbox just has one file; someone who adds a second next year doesn't need to be
+told how.
+
+Each file is a small JSON blob: address, imap host and port
 (993, SSL), smtp host and port (465 SSL or 587 STARTTLS), and the app password.
 `chmod 700` the folder, `chmod 600` the file. Never echo the password into the chat, into
 history, or into any file outside that folder.
