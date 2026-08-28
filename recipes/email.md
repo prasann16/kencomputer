@@ -32,8 +32,10 @@ tell them exactly what to click:
 - **Work/other** — their admin or provider docs; some disable IMAP entirely, in which case
   say so plainly rather than guessing.
 
-Tell them to paste it in the chat, and that you'll store it on this machine and never
-repeat it back.
+Before they paste, say plainly what it is — most people have never made one and will
+hesitate, reasonably: it only works for mail, it can be revoked in one click from that
+same page, it is not their account password, and it lives in a file on this machine that
+only they can read. Then ask for it, and never repeat it back.
 
 ## Step 3 — store it
 
