@@ -21,7 +21,18 @@ ask()  { # ask "prompt" -> $REPLY  (reads from the terminal even under curl|bash
 
 tg() { curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/$1" "${@:2}"; }
 
-json_get() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1" 2>/dev/null; }
+# Pull one field out of a Telegram API response. Plain lookups, no eval.
+bot_username() {
+  python3 -c "import json,sys; print(json.load(sys.stdin)['result']['username'])" 2>/dev/null
+}
+last_sender() { # $1: "id" or "first_name"
+  python3 -c "
+import json, sys
+updates = json.load(sys.stdin)['result']
+messages = [u['message'] for u in updates if 'message' in u]
+print(messages[-1]['from'][sys.argv[1]]) if messages else sys.exit(1)
+" "$1" 2>/dev/null
+}
 
 # Everything lives inside main() so bash parses the whole script before running
 # any of it — otherwise, under `curl | bash`, any command that reads stdin
@@ -129,7 +140,7 @@ else
     ask "Paste your bot token:"
     BOT_TOKEN="$REPLY"
     BOT_INFO="$(tg getMe || true)"
-    BOT_USER="$(printf '%s' "$BOT_INFO" | json_get "d['result']['username']" || true)"
+    BOT_USER="$(printf '%s' "$BOT_INFO" | bot_username || true)"
     if [ -n "${BOT_USER:-}" ]; then ok "Connected to @$BOT_USER"; break; fi
     printf "  \033[31mThat token didn't work — try again.\033[0m\n" > /dev/tty
   done
@@ -143,8 +154,8 @@ else
   USER_ID=""; FIRST_NAME=""
   for _ in $(seq 1 450); do
     UPD="$(tg "getUpdates?timeout=2" || true)"
-    USER_ID="$(printf '%s' "$UPD" | json_get "d['result'][-1]['message']['from']['id']" || true)"
-    FIRST_NAME="$(printf '%s' "$UPD" | json_get "d['result'][-1]['message']['from']['first_name']" || true)"
+    USER_ID="$(printf '%s' "$UPD" | last_sender id || true)"
+    FIRST_NAME="$(printf '%s' "$UPD" | last_sender first_name || true)"
     [ -n "$USER_ID" ] && break
     printf "." > /dev/tty
     sleep 2
