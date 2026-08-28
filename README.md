@@ -54,6 +54,8 @@ ken uninstall  remove the service (keeps your data)
 - Ken runs Claude Code with `--dangerously-skip-permissions` in its workspace — that's what makes it *able to do things*. Run it on a machine you're comfortable giving it. A cheap dedicated VPS is the sweet spot: full power, blast radius of one.
 - Only your Telegram user ID gets answered; everyone else is ignored.
 - Your credentials live in `~/.ken/.env` (chmod 600) on your machine — nowhere else.
+- Everything Ken remembers is plaintext on your disk: `SOUL.md`, its journal, and full conversation transcripts in `~/.ken/history/`. Readable and deletable by you at any time — and not encrypted at rest, so treat that machine like the personal computer it is.
+- What it can and can't reach: it runs as your user, so it can do what you can do in a terminal — but it has no admin rights unless you grant them, and on macOS the system keeps background processes out of Desktop, Documents, Downloads, Photos, Calendar and Contacts until you explicitly allow it in Privacy & Security.
 - Nothing listens on any port. The bot polls Telegram outbound; there is no inbound surface.
 - The entire harness is [one Python file](bot.py) — read it over coffee.
 
