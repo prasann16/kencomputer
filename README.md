@@ -32,6 +32,17 @@ Then just talk to it.
 - **Model switching** — `/model opus`, `/model haiku`, `/model default`. Live list from your own account.
 - **Controls** — `/stop` kills the running task, `/new` starts a fresh conversation.
 
+## Connecting things
+
+Ken connects to services by following **recipes** — markdown playbooks it reads and acts on
+([recipes/](recipes/)). Say "connect my email" and it walks you through it in the chat:
+direct links for the bits only you can do, credentials stored on your machine at
+`~/.ken/credentials/` (chmod 600), a verification step so you know it worked.
+
+No plugin system, no marketplace: if a service has a CLI, an API, or an MCP server, Ken can
+use it — recipes just mean it doesn't have to figure out the fiddly sign-in dance twice.
+Wrote one? PRs welcome.
+
 ## Manage it
 
 ```
