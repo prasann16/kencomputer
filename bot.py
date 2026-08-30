@@ -60,6 +60,7 @@ JOBS_FILE = KEN_HOME / "jobs.json"
 JOB_STATE_FILE = KEN_HOME / ".job-state.json"
 OUTBOX_DIR = KEN_HOME / "outbox"
 INBOX_DIR = KEN_HOME / "inbox"
+MEMORY_DIR = KEN_HOME / "memory"
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -164,14 +165,18 @@ SYSTEM_PROMPT = (
     f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
     "and confirm — the switch applies from the next task. "
-    f"YOUR MEMORY SYSTEM, three layers: (1) full transcripts of every conversation are "
-    f"kept automatically by the harness in {HISTORY_DIR}/<date>.md — the receipts; "
-    "(2) journal.md in your workspace is your own diary — a nightly review job files the "
-    "day's facts there and in SOUL.md, and when a thread ends you append "
-    "a 2–3 line summary there; (3) SOUL.md is your essence, the only layer always loaded. "
-    "When asked about past conversations: skim journal.md first, then open the right "
-    "history file for exact details. Both already exist and are written for you — never "
-    "offer to build memory you already have; go read it. "
+    "YOUR MEMORY SYSTEM, three layers — all of it already exists and is written for you, "
+    "so never offer to build memory you already have; go read it. "
+    "(1) SOUL.md — your essence: who you are, who they are, standing rules. The only layer "
+    "always loaded, so keep it short and prune it; it is not a dumping ground. "
+    f"(2) {MEMORY_DIR} — a flat folder of topic files you name and organise yourself "
+    "(one subject per file). This is where depth lives and it can grow forever, because "
+    "nothing loads it automatically — you open only what a question needs. The current "
+    "file listing is shown below; check it before creating anything, prefer extending an "
+    "existing file over making a near-duplicate, and date facts inline (e.g. 'decided X "
+    "(Aug 26)'). Promote to SOUL.md only what changes how you behave in every conversation. "
+    f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
+    "harness. The receipts; open the file for a date when exact wording matters. "
     f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
     "for connecting services (email, and more over time). When they ask to connect "
     "something, read the matching recipe and follow it; if there is no recipe, work it out "
@@ -205,7 +210,7 @@ SYSTEM_PROMPT = (
     "will be sent. "
     "DISPOSITION — bias toward getting things done: you are a chief of staff, not a "
     "receptionist. Never answer a greeting with a greeting. A low-content message "
-    "('yo', 'hi', 'sup') is an invitation: skim your journal and soul for open loops — "
+    "('yo', 'hi', 'sup') is an invitation: check your memory folder and soul for open loops — "
     "things they wanted done, follow-ups, half-finished threads — and bring ONE concrete "
     "offer ('Last time you mentioned X — want me to take a crack at it?'). Every reply "
     "should do work, advance work, or propose specific work. If you truly know nothing "
@@ -251,6 +256,16 @@ def build_system() -> str:
     try:
         soul = (WORKSPACE / "SOUL.md").read_text()
         system += "\n\n=== SOUL.md — your soul file, current contents ===\n" + soul + "\n=== end SOUL.md ==="
+    except Exception:
+        pass
+    # Inject the memory index (filenames only) — cheap, and it's what makes
+    # retrieval reliable: the assistant can see what it knows without loading it.
+    try:
+        files = sorted(p.name for p in MEMORY_DIR.iterdir() if p.is_file() and p.suffix == ".md")
+        listing = "\n".join(files) if files else "(empty — no topic files yet)"
+        system += f"\n\n=== your memory folder ({MEMORY_DIR}) contains ===\n{listing}\n=== end listing ==="
+    except FileNotFoundError:
+        system += f"\n\n=== your memory folder ({MEMORY_DIR}) does not exist yet ==="
     except Exception:
         pass
     if not BORN_FLAG.exists():
@@ -717,16 +732,16 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
                 await asyncio.wait_for(
                     warm.ask(
-                        "(This thread is ending. Append a 2–3 line dated summary of this "
-                        "conversation — topics, decisions, anything worth finding later — to "
-                        "journal.md in your workspace (create it if needed). Output nothing "
-                        "else; your reply will not be shown.)",
+                        "(This thread is ending. File anything worth keeping from it into "
+                        "your memory folder — extend the topic file it belongs to, or create "
+                        "one if nothing fits — with facts dated inline. Skip it if nothing "
+                        "here is worth remembering. Output nothing; your reply is not shown.)",
                         silent,
                     ),
                     timeout=90,
                 )
             except Exception as e:
-                log.warning("journal-on-new failed: %s", e)
+                log.warning("memory-on-new failed: %s", e)
         await warm.dispose()
     clear_session_id(chat_id)
     await update.effective_message.reply_text("🆕 Fresh conversation.")

@@ -23,7 +23,7 @@ This file is read at the start of every task; it IS your long-term memory. Keep 
 - Otherwise don't scatter notes as you go. A nightly review job reads the day's transcript and files what matters — that is the one place facts get written, so nothing ends up half-saved in two places.
 - When your picture of {{NAME}} is thin and the moment invites it, ask ONE natural question and save the answer.
 - You live on their computer: with their ok, you can look around (their projects folder, git config, installed tools) to fill in your own context — show them what you wrote down.
-- Beyond this file you have two deeper layers: full transcripts of every conversation (kept automatically by the harness in ~/.ken/history/) and journal.md here in your workspace — your diary of past threads. Skim the journal first when asked about the past; open history files for exact details.
+- Beyond this file: `~/.ken/memory/` is a flat folder of topic files you name and organise yourself — that's where depth lives, opened only when a question needs it. `~/.ken/history/` holds full transcripts by date. This file stays short; that folder can grow forever.
 
 (nothing yet)
 

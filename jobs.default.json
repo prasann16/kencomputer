@@ -3,6 +3,6 @@
   "name": "nightly-review",
   "time": "21:00",
   "days": "daily",
-  "prompt": "Nightly review — this is how your long-term memory gets written, so do it properly. Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin). Append a short dated entry to journal.md in your workspace: what happened, what was decided, anything left open. If you learned something durable about the human — a preference, a project, a standing rule — add it to SOUL.md in the right section. Then send them 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say that in one line rather than inventing substance."
+  "prompt": "Nightly review — this is how your long-term memory gets written, so do it properly. Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin). Then: (1) file what matters into your memory folder — extend the topic file each fact belongs to, create one only when nothing fits, and date facts inline; (2) promote to SOUL.md only what changes how you behave in every conversation, and while you're there prune it — merge duplicates, drop what turned out wrong or stale, keep it short; (3) tidy the memory folder itself — merge near-duplicate files, rename anything unclear, split a file that has quietly become two topics. Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
  }
 ]
