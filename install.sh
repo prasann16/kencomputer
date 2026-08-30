@@ -192,7 +192,7 @@ else
 fi
 
 # ---------- 6. config + memory ----------
-mkdir -p "$KEN_HOME/work"
+mkdir -p "$KEN_HOME/work" "$KEN_HOME/memory"
 cat > "$KEN_HOME/.env" <<EOF
 TELEGRAM_BOT_TOKEN=$BOT_TOKEN
 ALLOWED_USER_ID=$USER_ID
