@@ -1,0 +1,8 @@
+[
+ {
+  "name": "nightly-review",
+  "time": "21:00",
+  "days": "daily",
+  "prompt": "Nightly review — this is how your long-term memory gets written, so do it properly. Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin). Append a short dated entry to journal.md in your workspace: what happened, what was decided, anything left open. If you learned something durable about the human — a preference, a project, a standing rule — add it to SOUL.md in the right section. Then send them 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say that in one line rather than inventing substance."
+ }
+]

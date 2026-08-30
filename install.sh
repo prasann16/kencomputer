@@ -211,6 +211,11 @@ fi
 if [ ! -f "$KEN_HOME/work/SOUL.md" ]; then
   sed "s/{{NAME}}/${FIRST_NAME:-my human}/g" "$KEN_HOME/app/SOUL.template.md" > "$KEN_HOME/work/SOUL.md"
 fi
+
+# Standing jobs: every install gets the nightly memory review.
+if [ ! -f "$KEN_HOME/jobs.json" ]; then
+  cp "$KEN_HOME/app/jobs.default.json" "$KEN_HOME/jobs.json"
+fi
 ok "Config and memory written to ~/.ken"
 
 # ---------- 7. ken CLI ----------
