@@ -236,7 +236,13 @@ if [ "$OS" = "Linux" ]; then
     systemctl --user daemon-reload
     systemctl --user enable --now ken >/dev/null 2>&1
     loginctl enable-linger "$USER" >/dev/null 2>&1 || true
-    ok "Running as a systemd service (survives reboots)"
+    if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = "yes" ]; then
+      ok "Running as a systemd service (survives reboots)"
+    else
+      ok "Running as a systemd service"
+      dim "  Couldn't enable lingering, so ken stops when you log out and won't restart on reboot."
+      dim "  Fix once with: sudo loginctl enable-linger $USER"
+    fi
   else
     fail "systemd not found — start manually: ken start"
   fi
