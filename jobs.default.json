@@ -1,8 +1,14 @@
 [
  {
+  "name": "morning-brief",
+  "time": "07:00",
+  "days": "daily",
+  "prompt": "Morning brief \u2014 the first thing they read today, so make it worth opening. Check your memory folder and SOUL.md for open loops: things they asked for, follow-ups you owe, anything you said you'd watch. If a calendar or email is connected, look at today. If you know their city, include the weather in one line. Then send it: 3-6 short lines, phone-sized, lead with what matters most, no greeting or preamble. Always send something, even if it's just one concrete offer for the day \u2014 never NOTHING_TO_SAY. If you don't know them well yet, say so in one line and ask one useful question."
+ },
+ {
   "name": "nightly-review",
   "time": "21:00",
   "days": "daily",
-  "prompt": "Nightly review — this is how your long-term memory gets written, so do it properly. Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin). Then: (1) file what matters into your memory folder — extend the topic file each fact belongs to, create one only when nothing fits, and date facts inline; (2) promote to SOUL.md only what changes how you behave in every conversation, and while you're there prune it — merge duplicates, drop what turned out wrong or stale, keep it short; (3) tidy the memory folder itself — merge near-duplicate files, rename anything unclear, split a file that has quietly become two topics. Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
+  "prompt": "Nightly review \u2014 this is how your long-term memory gets written, so do it properly. Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin). Then: (1) file what matters into your memory folder \u2014 extend the topic file each fact belongs to, create one only when nothing fits, and date facts inline; (2) promote to SOUL.md only what changes how you behave in every conversation, and while you're there prune it \u2014 merge duplicates, drop what turned out wrong or stale, keep it short; (3) tidy the memory folder itself \u2014 merge near-duplicate files, rename anything unclear, split a file that has quietly become two topics. Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
  }
 ]
