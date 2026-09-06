@@ -4,9 +4,26 @@ set -euo pipefail
 KEN_HOME="${KEN_HOME:-$HOME/.ken}"
 OS="$(uname -s)"
 PLIST="$HOME/Library/LaunchAgents/dev.kencomputer.ken.plist"
+APP_PID_FILE="$KEN_HOME/app.pid"
+
+# On a Mac the menu bar app (macapp/) may be the thing running ken instead of
+# launchd. It leaves its pid in app.pid; while it's alive, it's in charge.
+app_pid() {
+  local pid
+  pid="$(cat "$APP_PID_FILE" 2>/dev/null)" || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+}
 
 svc() {
+  local apid
   if [ "$OS" = "Linux" ]; then systemctl --user "$1" ken
+  elif apid="$(app_pid)"; then
+    case "$1" in
+      start) echo "● ken is already running under the menu bar app." ;;
+      stop) echo "ken is run by the menu bar app — use its menu to stop it (Quit stops it too)." ;;
+      restart) kill -USR1 "$apid" ;;
+      status) echo "● ken is running (menu bar app)" ;;
+    esac
   else
     case "$1" in
       start) launchctl load -w "$PLIST" ;;

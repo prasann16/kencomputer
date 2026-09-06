@@ -55,6 +55,13 @@ ken config     edit settings
 ken uninstall  remove the service (keeps your data)
 ```
 
+### Mac menu bar app
+
+Prefer a dot in the menu bar to a terminal? [macapp/](macapp/) is a small native app that
+runs the same Ken and shows whether it's alive, with Restart, Update, Logs, Memory and
+Start-at-Login in its menu. Build it with `cd macapp && ./build.sh`; a downloadable build is
+coming.
+
 ## Requirements
 
 - macOS or Linux, `python3` (3.9+), `git`
