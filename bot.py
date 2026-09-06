@@ -287,8 +287,18 @@ def get_whisper():
 
 
 def transcribe(path: str) -> str:
-    segments, _info = get_whisper().transcribe(path, vad_filter=True)
-    return " ".join(s.text.strip() for s in segments).strip()
+    # No VAD. Silero drops quiet speech wholesale: a -52 dBFS note lost 39 of its
+    # 57 seconds before Whisper ever saw it, and lowering the threshold measured
+    # worse, not better. Whisper handles silence fine on its own.
+    segments, info = get_whisper().transcribe(path, vad_filter=False)
+    segments = list(segments)
+    text = " ".join(s.text.strip() for s in segments).strip()
+    speech = sum(s.end - s.start for s in segments)
+    log.info(
+        "transcribed %.1fs audio -> %d segments, %.1fs speech, %d chars",
+        info.duration, len(segments), speech, len(text),
+    )
+    return text
 
 
 def authorized(update: Update) -> bool:
