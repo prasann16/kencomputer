@@ -893,7 +893,7 @@ def coffee() -> str:
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     _coffee = subprocess.Popen(
-        ["caffeinate", "-i"],  # the Mac stays awake; the display can still sleep and lock
+        ["caffeinate", "-ims"],  # system, idle and disk stay awake; the display can still sleep and lock
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
