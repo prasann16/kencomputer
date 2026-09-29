@@ -1,5 +1,5 @@
 // Ken: one conversation, with tools and settings available when needed.
-import { html, render, useState, useEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
+import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -461,29 +461,42 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
   const timeline = [
-    ...messages.map((m) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), el: html`<${Message} m=${m}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
+    ...messages.map((m) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
-  const last = timeline[timeline.length - 1];
-  useEffect(() => {
-    if (thread.current && following.current) thread.current.scrollTop = thread.current.scrollHeight;
-  }, [messages.length, messages[messages.length-1]?.text, last && last.key, stream, busy, approvals.length, runs.length]);
+  // Opening a chat shows the latest messages. After you send, your question moves to the
+  // top and Ken's answer grows below it; the view never chases the end of a long answer.
+  const pin = useRef(null), spacer = useRef(null);
+  const lastMine = () => [...timeline].reverse().find((item) => item.mine)?.key;
+  const pinNext = () => { pin.current = { after: lastMine() }; };
+  useLayoutEffect(() => {
+    const box = thread.current;
+    if (!box) return;
+    if (pin.current && !pin.current.key && lastMine() !== pin.current.after) pin.current = { key: lastMine() };
+    const el = pin.current?.key && box.querySelector(`[data-key="${CSS.escape(pin.current.key)}"]`);
+    if (!el) { if (following.current) box.scrollTop = box.scrollHeight; return; }
+    const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16;
+    const below = spacer.current.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    spacer.current.style.height = Math.max(0, box.clientHeight - below - 56) + 'px';
+    if (!pin.current.placed) { pin.current.placed = true; box.scrollTo({ top, behavior: 'smooth' }); }
+  });
   return html`<section class="conversation-body" aria-label="Conversation"
 >
     <div class="scroll" ref=${thread} onScroll=${() => { const el = thread.current; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       <div class="thread conversation-thread">
         ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'Hey, I’m Ken. Your assistant.'}</p><p>${project ? 'Tell me what you’d like to work on.' : clearedAt ? 'A fresh thread. What would you like to work on?' : 'Tell me what you do for work and what you’d like off your plate.'}</p>${voice && !project && !clearedAt && html`<button class="text-action voice-invite" onClick=${() => setRecordRequest((n) => n + 1)}>${Icon.mic} Record a voice note</button><p class="welcome-hint">Or just type below.</p>`}</div>`}
-        ${timeline.map((item) => html`<div key=${item.key}>${item.el}</div>`)}
+        ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
         ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
+        <div ref=${spacer} aria-hidden="true"></div>
       </div>
     </div>
     <div class="chat-bottom">
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} recordRequest=${recordRequest} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
-        onVoice=${(...args)=>{following.current=true;onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
-        onSend=${async (text, files) => { following.current = true; await onSend(text, files); }}/>
+        onVoice=${(...args)=>{pinNext();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
+        onSend=${async (text, files) => { pinNext(); await onSend(text, files); }}/>
     </div>
     ${dragging && html`<div class="dropzone">Drop files into your message</div>`}
   </section>`;
