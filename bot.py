@@ -863,31 +863,58 @@ async def refresh_models_file(app=None) -> None:
 # Commands shared by Telegram and the desktop chat: plain functions that return
 # the reply text (and, for /model with no argument, the choices to show).
 
-def is_awake() -> bool:
+# Ken tracks only the caffeinate it started, so other apps' keep-awake is never
+# mistaken for Ken's or stopped by /decaf. The pid file survives Ken restarting.
+AWAKE_PID = KEN_HOME / ".caffeinate.pid"
+_coffee = None
+
+
+def _coffee_pid() -> int | None:
     import subprocess
 
-    return subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0
+    if _coffee is not None:
+        return _coffee.pid if _coffee.poll() is None else None
+    try:
+        pid = int(AWAKE_PID.read_text())
+    except (OSError, ValueError):
+        return None
+    name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return pid if name.endswith("caffeinate") else None
+
+
+def is_awake() -> bool:
+    return _coffee_pid() is not None
 
 
 def coffee() -> str:
     import subprocess
 
+    global _coffee
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
-    subprocess.Popen(
+    _coffee = subprocess.Popen(
         ["caffeinate", "-di"],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    AWAKE_PID.write_text(str(_coffee.pid))
     return "☕ Staying awake. (A closed laptop lid still sleeps it.)"
 
 
 def decaf() -> str:
-    import subprocess
+    import signal
 
-    killed = subprocess.run(["pkill", "-x", "caffeinate"], capture_output=True).returncode == 0
-    return "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
+    global _coffee
+    pid = _coffee_pid()
+    AWAKE_PID.unlink(missing_ok=True)
+    if pid is None:
+        return "Nothing was keeping it awake."
+    os.kill(pid, signal.SIGTERM)
+    if _coffee is not None:
+        _coffee.wait()
+    _coffee = None
+    return "🫖 Decaf — normal sleep is back."
 
 
 def set_model(name: str) -> None:
