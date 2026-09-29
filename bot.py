@@ -50,9 +50,10 @@ TELEGRAM_MAX = 4000
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ken")
 
-current_model = DEFAULT_MODEL
+MODEL_CHOICE = KEN_HOME / "model"  # the model picked in the app or Telegram; survives restarts
+current_model = (MODEL_CHOICE.read_text().strip() if MODEL_CHOICE.exists() else "") or DEFAULT_MODEL
 KEN_HOME.mkdir(parents=True, exist_ok=True)
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: current_model))
+ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model()))
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
@@ -508,13 +509,12 @@ async def self_update(app) -> None:
 
 def apply_model_request() -> None:
     """The assistant writes a model id to MODEL_REQUEST when asked to switch."""
-    global current_model
     if not MODEL_REQUEST.exists():
         return
     want = MODEL_REQUEST.read_text().strip().splitlines()[0].strip() if MODEL_REQUEST.read_text().strip() else ""
     MODEL_REQUEST.unlink(missing_ok=True)
     if want:
-        current_model = want
+        set_model(want)
         log.info("model switched to %s", want)
 
 
@@ -890,6 +890,17 @@ def decaf() -> str:
     return "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
 
 
+def set_model(name: str) -> None:
+    global current_model
+    current_model = name
+    MODEL_CHOICE.write_text(name + "\n")
+
+
+def active_model() -> str:
+    """The chosen model, else the newest Opus the account offers (the list is newest first)."""
+    return current_model or next((m for m in available_models() if "opus" in m), "")
+
+
 def available_models() -> list[str]:
     try:
         return [m.strip() for m in MODELS_FILE.read_text().splitlines() if m.strip()]
@@ -899,7 +910,6 @@ def available_models() -> list[str]:
 
 async def model(arg: str = "") -> dict:
     """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
-    global current_model
     # The list comes from the account's own /v1/models; refresh it daily as models change.
     stale = not MODELS_FILE.exists() or time.time() - MODELS_FILE.stat().st_mtime > 86400
     if stale or not available_models():
@@ -907,11 +917,11 @@ async def model(arg: str = "") -> dict:
     models = available_models()
     want = arg.strip().lower()
     if not want:
-        return {"reply": f"Model — current: {current_model or 'default'}", "choices": models, "current": current_model}
+        return {"reply": f"Model — current: {active_model() or 'default'}", "choices": models, "current": active_model()}
     match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
     if not match:
         return {"reply": f"No model matching “{want}”."}
-    current_model = match
+    set_model(match)
     return {"reply": f"✓ {match} — from the next task."}
 
 
@@ -931,7 +941,7 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     result = await model(" ".join(context.args or []))
     keyboard = [
-        [InlineKeyboardButton(("👉 " if m == current_model else "") + m, callback_data=f"model:{m}")]
+        [InlineKeyboardButton(("👉 " if m == active_model() else "") + m, callback_data=f"model:{m}")]
         for m in result.get("choices", [])
     ]
     await update.effective_message.reply_text(
@@ -940,11 +950,10 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global current_model
     q = update.callback_query
     if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
         return
-    current_model = q.data.split(":", 1)[1]
+    set_model(q.data.split(":", 1)[1])
     await q.answer(f"Switched to {current_model}")
     try:
         await q.edit_message_text(f"✓ {current_model} — from the next task.")
