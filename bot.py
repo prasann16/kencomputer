@@ -5,6 +5,8 @@ The brain is Claude Code; the memory is SOUL.md in the workspace; this file
 is just plumbing. https://kencomputer.dev
 """
 
+from __future__ import annotations
+
 import asyncio
 import html
 import json
