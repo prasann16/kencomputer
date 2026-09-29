@@ -893,13 +893,13 @@ def coffee() -> str:
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     _coffee = subprocess.Popen(
-        ["caffeinate", "-di"],
+        ["caffeinate", "-i"],  # the Mac stays awake; the display can still sleep and lock
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     AWAKE_PID.write_text(str(_coffee.pid))
-    return "☕ Staying awake. (A closed laptop lid still sleeps it.)"
+    return "☕ Staying awake. Lock your screen anytime; a closed laptop lid still sleeps it."
 
 
 def decaf() -> str:
