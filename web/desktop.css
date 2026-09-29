@@ -52,7 +52,6 @@ body{-webkit-font-smoothing:auto;letter-spacing:normal}.chat-header{height:64px;
 .voice-note audio{display:none}
 @keyframes voice-pulse{50%{opacity:.35}}
 @media(prefers-reduced-motion:reduce){.voice-pending{animation:none}.voice-play:active{transform:none}}
-.model-select{-webkit-app-region:no-drag;height:30px;max-width:190px;padding:0 8px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#444;font:inherit;font-size:13px;cursor:pointer}
 .ken-status{display:inline-flex;align-items:center;gap:6px;margin-left:6px;font-size:12px;font-weight:400;color:#9a9a9a;-webkit-app-region:no-drag}.ken-status i{width:6px;height:6px;border-radius:50%;background:#c9c9c9;animation:ken-breathe 1.6s ease-in-out infinite}.ken-status .text-action{font-size:12px}
 @keyframes ken-breathe{50%{opacity:.35}}
 @media(prefers-reduced-motion:reduce){.ken-status i{animation:none}}
@@ -61,3 +60,5 @@ body{-webkit-font-smoothing:auto;letter-spacing:normal}.chat-header{height:64px;
 @keyframes ken-steam{0%,100%{opacity:.35;transform:translateY(.6px)}50%{opacity:1;transform:translateY(-.6px)}}
 @media(prefers-reduced-motion:reduce){.coffee.on .steam{animation:none}}
 .tip{position:fixed;z-index:1000;max-width:260px;padding:10px 12px;border-radius:10px;background:#1f1f1f;color:#f2f2f2;font-size:12.5px;line-height:1.45;box-shadow:0 6px 20px rgba(0,0,0,.18);pointer-events:none}
+.model-select{-webkit-app-region:no-drag;appearance:none;-webkit-appearance:none;height:32px;padding:0 26px 0 10px;border:0;border-radius:8px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4l2.5 2.5L7.5 4'/%3E%3C/svg%3E") no-repeat right 10px center;color:#555;font:inherit;font-size:13px;cursor:pointer}.model-select:hover{background-color:#f4f4f3;color:#333}.model-select:focus-visible{outline:2px solid #bbb;outline-offset:1px}
+.chat-header .clear-button{height:32px;padding:0 10px;border:0;border-radius:8px;background:none;color:#555}.chat-header .clear-button:hover{background:#f4f4f3;color:#333}.chat-header .header-actions{gap:4px}

@@ -848,6 +848,7 @@ async def refresh_models_file(app=None) -> None:
         async with httpx.AsyncClient() as h:
             r = await h.get(
                 "https://api.anthropic.com/v1/models",
+                params={"limit": 1000},
                 headers=headers,
                 timeout=15,
             )
@@ -899,10 +900,11 @@ def available_models() -> list[str]:
 async def model(arg: str = "") -> dict:
     """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
     global current_model
-    models = available_models()
-    if not models:
+    # The list comes from the account's own /v1/models; refresh it daily as models change.
+    stale = not MODELS_FILE.exists() or time.time() - MODELS_FILE.stat().st_mtime > 86400
+    if stale or not available_models():
         await refresh_models_file()
-        models = available_models()
+    models = available_models()
     want = arg.strip().lower()
     if not want:
         return {"reply": f"Model — current: {current_model or 'default'}", "choices": models, "current": current_model}
