@@ -266,8 +266,17 @@ function Message({ m }) {
     ${content}</div></div>`;
 }
 
+// Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
+function useSmooth(text) {
+  const [shown, setShown] = useState(0), target = useRef(text);
+  target.current = text;
+  useEffect(() => { let frame; const tick = () => { setShown((n) => { const t = target.current.length; return n > t ? 0 : n + Math.ceil((t - n) / 6); }); frame = requestAnimationFrame(tick); }; frame = requestAnimationFrame(tick); return () => cancelAnimationFrame(frame); }, []);
+  return text.slice(0, shown);
+}
+
 function Live({ stream, activity }) {
-  if (stream) return html`<div class="msg"><div class="txt live">${md(stream)}</div></div>`;
+  const text = useSmooth(stream || '');
+  if (stream) return html`<div class="msg"><div class="txt live">${md(text)}</div></div>`;
   return html`<div class="typing" role="status"><span class="pulse"></span><span class="ellipsis">${activity || 'Thinking…'}</span></div>`;
 }
 
@@ -451,7 +460,7 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
       <div class="thread conversation-thread">
         ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'Hey, I’m Ken. Your assistant.'}</p><p>${project ? 'Tell me what you’d like to work on.' : clearedAt ? 'A fresh thread. What would you like to work on?' : 'Tell me what you do for work and what you’d like off your plate.'}</p>${voice && !project && !clearedAt && html`<button class="text-action voice-invite" onClick=${() => setRecordRequest((n) => n + 1)}>${Icon.mic} Record a voice note</button><p class="welcome-hint">Or just type below.</p>`}</div>`}
         ${timeline.map((item) => html`<div key=${item.key}>${item.el}</div>`)}
-        ${busy && html`<${Live} stream=${stream} activity=${activity}/>`}
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
       </div>
     </div>
     <div class="chat-bottom">
@@ -464,8 +473,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   </section>`;
 }
 
-function ChatHeader({ onClear, clearing }) {
-  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span></div><div class="header-actions"><button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div></header>`;
+function ChatHeader({ onClear, clearing, model, onModel }) {
+  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span></div><div class="header-actions">${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${m.replace(/^claude-/, '')}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div></header>`;
 }
 
 function App() {
@@ -479,6 +488,8 @@ function App() {
   const [runId, setRunId] = useState(null);
   const [tick, setTick] = useState(0);
   const [choices,setChoices]=useState(null);
+  const [model,setModel]=useState(null);
+  const loadModel=()=>api('/api/command',{json:{text:'/model'}}).then(setModel).catch(()=>{});
   const [preview, setPreview] = useState(null);
   const [draft, setDraft] = useState(null);
   const [outbox, setOutbox] = useState([]);
@@ -521,7 +532,7 @@ function App() {
   useEffect(() => {
     const onHash = () => setRoute(parseHash()); addEventListener('hashchange', onHash);
     if (window.kenDesktop) document.documentElement.dataset.desktop = window.kenDesktop.platform;
-    loadMeta();
+    loadMeta(); loadModel();
     const refresh = setInterval(load, 15000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); };
   }, []);
@@ -545,7 +556,7 @@ function App() {
         }
         if (ev.type === 'message') {
           accept(ev);
-          if (ev.role === 'ken') setStream((s) => ({ ...s, [project]: '' }));
+          if (ev.role === 'ken') { setStream((s) => ({ ...s, [project]: '' })); setActivity((a) => ({ ...a, [project]: '' })); }
           if(ev.role==='you')return;
         }
         if (ev.type === 'chat.reset') {
@@ -624,6 +635,7 @@ function App() {
       const result=await api('/api/command',{json:{text:text.trim()}});
       setChoices(result.choices?.length?result.choices.map(m=>({label:m,text:text.trim().split(' ')[0]+' '+m})):null);
       if(result.reply)toast(result.reply);
+      if(value.startsWith('/model'))loadModel();
       return true;
     }
     return false;
@@ -646,7 +658,7 @@ function App() {
   };
   const projects = today ? today.projects : [];
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class="shell"><main class="main"><${ChatHeader} onClear=${clearThread} clearing=${clearing}/>
+  return html`<div class="shell"><main class="main"><${ChatHeader} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
     ${(!online || loadError) && html`<div class="offline" role="status">${loadError || 'Connecting to Ken…'}${loadError && html` <button class="text-action" onClick=${load}>Try again</button>`}</div>`}
     <${ChatPage} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>
   </main>

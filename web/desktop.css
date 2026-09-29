@@ -52,3 +52,4 @@ body{-webkit-font-smoothing:auto;letter-spacing:normal}.chat-header{height:64px;
 .voice-note audio{display:none}
 @keyframes voice-pulse{50%{opacity:.35}}
 @media(prefers-reduced-motion:reduce){.voice-pending{animation:none}.voice-play:active{transform:none}}
+.model-select{-webkit-app-region:no-drag;height:30px;max-width:190px;padding:0 8px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#444;font:inherit;font-size:13px;cursor:pointer}
