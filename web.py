@@ -48,12 +48,12 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, services=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
         self.transcribe = transcribe
-        self.services = services
+        self.commands = commands or {}
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -132,61 +132,19 @@ class WebApp:
     # -------------------------------------------------------------------- api
 
     async def meta(self, request):
-        return _json({"rev": self.rev, "voice": self.transcribe is not None, "desktop": self.services is not None,
-                      "permission_mode": getattr(self.engine.brain, "permission_mode", ""),
-                      "settings": self.services.settings() if self.services else {},
-                      "models": self.services.models() if self.services else []})
+        return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands)})
 
-    async def settings(self, request):
-        if self.services is None:
-            return _json({"error": "Open Ken's desktop app to manage these settings."}, 400)
-        if request.method == "GET":
-            return _json(self.services.settings())
-        try:
-            return _json(self.services.save_settings(await self._body(request)))
-        except ValueError as exc:
-            return _json({"error": str(exc)}, 400)
-
-    async def desktop_state(self, request):
-        return _json({"permissions": self.services.permission_list() if self.services else [],
-                      "brief": self.services.brief() if self.services else None,
-                      "brief_busy": bool(self.services and self.services.brief_task and not self.services.brief_task.done())})
-
-    async def make_brief(self, request):
-        if not self.services:
-            return _json({"error": "Open the desktop app to generate a brief."}, 400)
-        return _json({"started": await self.services.run_brief()})
-
-    async def permission(self, request):
-        body = await self._body(request)
-        if not self.services or body.get("decision") not in ("allow", "deny"):
-            return _json({"error": "Choose allow or deny."}, 400)
-        try:
-            self.services.resolve_permission(request.match_info["rid"], body["decision"] == "allow")
-        except KeyError:
-            return _json({"error": "This request has already ended."}, 404)
-        return _json({"ok": True})
-
-    async def browser_next(self, request):
-        if not self.services:
-            raise web.HTTPNotFound()
-        import time
-        self.services.browser_seen = time.monotonic()
-        try:
-            while True:
-                action = await asyncio.wait_for(self.services.browser_queue.get(), timeout=20)
-                if action["id"] in self.services.browser_waiters:
-                    return _json(action)
-        except asyncio.TimeoutError:
-            return _json(None)
-
-    async def browser_result(self, request):
-        if not self.services:
-            raise web.HTTPNotFound()
-        future = self.services.browser_waiters.get(request.match_info["rid"])
-        if future and not future.done():
-            future.set_result(await self._body(request))
-        return _json({"ok": True})
+    async def command(self, request):
+        """Run a slash command owned by the host (e.g. bot.py's /model, /coffee)."""
+        b = await self._body(request)
+        name, _, arg = str(b.get("text", "")).strip().lstrip("/").partition(" ")
+        run = self.commands.get(name.lower())
+        if run is None:
+            return _json({"error": f"Unknown command /{name}"}, 404)
+        result = run(arg)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return _json(result if isinstance(result, dict) else {"reply": str(result)})
 
     async def chats(self, request):
         return _json(self.engine.chats_list())
@@ -433,13 +391,6 @@ class WebApp:
         r.add_get("/", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
-        r.add_get("/api/settings", self.settings)
-        r.add_put("/api/settings", self.settings)
-        r.add_get("/api/desktop", self.desktop_state)
-        r.add_post("/api/brief", self.make_brief)
-        r.add_post("/api/permissions/{rid}", self.permission)
-        r.add_get("/api/browser/next", self.browser_next)
-        r.add_post("/api/browser/results/{rid}", self.browser_result)
         r.add_get("/api/chats", self.chats)
         r.add_get("/api/library", self.library)
         r.add_post("/api/chats", self.new_chat)
@@ -462,6 +413,7 @@ class WebApp:
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)
         r.add_post("/api/voice", self.voice)
+        r.add_post("/api/command", self.command)
         r.add_get("/api/events", self.events)
         r.add_get("/{name:.+}", self.static_file)
         return app

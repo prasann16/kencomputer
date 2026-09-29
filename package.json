@@ -8,17 +8,13 @@
   "main": "desktop/main.cjs",
   "scripts": {
     "desktop": "electron .",
-    "test:desktop": "node --test tests/desktop.test.cjs tests/account.test.cjs",
-    "test:ui": "node tests/desktop-smoke.cjs",
-    "build:engine": "python3 desktop/build_engine.py",
+    "test:desktop": "node --test tests/desktop.test.cjs",
     "pack": "electron-builder --dir",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:mac": "electron-builder --mac"
   },
   "devDependencies": {
     "electron": "44.4.5",
-    "electron-builder": "26.15.3",
-    "playwright": "1.63.0"
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "dev.kencomputer.desktop",
@@ -32,12 +28,6 @@
       "desktop/icon.png",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "dist/engine/ken-engine",
-        "to": "engine"
-      }
-    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
@@ -48,18 +38,6 @@
       },
       "identity": null
     },
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
     "icon": "desktop/icon.png"
-  },
-  "dependencies": {
-    "playwright-core": "1.63.0"
   }
 }

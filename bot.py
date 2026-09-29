@@ -753,7 +753,7 @@ async def start_engine() -> None:
     ENGINE.start()
     if os.environ.get("KEN_WEB", "1") == "0":
         return
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS)
     try:
         await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
     except OSError as e:
@@ -852,32 +852,28 @@ async def refresh_models_file(app=None) -> None:
         log.warning("model list refresh failed: %s", e)
 
 
-async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
-        return
+# Commands shared by Telegram and the desktop chat: plain functions that return
+# the reply text (and, for /model with no argument, the choices to show).
+
+def coffee() -> str:
     import subprocess
 
     if subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0:
-        await update.effective_message.reply_text("☕ Already on it — this computer isn't going anywhere.")
-        return
+        return "☕ Already on it — this computer isn't going anywhere."
     subprocess.Popen(
         ["caffeinate", "-di"],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    await update.effective_message.reply_text("☕ Staying awake. (A closed laptop lid still sleeps it.)")
+    return "☕ Staying awake. (A closed laptop lid still sleeps it.)"
 
 
-async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
-        return
+def decaf() -> str:
     import subprocess
 
     killed = subprocess.run(["pkill", "-x", "caffeinate"], capture_output=True).returncode == 0
-    await update.effective_message.reply_text(
-        "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
-    )
+    return "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
 
 
 def available_models() -> list[str]:
@@ -887,33 +883,44 @@ def available_models() -> list[str]:
         return []
 
 
-async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Native picker, like Claude Code's /model: tap a model, it switches."""
+async def model(arg: str = "") -> dict:
+    """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
     global current_model
-    if not authorized(update):
-        return
     models = available_models()
     if not models:
         await refresh_models_file()
         models = available_models()
-    if context.args:  # fast path: /model opus
-        want = context.args[0].lower()
-        match = next((m for m in models if m == want), None) or next(
-            (m for m in models if want in m), None
-        )
-        if match:
-            current_model = match
-            await update.effective_message.reply_text(f"✓ {match} — from the next task.")
-        else:
-            await update.effective_message.reply_text(f"No model matching “{want}”.")
+    want = arg.strip().lower()
+    if not want:
+        return {"reply": f"Model — current: {current_model or 'default'}", "choices": models, "current": current_model}
+    match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
+    if not match:
+        return {"reply": f"No model matching “{want}”."}
+    current_model = match
+    return {"reply": f"✓ {match} — from the next task."}
+
+
+async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text(coffee())
+
+
+async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text(decaf())
+
+
+async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Native picker: tap a model, it switches."""
+    if not authorized(update):
         return
+    result = await model(" ".join(context.args or []))
     keyboard = [
         [InlineKeyboardButton(("👉 " if m == current_model else "") + m, callback_data=f"model:{m}")]
-        for m in models
+        for m in result.get("choices", [])
     ]
     await update.effective_message.reply_text(
-        f"Model — current: {current_model or 'default'}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        result["reply"], reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
     )
 
 
@@ -928,6 +935,13 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await q.edit_message_text(f"✓ {current_model} — from the next task.")
     except Exception:
         pass
+
+
+COMMANDS = {
+    "model": model,
+    "coffee": lambda arg="": coffee(),
+    "decaf": lambda arg="": decaf(),
+}
 
 
 async def headless() -> None:

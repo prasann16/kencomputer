@@ -86,7 +86,7 @@ function Chip({ project }) {
 }
 
 const durationLabel = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current task'], ['/model', 'Choose Claude model']];
+const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current task'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this computer awake'], ['/decaf', 'Stop keeping it awake']];
 
 function waveformPeaks(values, count = 48) {
   // Keep each interval's peak; point-sampling can miss whole words in a note.
@@ -420,7 +420,7 @@ function PreviewModal({ file, onClose, toast }) {
   <//>`;
 }
 
-function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, settings, openRun, projects, onSend, onVoice, models, onModel }) {
+function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice }) {
   const thread = useRef(null);
   const following = useRef(true);
   const [dragging, setDragging] = useState(false);
@@ -455,7 +455,7 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
       </div>
     </div>
     <div class="chat-bottom">
-      ${models && html`<div class="model-choices"><span>Choose Claude model</span>${models.map(model=>html`<button class="btn sm" onClick=${()=>onModel(model)}>${model}</button>`)}</div>`}
+      ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} recordRequest=${recordRequest} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
         onVoice=${(...args)=>{following.current=true;onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
         onSend=${async (text, files) => { following.current = true; await onSend(text, files); }}/>
@@ -464,75 +464,21 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   </section>`;
 }
 
-function ConnectionsModal({ toast, onClose }) {
-  return html`<${Modal} title="Chrome" onClose=${onClose}><${ChromeSettings} toast=${toast}/><${ChromeControl} toast=${toast}/><button class="btn ghost" onClick=${onClose}>Close</button><//>`;
-}
-
-function ChatHeader({ settings, onAction, onClear, clearing, connected }) {
-  return html`<header class="chat-header"><div class="ken-brand">${settings.character !== false && html`<img src="/ken.svg" alt=""/>`}<span>Ken</span></div><div class="header-actions">${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}<button class="icon-btn account-menu" aria-label="Claude account" title="Claude account" onClick=${()=>onAction('account')}>⋯</button></div></header>`;
-}
-
-function useChromeState() {
-  const [state, setState] = useState(null);
-  useEffect(() => {
-    const native = window.kenDesktop;
-    if (!native) return;
-    let alive = true;
-    const update = (state) => { if (alive) setState(state); };
-    const unsubscribe = native.onBrowserState(update);
-    native.browserAction({ action: 'status' }).then(update).catch(() => {});
-    return () => { alive = false; unsubscribe(); };
-  }, []);
-  return state;
-}
-
-function ChromeControl({ toast }) {
-  const state = useChromeState();
-  const [setup, setSetup] = useState(false);
-  if (!state) return null;
-  const act = async (action) => {
-    try { await window.kenDesktop.browserAction({ action }); setSetup(false); }
-    catch (e) { if (action === 'setup') toast(e.message); setSetup(true); }
-  };
-  // Connection setup lives in the menu; never interrupt the composer.
-  if (state.connected) return state.loading || state.error
-    ? html`<div class="chrome-activity" role="status">${state.error || 'Working in Chrome…'}</div>` : null;
-  return html`<div class="chrome-control">
-    <button type="button" class="chrome-connect" disabled=${state.connecting} onClick=${() => act('connect')}>${Glyph('browser')}<span>${state.connecting ? 'Connecting to Chrome…' : 'Connect Chrome'}</span></button>
-    ${(setup || state.error) && html`<div class="chrome-setup"><b>Use the Chrome you’re already signed into.</b><p>In Chrome settings, turn on “Allow remote debugging for this browser instance”. Then connect here and allow Chrome’s connection request.</p><div class="row"><button type="button" class="text-action" onClick=${() => act('setup')}>Open Chrome settings ↗</button><button type="button" class="text-action" disabled=${state.connecting} onClick=${() => act('connect')}>${state.connecting ? 'Connecting…' : 'Try again'}</button></div></div>`}
-  </div>`;
-}
-
-function ChromeStatus() {
-  const state = useChromeState();
-  if (!state || !state.connected) return null;
-  return html`<div class="header-chrome"><span class="chrome-dot connected"></span><span role="status">Chrome connected</span><button type="button" title="Show Chrome" aria-label="Show Chrome" onClick=${() => window.kenDesktop.browserAction({ action: 'show' }).catch(() => {})}>↗</button></div>`;
-}
-
-function ChromeSettings({ toast }) {
-  const state = useChromeState();
-  if (!state) return null;
-  const disconnect = () => window.kenDesktop.browserAction({ action: 'disconnect' }).catch((e) => toast(e.message));
-  return html`<div class="check-row chrome-settings"><span><b>Chrome</b><small>${state.connected ? 'Connected to your browser. Your tabs stay open if you disconnect.' : state.connecting ? 'Connecting to your browser…' : 'Connect below to use your signed-in browser.'}</small></span>${(state.connected || state.connecting) && html`<button type="button" class="btn sm" onClick=${disconnect}>Disconnect Chrome</button>`}</div>`;
+function ChatHeader({ onClear, clearing }) {
+  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span></div><div class="header-actions"><button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div></header>`;
 }
 
 function App() {
   const [route, setRoute] = useState(parseHash());
-  const [account,setAccount]=useState(window.kenDesktop?.accountAction?null:{connected:true});
-  const accountRequest=useRef(0);
-  const accountAction=async(action)=>{const request=++accountRequest.current;try{const state=await window.kenDesktop.accountAction(action);if(request===accountRequest.current)setAccount(state);}catch(e){if(request===accountRequest.current)setAccount({connected:false,error:e.message});}};
-  const checkAccount=()=>accountAction('status'), connectAccount=()=>accountAction('connect');
-  useEffect(()=>{if(!window.kenDesktop?.accountAction || account?.connected)return;checkAccount();const timer=setInterval(checkAccount,5000);return()=>clearInterval(timer);},[account?.connected]);
   const [today, setToday] = useState(null);
   const [chat, setChat] = useState(null);
   const [stream, setStream] = useState({});
   const [activity, setActivity] = useState({});
-  const [meta, setMeta] = useState({ settings: {} });
+  const [meta, setMeta] = useState({});
   const [library, setLibrary] = useState([]);
   const [runId, setRunId] = useState(null);
   const [tick, setTick] = useState(0);
-  const [modal, setModal] = useState(null);
-  const [modelPicker,setModelPicker]=useState(false);
+  const [choices,setChoices]=useState(null);
   const [preview, setPreview] = useState(null);
   const [draft, setDraft] = useState(null);
   const [outbox, setOutbox] = useState([]);
@@ -546,7 +492,7 @@ function App() {
   const pid = route.pid || 'home';
   const pidRef = useRef(pid); pidRef.current = pid;
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
-  useEffect(()=>{if(account?.connected)warm(pid);},[account?.connected,pid]);
+  useEffect(()=>{warm(pid);},[pid]);
   const toast = useCallback((m) => setToastMsg(m), []);
   useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
@@ -589,7 +535,6 @@ function App() {
       ws.onmessage = (e) => {
         const ev = JSON.parse(e.data), project = ev.project;
         if (ev.type === 'hello') { if (rev === null) rev = ev.rev; else if (ev.rev !== rev) location.reload(); return; }
-        if (ev.type === 'settings.changed') loadMeta();
         if (ev.type === 'chat.delta') { setStream((s) => ({ ...s, [project]: ev.text })); return; }
         if (ev.type === 'chat.tool') { setActivity((a) => ({ ...a, [project]: ev.text })); return; }
         if (ev.type === 'chat.busy') {
@@ -666,21 +611,22 @@ function App() {
   };
   const restoredVoice = useRef(false);
   useEffect(()=>{
-    if(!account?.connected || restoredVoice.current)return;restoredVoice.current=true;
+    if(restoredVoice.current)return;restoredVoice.current=true;
     for(const note of Object.values(voiceDrafts())){
       fetch(`/api/chats/${note.project}/files/${encodeURIComponent(note.name)}`).then(r=>{if(!r.ok)throw Error();return r.blob();}).then(blob=>sendVoice(blob,note.peaks,note.seconds,note)).catch(()=>toast('A saved voice note could not be reopened. The original file is still in your chat folder.'));
     }
-  },[account?.connected]);
+  },[]);
   const command = async (text) => {
     const value=text.trim().toLowerCase();
     if(value==='/new' || /^(clear (this |the )?(conversation|chat|thread)|start a (fresh|new) (conversation|chat|thread))[.!]?$/.test(value)){await clearThread();return true;}
     if(['/stop','stop','stop working'].includes(value)){await api(`/api/chats/${pid}/stop`,{json:{}});return true;}
-    if(value==='/model' || value.startsWith('/model ')){
-      const choice=value.slice(6).trim();
-      if(!choice){setModelPicker(true);return true;}
-      await api('/api/settings',{json:{model:choice}});await loadMeta();toast(`Model set to ${choice}.`);return true;
+    if(value.startsWith('/')){
+      const result=await api('/api/command',{json:{text:text.trim()}});
+      setChoices(result.choices?.length?result.choices.map(m=>({label:m,text:text.trim().split(' ')[0]+' '+m})):null);
+      if(result.reply)toast(result.reply);
+      return true;
     }
-    if(value.startsWith('/')){toast('Use /new, /stop, or /model.');return true;}return false;
+    return false;
   };
   const clearThread = async () => {
     if (clearing) return;
@@ -688,7 +634,7 @@ function App() {
     setClearing(true); generation.current++;
     try {
       const result = await api(`/api/chats/${pid}/reset`, { json: {} });
-      sessionStorage.removeItem('ken-draft:' + pid); setDraft(null); setModelPicker(false);
+      sessionStorage.removeItem('ken-draft:' + pid); setDraft(null); setChoices(null);
       for(const note of Object.values(voiceDrafts()))if(note.project===pid)saveVoiceDraft(note.id,null);
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
@@ -700,14 +646,12 @@ function App() {
   };
   const projects = today ? today.projects : [];
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class="shell"><main class="main"><${ChatHeader} settings=${meta.settings} onClear=${clearThread} clearing=${clearing} connected=${account?.connected} onAction=${()=>setModal(modal==='account'?null:'account')}/>
-    ${(!online || loadError) && html`<div class="offline" role="status">${loadError || 'Connecting to Ken…'}${loadError && html` <button class="text-action" onClick=${load}>Try again</button>${pid !== 'home' && html` <a href="#/conversations">Back to Ken</a>`}`}</div>`}
-    ${!account || !account.connected ? html`<div class="account-welcome"><p>${!account?'Checking your Claude account…':'Connect your Claude account to get started.'}</p>${account && html`<button class="btn primary" disabled=${account.connecting} onClick=${connectAccount}>${account.connecting?'Finish sign-in in your browser…':'Connect Claude'}</button>${account.error && html`<p role="alert">${account.error} <button class="text-action" onClick=${checkAccount}>Check again</button></p>`}${account.url && account.connecting && html`<a href=${account.url} target="_blank" rel="noopener">Open sign-in</a>`}`}</div>` : html`<${ChatPage} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} settings=${meta.settings} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} models=${modelPicker?meta.models:null} onModel=${async(model)=>{try{await api('/api/settings',{json:{model}});await loadMeta();setModelPicker(false);}catch(e){toast(e.message);}}}/>`}
+  return html`<div class="shell"><main class="main"><${ChatHeader} onClear=${clearThread} clearing=${clearing}/>
+    ${(!online || loadError) && html`<div class="offline" role="status">${loadError || 'Connecting to Ken…'}${loadError && html` <button class="text-action" onClick=${load}>Try again</button>`}</div>`}
+    <${ChatPage} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
-    ${modal==='account' && html`<div class="account-popover"><b>Claude account</b><p>${account?.connected?'Connected':'Not connected'}</p><button class="text-action" onClick=${()=>{setModal(null);connectAccount();}}>Reconnect Claude</button><button class="text-action" onClick=${()=>setModal(null)}>Close</button></div>`}
-
     ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
   </div>`;
 }
