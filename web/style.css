@@ -208,7 +208,7 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .add-rule input { width: 100%; border: 1px dashed var(--line-strong); border-radius: 8px; padding: 6px 10px; background: transparent; font-size: 13px; outline: none; }
 .add-rule input:focus { border-style: solid; border-color: var(--faint); }
 .connected { display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
-.dropzone { position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: 18px; background: color-mix(in srgb, var(--bg) 88%, transparent); display: flex; align-items: center; justify-content: center; font: 400 30px var(--serif); color: var(--accent-ink); pointer-events: none; z-index: 5; }
+.dropzone { position: fixed; inset: 12px; z-index: 100; pointer-events: none; -webkit-app-region: no-drag; border: 2px dashed var(--accent); border-radius: 18px; background: color-mix(in srgb, var(--bg) 88%, transparent); display: flex; align-items: center; justify-content: center; font: 400 30px var(--serif); color: var(--accent-ink); pointer-events: none; z-index: 5; }
 
 /* -------------------------------------------------------------- overlays */
 .scrim { position: fixed; inset: 0; background: rgba(20, 19, 17, .35); display: flex; justify-content: flex-end; z-index: 20; }

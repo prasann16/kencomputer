@@ -19,10 +19,14 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// Files the user attached; they show in their message, not as Ken's file cards.
+const ATTACHED = new Set();
 async function upload(pid, list, attach) {
   const fd = new FormData();
   for (const f of list) fd.append('file', f, f.name);
-  return (await api(`/api/chats/${pid}/files${attach ? '?attach=1' : ''}`, { body: fd })).saved || [];
+  const saved = (await api(`/api/chats/${pid}/files${attach ? '?attach=1' : ''}`, { body: fd })).saved || [];
+  if (attach) saved.forEach((name) => ATTACHED.add(name));
+  return saved;
 }
 
 const ago = (ts) => {
@@ -179,6 +183,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
   const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem('ken-draft:' + storageKey) || '{}'); } catch { return {}; } })();
   const [text, setText] = useState(savedDraft.text || '');
   const [files, setFiles] = useState(savedDraft.files || []);
+  (savedDraft.files || []).forEach((name) => ATTACHED.add(name));
   useEffect(() => { sessionStorage.setItem('ken-draft:' + storageKey, JSON.stringify({ text, files })); }, [text, files, storageKey]);
   useEffect(() => { if (draft) { setText(draft.text); onDraftUsed(); requestAnimationFrame(() => ta.current?.focus()); } }, [draft]);
   const [sending, setSending] = useState(false);
@@ -433,6 +438,19 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   const thread = useRef(null);
   const following = useRef(true);
   const [dragging, setDragging] = useState(false);
+  // Drop files anywhere in the window, or paste them, to attach to the message.
+  useEffect(() => {
+    let depth = 0;
+    const files = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const enter = (e) => { if (files(e)) { e.preventDefault(); depth++; setDragging(true); } };
+    const over = (e) => { if (files(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } };
+    const leave = (e) => { if (files(e) && --depth <= 0) { depth = 0; setDragging(false); } };
+    const drop = (e) => { if (!files(e)) return; e.preventDefault(); depth = 0; setDragging(false); if (e.dataTransfer.files.length) setDropped([...e.dataTransfer.files]); };
+    const paste = (e) => { const list = [...(e.clipboardData?.files || [])]; if (list.length) { e.preventDefault(); setDropped(list); } };
+    const events = { dragenter: enter, dragover: over, dragleave: leave, drop, paste };
+    for (const [name, fn] of Object.entries(events)) addEventListener(name, fn);
+    return () => { for (const [name, fn] of Object.entries(events)) removeEventListener(name, fn); };
+  }, []);
   const [dropped, setDropped] = useState(null);
   const [recordRequest, setRecordRequest] = useState(0);
   const messages = chat ? chat.messages : [];
@@ -446,16 +464,14 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
     ...messages.map((m) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), el: html`<${Message} m=${m}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
-    ...files.filter((f) => f.mtime > clearedAt && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
+    ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
   const last = timeline[timeline.length - 1];
   useEffect(() => {
     if (thread.current && following.current) thread.current.scrollTop = thread.current.scrollHeight;
   }, [messages.length, messages[messages.length-1]?.text, last && last.key, stream, busy, approvals.length, runs.length]);
   return html`<section class="conversation-body" aria-label="Conversation"
-    onDragOver=${(e) => { e.preventDefault(); if ([...e.dataTransfer.types].includes('Files')) setDragging(true); }}
-    onDragLeave=${(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
-    onDrop=${(e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) setDropped([...e.dataTransfer.files]); }}>
+>
     <div class="scroll" ref=${thread} onScroll=${() => { const el = thread.current; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       <div class="thread conversation-thread">
         ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'Hey, I’m Ken. Your assistant.'}</p><p>${project ? 'Tell me what you’d like to work on.' : clearedAt ? 'A fresh thread. What would you like to work on?' : 'Tell me what you do for work and what you’d like off your plate.'}</p>${voice && !project && !clearedAt && html`<button class="text-action voice-invite" onClick=${() => setRecordRequest((n) => n + 1)}>${Icon.mic} Record a voice note</button><p class="welcome-hint">Or just type below.</p>`}</div>`}
