@@ -855,10 +855,16 @@ async def refresh_models_file(app=None) -> None:
 # Commands shared by Telegram and the desktop chat: plain functions that return
 # the reply text (and, for /model with no argument, the choices to show).
 
+def is_awake() -> bool:
+    import subprocess
+
+    return subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0
+
+
 def coffee() -> str:
     import subprocess
 
-    if subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0:
+    if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     subprocess.Popen(
         ["caffeinate", "-di"],
@@ -939,8 +945,9 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 COMMANDS = {
     "model": model,
-    "coffee": lambda arg="": coffee(),
-    "decaf": lambda arg="": decaf(),
+    "coffee": lambda arg="": {"reply": coffee(), "awake": True},
+    "decaf": lambda arg="": {"reply": decaf(), "awake": False},
+    "awake": lambda arg="": {"awake": is_awake()},
 }
 
 

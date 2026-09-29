@@ -90,7 +90,7 @@ function Chip({ project }) {
 }
 
 const durationLabel = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current task'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this computer awake'], ['/decaf', 'Stop keeping it awake']];
+const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current task'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
 
 function waveformPeaks(values, count = 48) {
   // Keep each interval's peak; point-sampling can miss whole words in a note.
@@ -281,8 +281,9 @@ function useSmooth(text) {
 
 function Live({ stream, activity }) {
   const text = useSmooth(stream || '');
-  if (stream) return html`<div class="msg"><div class="txt live">${md(text)}</div></div>`;
-  return html`<div class="typing" role="status"><span class="pulse"></span><span class="ellipsis">${activity || 'Thinking…'}</span></div>`;
+  // The status line sticks to the bottom of the view, so it stays visible under a long answer.
+  const status = html`<div class="typing" role="status"><span class="pulse"></span><span class="ellipsis">${activity || (stream ? 'Writing…' : 'Thinking…')}</span></div>`;
+  return stream ? html`<div class="msg"><div class="txt live">${md(text)}</div></div>${status}` : status;
 }
 
 // ----------------------------------------------------------------- approvals
@@ -502,8 +503,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   </section>`;
 }
 
-function ChatHeader({ onClear, clearing, model, onModel }) {
-  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span></div><div class="header-actions">${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${m.replace(/^claude-/, '')}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div></header>`;
+function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake }) {
+  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div><div class="header-actions">${awake !== null && html`<button class=${'awake-toggle' + (awake ? ' on' : '')} aria-pressed=${awake} title=${awake ? 'This Mac is staying awake so Ken can keep working. Click to allow normal sleep.' : 'Keep this Mac awake so Ken can keep working while you’re away. Closing the lid still sleeps it.'} onClick=${onAwake}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13v5a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6Z"/><path d="M17 11h1.5a2.5 2.5 0 0 1 0 5H17M8 3v2M12 3v2"/></svg>${awake ? 'Awake' : 'Keep awake'}</button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${m.replace(/^claude-/, '')}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div></header>`;
 }
 
 function App() {
@@ -519,6 +520,8 @@ function App() {
   const [choices,setChoices]=useState(null);
   const [model,setModel]=useState(null);
   const loadModel=()=>api('/api/command',{json:{text:'/model'}}).then(setModel).catch(()=>{});
+  const [awake,setAwake]=useState(null);
+  const loadAwake=()=>api('/api/command',{json:{text:'/awake'}}).then((r)=>setAwake(r.awake)).catch(()=>{});
   const [preview, setPreview] = useState(null);
   const [draft, setDraft] = useState(null);
   const [outbox, setOutbox] = useState([]);
@@ -528,6 +531,9 @@ function App() {
   const generation = useRef(0);
   const [toastMsg, setToastMsg] = useState('');
   const [online, setOnline] = useState(false);
+  // Only mention the connection if it stays down; quick reconnects pass unnoticed.
+  const [offline, setOffline] = useState(false);
+  useEffect(() => { if (online) { setOffline(false); return; } const t = setTimeout(() => setOffline(true), 1200); return () => clearTimeout(t); }, [online]);
   const [loadError, setLoadError] = useState('');
   const pid = route.pid || 'home';
   const pidRef = useRef(pid); pidRef.current = pid;
@@ -561,7 +567,7 @@ function App() {
   useEffect(() => {
     const onHash = () => setRoute(parseHash()); addEventListener('hashchange', onHash);
     if (window.kenDesktop) document.documentElement.dataset.desktop = window.kenDesktop.platform;
-    loadMeta(); loadModel();
+    loadMeta(); loadModel(); loadAwake();
     const refresh = setInterval(load, 15000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); };
   }, []);
@@ -665,6 +671,7 @@ function App() {
       setChoices(result.choices?.length?result.choices.map(m=>({label:m,text:text.trim().split(' ')[0]+' '+m})):null);
       if(result.reply)toast(result.reply);
       if(value.startsWith('/model'))loadModel();
+      if('awake' in result)setAwake(result.awake);
       return true;
     }
     return false;
@@ -687,8 +694,7 @@ function App() {
   };
   const projects = today ? today.projects : [];
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class="shell"><main class="main"><${ChatHeader} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
-    ${(!online || loadError) && html`<div class="offline" role="status">${loadError || 'Connecting to Ken…'}${loadError && html` <button class="text-action" onClick=${load}>Try again</button>`}</div>`}
+  return html`<div class="shell"><main class="main"><${ChatHeader} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>setAwake(r.awake)).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
     <${ChatPage} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
