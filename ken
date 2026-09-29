@@ -24,12 +24,26 @@ case "${1:-help}" in
     if [ "$OS" = "Linux" ]; then journalctl --user -u ken -n "${2:-50}" --no-pager
     else tail -n "${2:-50}" "$KEN_HOME/logs/ken.log"; fi ;;
   update)
+    if [ ! -d "$KEN_HOME/app/.git" ]; then
+      echo "This is a bundled VPS release. See $KEN_HOME/app/deploy/README.md for release updates."
+      exit 1
+    fi
     echo "→ updating ken…"
     git -C "$KEN_HOME/app" pull
     "$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
     cp "$KEN_HOME/app/ken" "$HOME/.local/bin/ken" 2>/dev/null || true
     svc restart
     echo "✓ updated and restarted." ;;
+  open|app)
+    TOKEN="$(cat "$KEN_HOME/web-token" 2>/dev/null || true)"
+    if [ -z "$TOKEN" ]; then echo "The app hasn't started yet. Is ken running? (ken status)"; exit 1; fi
+    PORT="$(grep -E '^KEN_WEB_PORT=' "$KEN_HOME/.env" 2>/dev/null | cut -d= -f2 || true)"
+    URL="http://127.0.0.1:${PORT:-7777}/login?token=$TOKEN"
+    if [ "$OS" = "Darwin" ]; then open "$URL"; echo "✓ opened Ken in your browser."
+    else
+      echo "Ken's app is at: $URL"
+      echo "From your laptop, tunnel first:  ssh -L ${PORT:-7777}:127.0.0.1:${PORT:-7777} $(whoami)@$(hostname)"
+    fi ;;
   config) "${EDITOR:-nano}" "$KEN_HOME/.env" ;;
   memory) "${EDITOR:-nano}" "$KEN_HOME/work/SOUL.md" ;;
   uninstall)
@@ -43,6 +57,7 @@ case "${1:-help}" in
     cat <<'EOF'
 ken — your AI's computer
 
+  ken open       open the app (Today + Projects) in your browser
   ken status     is it running?
   ken logs [n]   recent activity
   ken update     pull the latest version and restart
