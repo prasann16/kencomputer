@@ -754,10 +754,17 @@ async def start_engine() -> None:
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS)
-    try:
-        await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
-    except OSError as e:
-        log.warning("app server could not start: %s", e)
+    # After a restart the old process may hold the port for a moment; wait for it.
+    for attempt in range(15):
+        try:
+            await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
+            return
+        except OSError as e:
+            if attempt == 14:
+                log.warning("app server could not start: %s", e)
+            else:
+                await web_app.runner.cleanup()
+                await asyncio.sleep(1)
 
 
 async def notify_telegram(app) -> None:
