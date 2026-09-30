@@ -31,7 +31,8 @@ from dotenv import load_dotenv
 from brains import ClaudeBrain
 from engine import HOME, Engine
 from web import WebApp
-from voice import transcribe, warmup as warmup_voice
+from onboarding import Onboarding
+from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
@@ -760,6 +761,15 @@ def voice_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+async def claude_connected() -> None:
+    """Sessions opened before sign-in had no credentials; the next message reopens them."""
+    for pid in list(ENGINE.chats):
+        session = ENGINE.chats.pop(pid, None)
+        if session is not None:
+            await session.close()
+    await refresh_models_file()
+
+
 async def start_engine() -> None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: build_system(for_project=True))
     ENGINE.history_hook = lambda role, text: log_history("you" if role == "you" else "assistant", text)
@@ -769,7 +779,8 @@ async def start_engine() -> None:
     ENGINE.start()
     if os.environ.get("KEN_WEB", "1") == "0":
         return
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS)
+    setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup)
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
@@ -1015,6 +1026,7 @@ COMMANDS = {
 async def headless() -> None:
     """No Telegram configured: run the engine, the app and the schedule on their own."""
     await start_engine()
+    asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
     asyncio.create_task(scheduler(None))
     asyncio.create_task(self_update(None))
     await refresh_models_file()

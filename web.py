@@ -48,12 +48,13 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
         self.transcribe = transcribe
         self.commands = commands or {}
+        self.setup = setup
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -133,6 +134,21 @@ class WebApp:
 
     async def meta(self, request):
         return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands)})
+
+    async def setup_status(self, request):
+        return _json(self.setup.status() if self.setup else {"claude": True, "voice": {"state": "ready"}})
+
+    async def setup_action(self, request):
+        """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
+        b = await self._body(request)
+        try:
+            if b.get("action") == "start":
+                return _json(await self.setup.start())
+            if b.get("code"):
+                return _json(await self.setup.submit(str(b["code"])))
+        except RuntimeError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json({"error": "Nothing to do."}, 400)
 
     async def command(self, request):
         """Run a slash command owned by the host (e.g. bot.py's /model, /coffee)."""
@@ -414,6 +430,8 @@ class WebApp:
         r.add_post("/api/approvals/{aid}", self.resolve)
         r.add_post("/api/voice", self.voice)
         r.add_post("/api/command", self.command)
+        r.add_get("/api/setup", self.setup_status)
+        r.add_post("/api/setup", self.setup_action)
         r.add_get("/api/events", self.events)
         r.add_get("/{name:.+}", self.static_file)
         return app

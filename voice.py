@@ -24,6 +24,10 @@ def get_whisper():
         return _model
 
 
+def ready() -> bool:
+    return _model is not None
+
+
 def transcribe(path: str) -> str:
     # Keep Telegram's no-VAD behavior: filtering discarded quiet speech.
     with _lock:
