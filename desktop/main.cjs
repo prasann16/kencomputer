@@ -2,7 +2,7 @@
 // the engine, Telegram, voice and schedules; this app only shows its chat.
 const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences } = require('electron');
 const { execFile } = require('node:child_process');
-const { readFileSync, existsSync } = require('node:fs');
+const { readFileSync, existsSync, writeFileSync, mkdirSync } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
@@ -21,23 +21,61 @@ function service() {
   return { origin: `http://127.0.0.1:${port}`, token };
 }
 
-async function up({ origin, token }) {
-  if (!token) return false;
-  try { return (await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(1000) })).ok; }
-  catch { return false; }
+// The running engine's version, or null if nothing answers.
+async function running({ origin, token }) {
+  if (!token) return null;
+  try { const r = await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(1000) }); return r.ok ? (await r.json()).rev : null; }
+  catch { return null; }
 }
 
-// Connect to the running service, starting it with `ken start` if needed.
+const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
+// install.sh puts its own copy of Ken (and a venv) in the Ken home.
+const terminalInstall = path.join(home, 'app', 'bot.py');
+const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), 'Library/LaunchAgents', appAgent + '.plist');
+const esc = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// Ken runs as a background service so Telegram and schedules work with the window closed.
+// A terminal install (install.sh) keeps its own service; otherwise the app runs the engine it ships.
+async function startService() {
+  if (!app.isPackaged || existsSync(terminalInstall)) {
+    const ken = [path.join(os.homedir(), '.local/bin/ken'), '/usr/local/bin/ken', '/opt/homebrew/bin/ken'].find(existsSync);
+    if (!ken) throw new Error('Ken’s engine isn’t installed. Run this repo’s bot.py, or install Ken.');
+    return run(ken, ['start']);
+  }
+  const engine = path.join(process.resourcesPath, 'engine', 'ken-engine');
+  mkdirSync(path.dirname(appAgentFile), { recursive: true }); mkdirSync(path.join(home, 'logs'), { recursive: true });
+  writeFileSync(appAgentFile, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${appAgent}</string>
+  <key>ProgramArguments</key><array><string>${esc(engine)}</string></array>
+  <key>EnvironmentVariables</key><dict>
+    <key>KEN_HOME</key><string>${esc(home)}</string>
+    <key>KEN_APP_VERSION</key><string>${app.getVersion()}</string>
+    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${esc(path.join(home, 'logs/ken.log'))}</string>
+  <key>StandardErrorPath</key><string>${esc(path.join(home, 'logs/ken.log'))}</string>
+</dict></plist>
+`);
+  const domain = `gui/${process.getuid()}`;
+  await run('/bin/launchctl', ['bootout', `${domain}/${appAgent}`]);
+  await run('/bin/launchctl', ['bootstrap', domain, appAgentFile]);
+}
+
+// Connect to the running service, starting (or, after an app update, restarting) it if needed.
 async function connect() {
-  if (await up(service())) return service();
-  const ken = [path.join(os.homedir(), '.local/bin/ken'), '/usr/local/bin/ken', '/opt/homebrew/bin/ken'].find(existsSync);
-  if (!ken) throw new Error('Ken isn’t installed on this Mac yet. In Terminal, run:\n\ncurl -fsSL https://kencomputer.dev/install | bash');
-  await new Promise((resolve) => execFile(ken, ['start'], { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
-  for (let i = 0; i < 60; i++) {
-    if (await up(service())) return service();
+  // When the app runs its own engine, the engine must be this app version.
+  const want = app.isPackaged && !existsSync(terminalInstall) ? app.getVersion() : null;
+  const ready = (rev) => rev !== null && (want === null || rev === want);
+  if (ready(await running(service()))) return service();
+  await startService();
+  for (let i = 0; i < 120; i++) {
+    if (ready(await running(service()))) return service();
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('Ken’s service didn’t start. Run “ken logs” in Terminal to see why.');
+  throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
 }
 
 function external(url) {
@@ -47,6 +85,11 @@ function external(url) {
 function show() { if (win) { win.show(); win.focus(); } }
 
 async function start() {
+  // A background service can't run from a disk image or a quarantined download folder.
+  if (app.isPackaged && !app.isInApplicationsFolder()) {
+    const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
+    if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
+  }
   win = new BrowserWindow({ title: 'Ken', width: 900, height: 700, minWidth: 480, minHeight: 420, backgroundColor: '#ffffff', show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });

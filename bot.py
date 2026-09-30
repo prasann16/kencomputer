@@ -7,6 +7,14 @@ is just plumbing. https://kencomputer.dev
 
 from __future__ import annotations
 
+import sys
+
+# Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
+# executable with `-c <code>`; run that code instead of starting a second Ken.
+if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
+    exec(sys.argv[sys.argv.index("-c") + 1])
+    raise SystemExit(0)
+
 import asyncio
 import html
 import json
@@ -113,7 +121,13 @@ async def flush_outbox(bot, chat_id: int) -> None:
         log.warning("outbox flush failed: %s", e)
 
 
+FROZEN = getattr(sys, "frozen", False)  # running from the engine bundled in Ken.app
+SOURCE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))  # templates ship here
+
+
 def _current_rev() -> str:
+    if FROZEN:
+        return os.environ.get("KEN_APP_VERSION", "app")
     try:
         import subprocess
 
@@ -474,7 +488,7 @@ async def self_update(app) -> None:
 
     The service manager (systemd/launchd) restarts us, so exiting is the update.
     Never interrupts a task in flight."""
-    if os.environ.get("KEN_NO_AUTOUPDATE"):
+    if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
     app_dir = KEN_HOME / "app"
     await asyncio.sleep(300)  # settle after boot
@@ -1008,8 +1022,23 @@ async def headless() -> None:
     await asyncio.Event().wait()
 
 
+def ensure_home() -> None:
+    """First run without the installer (the Mac app): the same files install.sh creates."""
+    import shutil
+
+    for d in (WORKSPACE, MEMORY_DIR, KEN_HOME / "logs"):
+        d.mkdir(parents=True, exist_ok=True)
+    soul, legacy = WORKSPACE / "SOUL.md", WORKSPACE / "CLAUDE.md"
+    if legacy.exists() and not soul.exists():
+        legacy.rename(soul)
+    if not soul.exists():
+        soul.write_text((SOURCE / "SOUL.template.md").read_text().replace("{{NAME}}", "my human"))
+    if not JOBS_FILE.exists():
+        shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
+
+
 def main() -> None:
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    ensure_home()
     ensure_setup_file()
     if not BOT_TOKEN:
         asyncio.run(headless())

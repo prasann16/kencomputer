@@ -10,7 +10,8 @@
     "desktop": "electron .",
     "test:desktop": "node --test tests/desktop.test.cjs",
     "pack": "electron-builder --dir",
-    "dist:mac": "electron-builder --mac"
+    "dist:mac": "electron-builder --mac",
+    "build:engine": ".venv/bin/python desktop/build_engine.py"
   },
   "devDependencies": {
     "electron": "44.4.5",
@@ -41,6 +42,12 @@
       "entitlements": "desktop/entitlements.mac.plist",
       "entitlementsInherit": "desktop/entitlements.mac.plist"
     },
-    "icon": "desktop/icon.png"
+    "icon": "desktop/icon.png",
+    "extraResources": [
+      {
+        "from": "dist/engine/ken-engine",
+        "to": "engine"
+      }
+    ]
   }
 }
