@@ -60,6 +60,8 @@ TELEGRAM_MAX = 4000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ken")
+# httpx logs every request URL, and Telegram's URLs contain the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 MODEL_CHOICE = KEN_HOME / "model"  # the model picked in the app or Telegram; survives restarts
 current_model = (MODEL_CHOICE.read_text().strip() if MODEL_CHOICE.exists() else "") or DEFAULT_MODEL

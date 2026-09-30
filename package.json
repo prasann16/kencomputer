@@ -9,7 +9,7 @@
   "scripts": {
     "desktop": "electron .",
     "test:desktop": "node --test tests/desktop.test.cjs",
-    "pack": "electron-builder --dir",
+    "pack": "electron-builder --dir -c.mac.identity=- -c.mac.notarize=false",
     "dist:mac": "electron-builder --mac",
     "build:engine": ".venv/bin/python desktop/build_engine.py"
   },
@@ -32,22 +32,32 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Ken uses your microphone when you choose to dictate a message."
       },
-      "identity": "-",
       "hardenedRuntime": true,
       "entitlements": "desktop/entitlements.mac.plist",
-      "entitlementsInherit": "desktop/entitlements.mac.plist"
+      "entitlementsInherit": "desktop/entitlements.mac.plist",
+      "notarize": true
     },
     "icon": "desktop/icon.png",
     "extraResources": [
       {
-        "from": "dist/engine/ken-engine",
+        "from": "dist/engine-${arch}/ken-engine",
         "to": "engine"
       }
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "prasann16",
+      "repo": "kencomputer",
+      "releaseType": "draft"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

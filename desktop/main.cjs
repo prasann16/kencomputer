@@ -2,7 +2,7 @@
 // the engine, Telegram, voice and schedules; this app only shows its chat.
 const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences } = require('electron');
 const { execFile } = require('node:child_process');
-const { readFileSync, existsSync, writeFileSync, mkdirSync } = require('node:fs');
+const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
@@ -78,6 +78,32 @@ async function connect() {
   throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
 }
 
+// Updates download in the background and install while the window is closed and Ken
+// isn't mid-task; the app then relaunches straight back into the menu bar.
+const quietRelaunch = path.join(home, 'desktop-data', 'updated');
+let updateReady = false;
+async function installIfIdle() {
+  if (!updateReady || win?.isVisible()) return;
+  try {
+    const { token, origin } = service();
+    const meta = await (await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(2000) })).json();
+    if (meta.busy) return;
+  } catch {}
+  writeFileSync(quietRelaunch, '');
+  quitting = true;
+  require('electron-updater').autoUpdater.quitAndInstall(true, true);
+}
+function checkForUpdates() {
+  if (!app.isPackaged) return;
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.on('update-downloaded', () => { updateReady = true; installIfIdle(); });
+  autoUpdater.on('error', (error) => console.error('update check failed:', error.message));
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  check();
+  setInterval(check, 4 * 60 * 60 * 1000);
+  setInterval(installIfIdle, 10 * 60 * 1000);  // retry after a busy engine finishes
+}
+
 function external(url) {
   try { if (['https:', 'http:', 'mailto:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch {}
 }
@@ -94,7 +120,10 @@ async function start() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.on('close', (event) => { if (!quitting) { event.preventDefault(); win.hide(); } });
-  win.once('ready-to-show', () => win.show());
+  win.on('hide', installIfIdle);
+  const updated = existsSync(quietRelaunch);
+  if (updated) rmSync(quietRelaunch);
+  win.once('ready-to-show', () => { if (!updated) win.show(); });
   await win.loadFile(path.join(__dirname, 'loading.html'));
 
   const { origin, token } = await connect();
@@ -127,6 +156,7 @@ async function start() {
   tray.setToolTip('Ken');
   tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
   tray.on('click', show);
+  checkForUpdates();
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
