@@ -36,7 +36,10 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Ken uses your microphone when you choose to dictate a message."
       },
-      "identity": null
+      "identity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "desktop/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/entitlements.mac.plist"
     },
     "icon": "desktop/icon.png"
   }

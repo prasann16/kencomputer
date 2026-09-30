@@ -156,6 +156,8 @@ function useRecorder(onAudio, toast) {
   const start = async () => {
     if(starting.current || status!=='idle')return;
     starting.current=true;const request=++requestId.current;setStatus('requesting');setError('');setHeard(false);let input;
+    // macOS can sit on the permission step (a prompt behind other windows); say what to do.
+    const waiting=setTimeout(()=>{if(alive.current && request===requestId.current)setError('Waiting for macOS to allow the microphone. Look for a permission prompt, or turn Ken on in Microphone settings.');},5000);
     try {
       if(window.kenDesktop?.microphonePermission && !await window.kenDesktop.microphonePermission())throw new Error('Microphone access is off. Allow Ken in macOS microphone settings.');
       if(!alive.current || request!==requestId.current)return;
@@ -171,11 +173,11 @@ function useRecorder(onAudio, toast) {
         if(intent.current && chunks.length)onAudio(new Blob(chunks,{type:recorder.mimeType}),peaks.current,(Date.now()-started.current)/1000);
       };
       recorder.onerror=()=>{intent.current=false;input.getTracks().forEach(t=>t.stop());setStream(null);setStatus('idle');toast('Recording stopped. Please try again.');};
-      rec.current=recorder;intent.current=false;peaks.current=[];started.current=Date.now();setSeconds(0);setStream(input);recorder.start(250);setStatus('recording');
+      rec.current=recorder;intent.current=false;peaks.current=[];started.current=Date.now();setSeconds(0);setStream(input);recorder.start(250);setStatus('recording');setError('');
     }catch(e){input?.getTracks().forEach(t=>t.stop());if(alive.current && request===requestId.current){setStatus('idle');setError(e.name==='NotAllowedError'?'Microphone access is off. Allow Ken in macOS microphone settings.':e.message||'Could not start your microphone.');}}
-    finally{if(request===requestId.current)starting.current=false;}
+    finally{clearTimeout(waiting);if(request===requestId.current)starting.current=false;}
   };
-  const finish = (send) => {if(status==='requesting'){requestId.current++;starting.current=false;setStatus('idle');return;}if(rec.current?.state==='recording'){intent.current=send;setStatus('finishing');rec.current.stop();}};
+  const finish = (send) => {if(status==='requesting'){requestId.current++;starting.current=false;setStatus('idle');setError('');return;}if(rec.current?.state==='recording'){intent.current=send;setStatus('finishing');rec.current.stop();}};
   return {status,stream,seconds,start,finish,heard,error,peak:(p)=>{peaks.current.push(p);if(p>0.0000001)setHeard(true);}};
 }
 
