@@ -19,7 +19,7 @@ curl -fsSL https://kencomputer.dev/install | bash
 ~2 minutes. The installer walks you through everything:
 
 1. **Create a Telegram bot** — message [@BotFather](https://t.me/BotFather), send `/newbot`, paste the token.
-2. **Say hi** — message your new bot once; Ken locks itself to your Telegram account.
+2. **Pair your account** — send the installer's one-time code to your new bot in a private chat; Ken locks itself to your Telegram account.
 3. **Connect Claude** — sign in with the Claude subscription you already have. No API keys, no per-token bills.
 
 Then just talk to it.
@@ -43,6 +43,26 @@ direct links for the bits only you can do, credentials stored on your machine at
 No plugin system, no marketplace: if a service has a CLI, an API, or an MCP server, Ken can
 use it — recipes just mean it doesn't have to figure out the fiddly sign-in dance twice.
 Wrote one? PRs welcome.
+
+## Desktop app
+
+Ken now has a desktop prototype with Today, conversations, projects, a connection to your signed-in Chrome, file previews, local voice input, and scheduled briefs. It uses the existing engine and local memory; Telegram is optional. See [desktop setup, builds, and current limitations](desktop/README.md).
+
+```sh
+npm ci
+npm run desktop
+```
+
+Install the Python desktop dependencies first as described in the desktop guide. Mac has been exercised locally; Windows build configuration is included and needs native validation.
+
+## The app
+
+`ken open` opens Ken as an app: a chat with Ken, plus one chat per project. Same Ken, same
+memory, the same conversation you have on Telegram. A project is a folder in
+`~/.ken/projects/<id>/` with its context (`CONTEXT.md`) and whatever files you drop into
+its chat; Ken reads the context with every message and keeps it current. Drop files in and
+Ken looks at them straight away. It updates when Ken does, and on a phone you can add it
+to your home screen. Telegram is optional.
 
 ## Manage it
 
@@ -74,6 +94,9 @@ ken uninstall  remove the service (keeps your data)
 ## The hosted version
 
 Don't want to run anything? [kencomputer.dev](https://kencomputer.dev) — we stamp a hardened server with Ken preinstalled, you connect two accounts, done. Join the waitlist.
+
+Setting up fresh boxes for the pilot? See the [VPS deployment guide](deploy/README.md)
+for preparation, owner onboarding, service checks, and backup/restore drills.
 
 ## License
 

@@ -5,6 +5,16 @@ The brain is Claude Code; the memory is SOUL.md in the workspace; this file
 is just plumbing. https://kencomputer.dev
 """
 
+from __future__ import annotations
+
+import sys
+
+# Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
+# executable with `-c <code>`; run that code instead of starting a second Ken.
+if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
+    exec(sys.argv[sys.argv.index("-c") + 1])
+    raise SystemExit(0)
+
 import asyncio
 import html
 import json
@@ -17,6 +27,12 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+
+from brains import ClaudeBrain
+from engine import HOME, Engine
+from web import WebApp
+from onboarding import Onboarding
+from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
@@ -32,7 +48,7 @@ from telegram.ext import (
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
 
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")  # optional: the app works without Telegram
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", str(KEN_HOME / "work")))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
@@ -44,11 +60,13 @@ TELEGRAM_MAX = 4000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ken")
+# httpx logs every request URL, and Telegram's URLs contain the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-chat_locks: dict[int, asyncio.Lock] = {}
-chat_has_session: dict[int, bool] = {}
-chat_procs: dict[int, asyncio.subprocess.Process] = {}
-current_model = DEFAULT_MODEL
+MODEL_CHOICE = KEN_HOME / "model"  # the model picked in the app or Telegram; survives restarts
+current_model = (MODEL_CHOICE.read_text().strip() if MODEL_CHOICE.exists() else "") or DEFAULT_MODEL
+KEN_HOME.mkdir(parents=True, exist_ok=True)
+ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model()))
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
@@ -61,6 +79,9 @@ JOB_STATE_FILE = KEN_HOME / ".job-state.json"
 OUTBOX_DIR = KEN_HOME / "outbox"
 INBOX_DIR = KEN_HOME / "inbox"
 MEMORY_DIR = KEN_HOME / "memory"
+SETUP_FILE = KEN_HOME / "setup.json"
+HOSTING_FILE = KEN_HOME / "hosting.md"
+SETUP_ITEMS = ("brief-time", "city", "calendar", "email")
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -103,7 +124,13 @@ async def flush_outbox(bot, chat_id: int) -> None:
         log.warning("outbox flush failed: %s", e)
 
 
+FROZEN = getattr(sys, "frozen", False)  # running from the engine bundled in Ken.app
+SOURCE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))  # templates ship here
+
+
 def _current_rev() -> str:
+    if FROZEN:
+        return os.environ.get("KEN_APP_VERSION", "app")
     try:
         import subprocess
 
@@ -136,24 +163,6 @@ def load_sessions() -> dict:
         return {}
 
 
-def save_session_id(chat_id: int, sid: str) -> None:
-    try:
-        d = load_sessions()
-        if sid and d.get(str(chat_id)) != sid:
-            d[str(chat_id)] = sid
-            SESSIONS_FILE.write_text(json.dumps(d))
-    except Exception:
-        pass
-
-
-def clear_session_id(chat_id: int) -> None:
-    try:
-        d = load_sessions()
-        if d.pop(str(chat_id), None) is not None:
-            SESSIONS_FILE.write_text(json.dumps(d))
-    except Exception:
-        pass
-
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: it defines who you are "
     "(a personal assistant living on this computer), how your pipeline works, and "
@@ -171,10 +180,16 @@ SYSTEM_PROMPT = (
     "always loaded, so keep it short and prune it; it is not a dumping ground. "
     f"(2) {MEMORY_DIR} — a flat folder of topic files you name and organise yourself "
     "(one subject per file). This is where depth lives and it can grow forever, because "
-    "nothing loads it automatically — you open only what a question needs. The current "
-    "file listing is shown below; check it before creating anything, prefer extending an "
-    "existing file over making a near-duplicate, and date facts inline (e.g. 'decided X "
-    "(Aug 26)'). Promote to SOUL.md only what changes how you behave in every conversation. "
+    "nothing loads it automatically — you open only what a question needs. Start every "
+    "topic file with one plain line saying what it holds: that first line is what you see "
+    "in the listing below, so it is how you find things later. Check the listing before "
+    "creating anything, prefer extending an existing file over making a near-duplicate, "
+    "and date facts inline (e.g. 'decided X (Aug 26)'). Promote to SOUL.md only what "
+    "changes how you behave in every conversation. The nightly review is where routine "
+    "facts get filed, with one exception: when they correct you or set a rule ('don't X', "
+    "'always Y', 'call it Z'), write it into SOUL.md right then with a few words on why, "
+    "and confirm in a few words — a correction that waits for the night gets broken "
+    "again the same afternoon. "
     f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
     "harness. The receipts; open the file for a date when exact wording matters. "
     f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
@@ -204,25 +219,12 @@ SYSTEM_PROMPT = (
     "(installed CLIs, credentials present, jobs scheduled, this OS), not from guesses — "
     "and keep a short, current 'What I can do here' section in SOUL.md, updating it "
     "whenever you gain or lose a capability. "
-    "YOUR HOSTING: you're either on a machine the human set up themselves (self-hosted, "
-    "free & open source, installed via the kencomputer.dev install script) or on a dedicated "
-    "machine kencomputer.dev provisioned and hands to them exclusively — same open-source "
-    "software either way, just who racked the box. On a hosted machine, the company has no "
-    "login and can't see the data on it; you don't need to caveat answers about privacy with "
-    "'unless the company is watching' — they aren't. If asked which kind of machine this is, "
-    "check for signs (hostname, provisioning files under ~/.ken, how you were installed) "
-    "rather than guessing. "
-    "'WHERE'S MY DATA / IS IT SAFE': your files, SOUL.md, memory, credentials, and voice "
-    "transcription all live and stay on THIS machine, hosted or self-hosted — nothing about "
-    "that changes between the two. The only things that ever leave it are the Claude API "
-    "calls you make (your messages go to Anthropic to run you) and whatever an explicitly-"
-    "connected service is told to fetch/send (see recipes). Be straight, not reassuring: "
-    "neither mode backs the machine up automatically — if it dies, local data is gone unless "
-    "the human set up their own backup, so say so if asked. Pros/cons if they're weighing "
-    "hosted vs self-hosted: hosted = zero setup and maintenance, always-on, but they're "
-    "trusting kencomputer.dev's claim of no access even though they racked the box; "
-    "self-hosted = runs on hardware they already physically control (nothing new to trust), "
-    "but they own uptime, patching, and backups themselves. "
+    f"YOUR HOSTING: {HOSTING_FILE} says what kind of machine this is (self-hosted on "
+    "their own computer, or a dedicated box kencomputer.dev provisioned for them), who "
+    "else can reach it, and whether it is backed up. Answer any 'where's my data / who "
+    "can see it / is it backed up' question by reading that file and repeating what it "
+    "says, plainly — never from assumption, and never more reassuring than the file. If "
+    "the file is missing, you were installed by the human on a machine they control. "
     f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
     'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}. '
     "Every install ships with two: morning-brief and nightly-review. "
@@ -234,6 +236,14 @@ SYSTEM_PROMPT = (
     "immediately, first time, no negotiation; confirm by reading the file back. "
     "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
     "will be sent. "
+    f"SETUP CHECKLIST: {SETUP_FILE} tracks the few first-run things that make you actually "
+    "useful — brief-time, city, calendar, email — each \"unset\", \"done\", or \"declined\". "
+    "When one gets configured, set it to done. The first time they say no, not now, or "
+    "later, set it to declined and never raise it again unless they bring it up. Unresolved "
+    "items are listed below when there are any. You raise them in exactly three places: "
+    "during your awakening, as the last line of a morning brief (one item, one line), or "
+    "when they ask for something the item would unlock. Never anywhere else — a bot that "
+    "repeats a question gets muted. "
     "DISPOSITION — bias toward getting things done: you are a chief of staff, not a "
     "receptionist. Never answer a greeting with a greeting. A low-content message "
     "('yo', 'hi', 'sup') is an invitation: check your memory folder and soul for open loops — "
@@ -259,7 +269,8 @@ cutesy, never form-like:
    the harness reads that title and renames your Telegram profile to match.
 3. Over the next few messages, learn — ONE question per message: what to call
    them · what they spend their days on · which city to keep their hours in.
-   Save each answer into SOUL.md as you go, and briefly say you'll remember.
+   Save each answer into SOUL.md as you go, and briefly say you'll remember
+   (once you have the city, set "city" to done in ~/.ken/setup.json).
 4. Then ask: "What's one thing you've been putting off that I could take off
    your plate? Could be an inbox you've been avoiding, a messy project you keep
    not starting, a form you have to fill out, a reminder you keep meaning to
@@ -271,14 +282,67 @@ cutesy, never form-like:
 6. Tell them a morning brief is already scheduled for 07:00 and ask what
    time they actually want it. Then fix it: jobs run on THIS machine's clock,
    so if the machine's timezone differs from the city they gave you, convert
-   before writing the time into ~/.ken/jobs.json. Confirm in one line. Offer
-   one more standing job only if something you learned clearly calls for it.
+   before writing the time into ~/.ken/jobs.json. Confirm in one line and set
+   "brief-time" to done in ~/.ken/setup.json. Offer one more standing job only
+   if something you learned clearly calls for it.
+7. Offer, once: connecting their calendar and email is what turns the morning
+   brief from a guess into the real thing. If yes: follow the recipe in
+   ~/.ken/app/recipes (email has one; work calendar out yourself) and set that
+   item to done in ~/.ken/setup.json. If no or later: set it to declined and
+   let it go — they can always ask.
 If their first message is already a task: do the task well first, then weave in
 the naming afterward. If they dodge a question, drop it gracefully and move on.
 Keep every message short — they are on a phone.
 """.strip()
 
-def build_system() -> str:
+def memory_listing() -> str:
+    """Filename plus the file's first line: the description is what makes the
+    index useful, a bare filename is a weak hook. Raises FileNotFoundError if
+    the folder is missing."""
+    lines = []
+    for p in sorted(MEMORY_DIR.iterdir()):
+        if not (p.is_file() and p.suffix == ".md"):
+            continue
+        desc = ""
+        try:
+            for line in p.read_text(errors="replace").splitlines():
+                line = line.strip().lstrip("#").strip()
+                if line:
+                    desc = line[:120]
+                    break
+        except Exception:
+            pass
+        lines.append(f"{p.name} — {desc}" if desc else p.name)
+    return "\n".join(lines) if lines else "(empty — no topic files yet)"
+
+
+def load_setup() -> dict:
+    try:
+        data = json.loads(SETUP_FILE.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def unresolved_setup() -> list[str]:
+    data = load_setup()
+    return [k for k in SETUP_ITEMS if data.get(k, "unset") == "unset"]
+
+
+def ensure_setup_file() -> None:
+    """Every install gets the checklist. An install that already awoke answered
+    brief time and city back then, so only the connections start unset."""
+    if SETUP_FILE.exists():
+        return
+    born = BORN_FLAG.exists()
+    data = {k: "done" if born and k in ("brief-time", "city") else "unset" for k in SETUP_ITEMS}
+    try:
+        SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
+    except Exception as e:
+        log.warning("could not write %s: %s", SETUP_FILE, e)
+
+
+def build_system(for_project: bool = False) -> str:
     """System prompt = harness rules + the soul file's current contents.
 
     Injected by the harness (not auto-loaded by the engine) so any future
@@ -292,44 +356,26 @@ def build_system() -> str:
     # Inject the memory index (filenames only) — cheap, and it's what makes
     # retrieval reliable: the assistant can see what it knows without loading it.
     try:
-        files = sorted(p.name for p in MEMORY_DIR.iterdir() if p.is_file() and p.suffix == ".md")
-        listing = "\n".join(files) if files else "(empty — no topic files yet)"
-        system += f"\n\n=== your memory folder ({MEMORY_DIR}) contains ===\n{listing}\n=== end listing ==="
+        system += f"\n\n=== your memory folder ({MEMORY_DIR}) contains ===\n{memory_listing()}\n=== end listing ==="
     except FileNotFoundError:
         system += f"\n\n=== your memory folder ({MEMORY_DIR}) does not exist yet ==="
     except Exception:
         pass
+    try:
+        projects = ENGINE.projects_line()
+        if projects:
+            system += "\n\n" + projects
+    except Exception as e:
+        log.warning("project listing failed: %s", e)
+    if for_project:
+        return system  # a project chat is Ken at work: no first-run setup or awakening
+    pending = unresolved_setup()
+    if pending:
+        system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
     if not BORN_FLAG.exists():
         system += "\n\n" + AWAKENING
     return system
 
-
-_whisper = None
-
-
-def get_whisper():
-    global _whisper
-    if _whisper is None:
-        from faster_whisper import WhisperModel
-
-        log.info("loading whisper model %s ...", WHISPER_MODEL)
-        _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-    return _whisper
-
-
-def transcribe(path: str) -> str:
-    # No VAD. Silero drops quiet speech wholesale: a -52 dBFS note lost 39 of its
-    # 57 seconds before Whisper ever saw it, and lowering the threshold measured
-    # worse, not better. Whisper handles silence fine on its own.
-    segments, info = get_whisper().transcribe(path, vad_filter=False)
-    segments = list(segments)
-    text = " ".join(s.text.strip() for s in segments).strip()
-    speech = sum(s.end - s.start for s in segments)
-    log.info(
-        "transcribed %.1fs audio -> %d segments, %.1fs speech, %d chars",
-        info.duration, len(segments), speech, len(text),
-    )
-    return text
 
 
 def authorized(update: Update) -> bool:
@@ -381,174 +427,6 @@ async def send_chunked(update: Update, text: str) -> None:
             await update.effective_message.reply_text(chunk)
 
 
-class WarmSession:
-    """A persistent Claude Code session (Agent SDK) — no per-message cold start."""
-
-    def __init__(self, chat_id: int) -> None:
-        self.chat_id = chat_id
-        self.client = None
-        self.model = ""
-        self.busy = False
-
-    async def _connect(self, resume: str | None) -> None:
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-
-        options = ClaudeAgentOptions(
-            system_prompt={"type": "preset", "preset": "claude_code", "append": build_system()},
-            permission_mode="bypassPermissions",
-            cwd=str(WORKSPACE),
-            model=current_model or None,
-            resume=resume,
-        )
-        self.client = ClaudeSDKClient(options=options)
-        await self.client.connect()
-        self.model = current_model
-
-    async def ensure(self) -> None:
-        if self.client is not None:
-            return
-        resume = load_sessions().get(str(self.chat_id))
-        try:
-            await self._connect(resume)
-            if resume:
-                log.info("resumed session %s for chat %s", resume, self.chat_id)
-        except Exception as e:
-            self.client = None
-            if resume:
-                log.warning("resume failed (%s) — starting fresh", e)
-                clear_session_id(self.chat_id)
-                await self._connect(None)
-            else:
-                raise
-
-    async def dispose(self) -> None:
-        client, self.client = self.client, None
-        self.busy = False
-        if client is not None:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
-    async def ask(self, prompt: str, deliver) -> str | None:
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
-
-        await self.ensure()
-        if current_model != self.model:
-            await self.client.set_model(current_model or None)
-            self.model = current_model
-        self.busy = True
-        last_text = ""
-        sent_any = False
-        try:
-            await self.client.query(prompt)
-            async for msg in self.client.receive_response():
-                if isinstance(msg, AssistantMessage):
-                    text = "\n".join(
-                        b.text for b in msg.content if isinstance(b, TextBlock) and b.text
-                    ).strip()
-                    if text and text != last_text:
-                        last_text = text
-                        sent_any = True
-                        await deliver(text)
-                elif isinstance(msg, ResultMessage):
-                    if msg.session_id:
-                        save_session_id(self.chat_id, msg.session_id)
-                    result = (msg.result or "").strip()
-                    if result and result != last_text:
-                        await deliver(result)
-                        sent_any = True
-        finally:
-            self.busy = False
-        return None if sent_any else "(done — no output)"
-
-
-warm_sessions: dict[int, WarmSession] = {}
-
-
-def get_warm(chat_id: int) -> WarmSession:
-    return warm_sessions.setdefault(chat_id, WarmSession(chat_id))
-
-
-async def run_claude(prompt: str, continue_session: bool, chat_id: int, deliver) -> str | None:
-    """Cold-spawn fallback: run Claude Code as a one-shot process, streaming
-    each assistant utterance to `deliver`. Used when the warm session fails."""
-    system = build_system()
-    if current_model:
-        system += (
-            f" You are currently running on the model {current_model}; trust this over "
-            "your own guess about which model you are."
-        )
-    # MCP: never boot the user's global dev servers (slow); ~/.ken/mcp.json is the
-    # deliberate way to grant this assistant MCP tools.
-    mcp_file = KEN_HOME / "mcp.json"
-    mcp_arg = str(mcp_file) if mcp_file.exists() else '{"mcpServers":{}}'
-    cmd = [
-        CLAUDE_BIN, "-p", prompt,
-        "--dangerously-skip-permissions",
-        "--append-system-prompt", system,
-        "--strict-mcp-config", "--mcp-config", mcp_arg,
-        "--output-format", "stream-json", "--verbose",
-    ]
-    if current_model:
-        cmd += ["--model", current_model]
-    if continue_session:
-        cmd.insert(1, "--continue")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=WORKSPACE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=2 ** 21,
-    )
-    chat_procs[chat_id] = proc
-    sent_any = False
-    last_text = ""
-    result_text = ""
-
-    async def read_stream() -> None:
-        nonlocal sent_any, last_text, result_text
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            try:
-                evt = json.loads(line)
-            except ValueError:
-                continue
-            if evt.get("type") == "assistant":
-                parts = [
-                    b.get("text", "")
-                    for b in evt.get("message", {}).get("content", [])
-                    if b.get("type") == "text"
-                ]
-                text = "\n".join(p for p in parts if p).strip()
-                if text and text != last_text:
-                    last_text = text
-                    sent_any = True
-                    await deliver(text)
-            elif evt.get("type") == "result":
-                result_text = (evt.get("result") or "").strip()
-        await proc.wait()
-
-    try:
-        await asyncio.wait_for(read_stream(), timeout=TASK_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return f"⏰ Task timed out after {TASK_TIMEOUT // 60} minutes."
-    finally:
-        chat_procs.pop(chat_id, None)
-    if proc.returncode and proc.returncode < 0:
-        return "🛑 Task stopped."
-    if result_text and result_text != last_text:
-        await deliver(result_text)
-        sent_any = True
-    if not sent_any:
-        err = (await proc.stderr.read()).decode(errors="replace").strip()
-        return f"❌ claude exited {proc.returncode}:\n{err[-1500:]}" if err else "(done — no output)"
-    return None
-
-
 async def keep_typing(update: Update, stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
@@ -562,43 +440,28 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
 
 
 async def handle_prompt(update: Update, prompt: str) -> None:
+    """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
-    lock = chat_locks.setdefault(chat_id, asyncio.Lock())
-    if lock.locked():
+    if ENGINE.chat_busy(HOME):
         await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
-    if not prompt.startswith("("):
-        log_history("you", prompt)
-    async with lock:
-        stop = asyncio.Event()
-        typing = asyncio.create_task(keep_typing(update, stop))
-        try:
-            async def deliver(text: str) -> None:
-                log_history("assistant", text)
-                await send_chunked(update, text)
-                await flush_outbox(update.get_bot(), chat_id)
+    stop = asyncio.Event()
+    typing = asyncio.create_task(keep_typing(update, stop))
+    try:
+        async def deliver(text: str) -> None:
+            await send_chunked(update, text)
+            await flush_outbox(update.get_bot(), chat_id)
 
-            warm = get_warm(chat_id)
-            try:
-                status = await asyncio.wait_for(warm.ask(prompt, deliver), timeout=TASK_TIMEOUT)
-            except asyncio.TimeoutError:
-                await warm.dispose()
-                status = f"⏰ Task timed out after {TASK_TIMEOUT // 60} minutes."
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                log.warning("warm session failed (%s) — cold fallback", e)
-                await warm.dispose()
-                status = await run_claude(prompt, chat_has_session.get(chat_id, False), chat_id, deliver)
-            chat_has_session[chat_id] = True
-        finally:
-            stop.set()
-            await typing
-        if status:
-            await send_chunked(update, status)
-        await flush_outbox(update.get_bot(), chat_id)
-        BORN_FLAG.touch(exist_ok=True)
-        await sync_identity(update)
-        apply_model_request()
+        await ENGINE.send_message(
+            HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
+            prompt=prompt,
+        )
+    finally:
+        stop.set()
+        await typing
+    await flush_outbox(update.get_bot(), chat_id)
+    BORN_FLAG.touch(exist_ok=True)
+    await sync_identity(update)
+    apply_model_request()
 
 
 async def sync_identity(update: Update) -> None:
@@ -628,7 +491,7 @@ async def self_update(app) -> None:
 
     The service manager (systemd/launchd) restarts us, so exiting is the update.
     Never interrupts a task in flight."""
-    if os.environ.get("KEN_NO_AUTOUPDATE"):
+    if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
     app_dir = KEN_HOME / "app"
     await asyncio.sleep(300)  # settle after boot
@@ -646,7 +509,7 @@ async def self_update(app) -> None:
             out, _ = await head.communicate()
             new_rev = out.decode().strip()
             if new_rev and new_rev != RUNNING_REV:
-                if any(w.busy for w in warm_sessions.values()):
+                if ENGINE.busy():
                     log.info("update available but a task is running — waiting")
                 else:
                     log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
@@ -665,13 +528,12 @@ async def self_update(app) -> None:
 
 def apply_model_request() -> None:
     """The assistant writes a model id to MODEL_REQUEST when asked to switch."""
-    global current_model
     if not MODEL_REQUEST.exists():
         return
     want = MODEL_REQUEST.read_text().strip().splitlines()[0].strip() if MODEL_REQUEST.read_text().strip() else ""
     MODEL_REQUEST.unlink(missing_ok=True)
     if want:
-        current_model = want
+        set_model(want)
         log.info("model switched to %s", want)
 
 
@@ -724,7 +586,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     model_cached = (
         Path.home() / ".cache" / "huggingface" / "hub" / f"models--Systran--faster-whisper-{WHISPER_MODEL}"
     ).exists()
-    if _whisper is None and not model_cached:
+    if not model_cached:
         await msg.reply_text("🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
     tg_file = await voice.get_file()
     with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
@@ -761,50 +623,29 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    chat_id = update.effective_chat.id
-    chat_has_session[chat_id] = False
-    warm = warm_sessions.pop(chat_id, None)
-    if warm is not None:
-        if warm.client is not None and not warm.busy:
-            await update.effective_message.reply_text("📓 Saving notes from this conversation…")
-            try:
-                async def silent(_text: str) -> None:
-                    pass
-
-                await asyncio.wait_for(
-                    warm.ask(
-                        "(This thread is ending. File anything worth keeping from it into "
-                        "your memory folder — extend the topic file it belongs to, or create "
-                        "one if nothing fits — with facts dated inline. Skip it if nothing "
-                        "here is worth remembering. Output nothing; your reply is not shown.)",
-                        silent,
-                    ),
-                    timeout=90,
-                )
-            except Exception as e:
-                log.warning("memory-on-new failed: %s", e)
-        await warm.dispose()
-    clear_session_id(chat_id)
+    if HOME in ENGINE.chats and not ENGINE.chat_busy(HOME):
+        await update.effective_message.reply_text("📓 Saving notes from this conversation…")
+        try:
+            await asyncio.wait_for(
+                ENGINE.send_message(
+                    HOME, "", log_user=False, quiet=True,
+                    prompt="(This thread is ending. File anything worth keeping from it into "
+                    "your memory folder — extend the topic file it belongs to, or create "
+                    "one if nothing fits — with facts dated inline. Skip it if nothing "
+                    "here is worth remembering. Output nothing; your reply is not shown.)",
+                ),
+                timeout=90,
+            )
+        except Exception as e:
+            log.warning("memory-on-new failed: %s", e)
+    await ENGINE.reset_chat(HOME)
     await update.effective_message.reply_text("🆕 Fresh conversation.")
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    chat_id = update.effective_chat.id
-    warm = warm_sessions.get(chat_id)
-    if warm is not None and warm.busy and warm.client is not None:
-        try:
-            await warm.client.interrupt()
-            await update.effective_message.reply_text("🛑 Stopping the current task.")
-            return
-        except Exception:
-            await warm.dispose()
-            await update.effective_message.reply_text("🛑 Stopped.")
-            return
-    proc = chat_procs.get(chat_id)
-    if proc is not None and proc.returncode is None:
-        proc.kill()
+    if await ENGINE.stop_chat(HOME):
         await update.effective_message.reply_text("🛑 Stopping the current task.")
     else:
         await update.effective_message.reply_text("Nothing is running.")
@@ -836,7 +677,8 @@ def get_oauth_token() -> str:
 
 
 async def send_outbound(bot, text: str) -> None:
-    log_history("assistant", text)
+    if bot is None:
+        return
     for chunk in split_chunks(text.strip() or "…"):
         try:
             await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML)
@@ -846,31 +688,32 @@ async def send_outbound(bot, text: str) -> None:
 
 async def run_outbound(app, job: dict) -> None:
     """The initiative: a scheduled job hands the assistant the pen."""
-    chat_id = ALLOWED_USER_ID
-    lock = chat_locks.setdefault(chat_id, asyncio.Lock())
-    async with lock:
-        collected: list[str] = []
-
-        async def deliver(text: str) -> None:
-            if text.strip() == "NOTHING_TO_SAY":
-                return
-            collected.append(text)
+    async def deliver(text: str) -> None:
+        if app:
             await send_outbound(app.bot, text)
-            await flush_outbox(app.bot, chat_id)
+            await flush_outbox(app.bot, ALLOWED_USER_ID)
 
-        prompt = (
-            f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-            f"Instruction: {job.get('prompt', '')} — do it now; your messages go straight to "
-            "the human's Telegram. If this job's answer is genuinely not worth sending right "
-            "now, reply exactly NOTHING_TO_SAY.)"
-        )
-        log_history("system", f"[job fired: {job.get('name', 'job')}]")
-        warm = get_warm(chat_id)
-        try:
-            await asyncio.wait_for(warm.ask(prompt, deliver), timeout=TASK_TIMEOUT)
-        except Exception as e:
-            log.warning("outbound job failed (%s)", e)
-            await warm.dispose()
+    nudge = ""
+    if job.get("name") == "morning-brief":
+        pending = unresolved_setup()
+        if pending:
+            nudge = (
+                f" Setup nudge: {', '.join(pending)} still unset in {SETUP_FILE} — end the "
+                "brief with ONE short line offering the single most useful of them "
+                "(calendar or email first: they make tomorrow's brief real). One item, "
+                "one line, no pressure; mark it declined if they say no."
+            )
+    prompt = (
+        f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
+        f"Instruction: {job.get('prompt', '')}{nudge} — do it now; your messages go straight to "
+        "the human (their app and Telegram). If this job's answer is genuinely not worth sending "
+        "right now, reply exactly NOTHING_TO_SAY.)"
+    )
+    log_history("system", f"[job fired: {job.get('name', 'job')}]")
+    try:
+        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver)
+    except Exception as e:
+        log.warning("outbound job failed (%s)", e)
 
 
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
@@ -901,16 +744,107 @@ async def scheduler(app) -> None:
                     state[job.get("name", job.get("prompt", ""))] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job.get("name"))
-                    asyncio.create_task(run_outbound(app, job))
+                    if job.get("project"):
+                        # A project job runs in that project's own chat.
+                        asyncio.create_task(ENGINE.send_message(
+                            str(job["project"]), "", log_user=False,
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})",
+                        ))
+                    else:
+                        asyncio.create_task(run_outbound(app, job))
         except Exception as e:
             log.warning("scheduler error: %s", e)
         await asyncio.sleep(20)
 
 
+def voice_available() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("faster_whisper") is not None
+
+
+async def claude_connected() -> None:
+    """Sessions opened before sign-in had no credentials; the next message reopens them."""
+    for pid in list(ENGINE.chats):
+        session = ENGINE.chats.pop(pid, None)
+        if session is not None:
+            await session.close()
+    await refresh_models_file()
+
+
+async def start_engine() -> None:
+    ENGINE.configure_home(WORKSPACE, build_system, lambda: build_system(for_project=True))
+    ENGINE.history_hook = lambda role, text: log_history("you" if role == "you" else "assistant", text)
+    old = load_sessions().get(str(ALLOWED_USER_ID))
+    if old and not ENGINE.kv_get(f"session:{HOME}"):
+        ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed
+    ENGINE.start()
+    if os.environ.get("KEN_WEB", "1") == "0":
+        return
+    setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup)
+    # After a restart the old process may hold the port for a moment; wait for it.
+    for attempt in range(15):
+        try:
+            await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
+            return
+        except OSError as e:
+            if attempt == 14:
+                log.warning("app server could not start: %s", e)
+            else:
+                await web_app.runner.cleanup()
+                await asyncio.sleep(1)
+
+
+async def notify_telegram(app) -> None:
+    """Approvals reach the phone with buttons; finished background work as one line."""
+    q = ENGINE.subscribe()
+    while True:
+        ev = await q.get()
+        try:
+            if ev["type"] == "approval.created":
+                a = ev["approval"]
+                name = "Ken" if a["project"] == HOME else ENGINE.get_project(a["project"])["name"]
+                text = f"<b>{html.escape(name)} wants your OK</b>\n{html.escape(a['title'])}"
+                if a["body"]:
+                    text += f"\n\n{html.escape(a['body'][:3000])}"
+                buttons = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✓ Approve", callback_data=f"appr:{a['id']}:approve"),
+                    InlineKeyboardButton("Skip", callback_data=f"appr:{a['id']}:skip"),
+                ]])
+                await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
+            elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
+                name = ENGINE.get_project(ev["project"])["name"]
+                mark = "✓" if ev.get("status") == "done" else "✕"
+                await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
+        except Exception as e:
+            log.warning("telegram notify failed: %s", e)
+
+
+async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    _, aid, decision = q.data.split(":", 2)
+    try:
+        a = await ENGINE.resolve_approval(aid, decision)
+    except KeyError:
+        await q.answer("That one's gone.")
+        return
+    await q.answer("Approved" if a["status"] == "approved" else "Skipped")
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+        await q.message.reply_text("✓ Approved — on it." if a["status"] == "approved" else "Skipped.")
+    except Exception:
+        pass
+
+
 async def startup(app) -> None:
+    await start_engine()
+    asyncio.create_task(notify_telegram(app))
     asyncio.create_task(scheduler(app))
     asyncio.create_task(self_update(app))
-    asyncio.create_task(asyncio.to_thread(get_whisper))
+    asyncio.create_task(warmup_voice())
     try:
         await app.bot.set_my_commands([
             ("coffee", "Keep this computer awake"),
@@ -928,17 +862,23 @@ async def refresh_models_file(app=None) -> None:
     """Fetch the live model list with Claude Code's own auth; leave it on disk
     for the assistant to read when asked about switching."""
     try:
-        token = await asyncio.to_thread(get_oauth_token)
-        if not token:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        token = "" if api_key else await asyncio.to_thread(get_oauth_token)
+        if not api_key and not token:
             return
+        headers = {"anthropic-version": "2023-06-01"}
+        if api_key:
+            headers["x-api-key"] = api_key
+        else:
+            headers.update({
+                "Authorization": f"Bearer {token}",
+                "anthropic-beta": "oauth-2025-04-20",
+            })
         async with httpx.AsyncClient() as h:
             r = await h.get(
                 "https://api.anthropic.com/v1/models",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "anthropic-beta": "oauth-2025-04-20",
-                    "anthropic-version": "2023-06-01",
-                },
+                params={"limit": 1000},
+                headers=headers,
                 timeout=15,
             )
             r.raise_for_status()
@@ -949,32 +889,72 @@ async def refresh_models_file(app=None) -> None:
         log.warning("model list refresh failed: %s", e)
 
 
-async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
-        return
+# Commands shared by Telegram and the desktop chat: plain functions that return
+# the reply text (and, for /model with no argument, the choices to show).
+
+# Ken tracks only the caffeinate it started, so other apps' keep-awake is never
+# mistaken for Ken's or stopped by /decaf. The pid file survives Ken restarting.
+AWAKE_PID = KEN_HOME / ".caffeinate.pid"
+_coffee = None
+
+
+def _coffee_pid() -> int | None:
     import subprocess
 
-    if subprocess.run(["pgrep", "-x", "caffeinate"], capture_output=True).returncode == 0:
-        await update.effective_message.reply_text("☕ Already on it — this computer isn't going anywhere.")
-        return
-    subprocess.Popen(
-        ["caffeinate", "-di"],
+    if _coffee is not None:
+        return _coffee.pid if _coffee.poll() is None else None
+    try:
+        pid = int(AWAKE_PID.read_text())
+    except (OSError, ValueError):
+        return None
+    name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return pid if name.endswith("caffeinate") else None
+
+
+def is_awake() -> bool:
+    return _coffee_pid() is not None
+
+
+def coffee() -> str:
+    import subprocess
+
+    global _coffee
+    if is_awake():
+        return "☕ Already on it — this computer isn't going anywhere."
+    _coffee = subprocess.Popen(
+        ["caffeinate", "-dimsu"],  # everything awake, display included, so screen and browser work keeps running
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    await update.effective_message.reply_text("☕ Staying awake. (A closed laptop lid still sleeps it.)")
+    AWAKE_PID.write_text(str(_coffee.pid))
+    return "☕ Staying awake. Lock your screen anytime; a closed laptop lid still sleeps it."
 
 
-async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
-        return
-    import subprocess
+def decaf() -> str:
+    import signal
 
-    killed = subprocess.run(["pkill", "-x", "caffeinate"], capture_output=True).returncode == 0
-    await update.effective_message.reply_text(
-        "🫖 Decaf — normal sleep is back." if killed else "Nothing was keeping it awake."
-    )
+    global _coffee
+    pid = _coffee_pid()
+    AWAKE_PID.unlink(missing_ok=True)
+    if pid is None:
+        return "Nothing was keeping it awake."
+    os.kill(pid, signal.SIGTERM)
+    if _coffee is not None:
+        _coffee.wait()
+    _coffee = None
+    return "🫖 Decaf — normal sleep is back."
+
+
+def set_model(name: str) -> None:
+    global current_model
+    current_model = name
+    MODEL_CHOICE.write_text(name + "\n")
+
+
+def active_model() -> str:
+    """The chosen model, else the newest Opus the account offers (the list is newest first)."""
+    return current_model or next((m for m in available_models() if "opus" in m), "")
 
 
 def available_models() -> list[str]:
@@ -984,42 +964,52 @@ def available_models() -> list[str]:
         return []
 
 
+async def model(arg: str = "") -> dict:
+    """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
+    # The list comes from the account's own /v1/models; refresh it daily as models change.
+    stale = not MODELS_FILE.exists() or time.time() - MODELS_FILE.stat().st_mtime > 86400
+    if stale or not available_models():
+        await refresh_models_file()
+    models = available_models()
+    want = arg.strip().lower()
+    if not want:
+        return {"reply": f"Model — current: {active_model() or 'default'}", "choices": models, "current": active_model()}
+    match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
+    if not match:
+        return {"reply": f"No model matching “{want}”."}
+    set_model(match)
+    return {"reply": f"✓ {match} — from the next task."}
+
+
+async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text(coffee())
+
+
+async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text(decaf())
+
+
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Native picker, like Claude Code's /model: tap a model, it switches."""
-    global current_model
+    """Native picker: tap a model, it switches."""
     if not authorized(update):
         return
-    models = available_models()
-    if not models:
-        await refresh_models_file()
-        models = available_models()
-    if context.args:  # fast path: /model opus
-        want = context.args[0].lower()
-        match = next((m for m in models if m == want), None) or next(
-            (m for m in models if want in m), None
-        )
-        if match:
-            current_model = match
-            await update.effective_message.reply_text(f"✓ {match} — from the next task.")
-        else:
-            await update.effective_message.reply_text(f"No model matching “{want}”.")
-        return
+    result = await model(" ".join(context.args or []))
     keyboard = [
-        [InlineKeyboardButton(("👉 " if m == current_model else "") + m, callback_data=f"model:{m}")]
-        for m in models
+        [InlineKeyboardButton(("👉 " if m == active_model() else "") + m, callback_data=f"model:{m}")]
+        for m in result.get("choices", [])
     ]
     await update.effective_message.reply_text(
-        f"Model — current: {current_model or 'default'}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        result["reply"], reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
     )
 
 
 async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global current_model
     q = update.callback_query
     if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
         return
-    current_model = q.data.split(":", 1)[1]
+    set_model(q.data.split(":", 1)[1])
     await q.answer(f"Switched to {current_model}")
     try:
         await q.edit_message_text(f"✓ {current_model} — from the next task.")
@@ -1027,8 +1017,46 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 
+COMMANDS = {
+    "model": model,
+    "coffee": lambda arg="": {"reply": coffee(), "awake": True},
+    "decaf": lambda arg="": {"reply": decaf(), "awake": False},
+    "awake": lambda arg="": {"awake": is_awake()},
+}
+
+
+async def headless() -> None:
+    """No Telegram configured: run the engine, the app and the schedule on their own."""
+    await start_engine()
+    asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
+    asyncio.create_task(scheduler(None))
+    asyncio.create_task(self_update(None))
+    await refresh_models_file()
+    log.info("ken is running without Telegram — open the app with `ken open`")
+    await asyncio.Event().wait()
+
+
+def ensure_home() -> None:
+    """First run without the installer (the Mac app): the same files install.sh creates."""
+    import shutil
+
+    for d in (WORKSPACE, MEMORY_DIR, KEN_HOME / "logs"):
+        d.mkdir(parents=True, exist_ok=True)
+    soul, legacy = WORKSPACE / "SOUL.md", WORKSPACE / "CLAUDE.md"
+    if legacy.exists() and not soul.exists():
+        legacy.rename(soul)
+    if not soul.exists():
+        soul.write_text((SOURCE / "SOUL.template.md").read_text().replace("{{NAME}}", "my human"))
+    if not JOBS_FILE.exists():
+        shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
+
+
 def main() -> None:
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    ensure_home()
+    ensure_setup_file()
+    if not BOT_TOKEN:
+        asyncio.run(headless())
+        return
     app = (
         Application.builder()
         .token(BOT_TOKEN)
@@ -1041,6 +1069,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
+    app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
     app.add_handler(CommandHandler("coffee", cmd_coffee))
     app.add_handler(CommandHandler("decaf", cmd_decaf))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

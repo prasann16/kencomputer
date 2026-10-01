@@ -3,3 +3,4 @@ python-dotenv
 httpx
 faster-whisper
 claude-agent-sdk
+aiohttp
