@@ -68,41 +68,16 @@ fi
 command -v git >/dev/null || fail "git is required — install it and re-run"
 command -v curl >/dev/null || fail "curl is required"
 
-# Find a Python >= 3.9 — people's default python3 is often ancient (conda, old distros).
-find_python() {
-  for p in python3.13 python3.12 python3.11 python3.10 python3.9 python3 \
-           /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
-    if command -v "$p" >/dev/null 2>&1; then
-      if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
-        command -v "$p"; return 0
-      fi
-    fi
-  done
-  return 1
-}
-PY="$(find_python || true)"
-if [ -n "$PY" ]; then
-  ok "Python found: $PY ($("$PY" -V 2>&1))"
-else
-  say "→ No modern Python found — installing a private one (via uv, no sudo needed)…"
+# Every install runs the same Python, managed by uv (no sudo; it downloads Python itself).
+# 3.13 is the newest the whole stack supports on both Intel and Apple Silicon Macs.
+KEN_PYTHON=3.13
+if ! command -v uv >/dev/null 2>&1; then
+  say "→ Installing uv (manages Ken's Python, no sudo needed)…"
   curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
   export PATH="$HOME/.local/bin:$PATH"
-  command -v uv >/dev/null || fail "couldn't install uv — install Python 3.10+ manually and re-run"
-  ok "uv installed (manages its own Python)"
-  PY="uv"
+  command -v uv >/dev/null || fail "couldn't install uv — see https://docs.astral.sh/uv/ and re-run"
 fi
-ok "git, curl found"
-
-# ---------- 1. claude code ----------
-if command -v claude >/dev/null || [ -x "$HOME/.local/bin/claude" ]; then
-  ok "Claude Code found"
-else
-  say "→ Installing Claude Code (Anthropic's official installer)…"
-  curl -fsSL https://claude.ai/install.sh | bash
-  ok "Claude Code installed"
-fi
-export PATH="$HOME/.local/bin:$PATH"
-CLAUDE_BIN="$(command -v claude || echo "$HOME/.local/bin/claude")"
+ok "uv ready ($(uv --version))"
 
 # ---------- 2. fetch ken ----------
 mkdir -p "$KEN_HOME" "$BIN_DIR"
@@ -119,22 +94,14 @@ else
 fi
 
 # ---------- 3. python env ----------
-# Rebuild the venv if it exists but was made with a too-old Python.
-if [ -d "$KEN_HOME/venv" ]; then
-  if ! "$KEN_HOME/venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
-    dim "  (rebuilding environment — previous one used an old Python)"
-    rm -rf "$KEN_HOME/venv"
-  fi
+# Rebuild the venv if it was made with a different Python than Ken uses now.
+if [ -d "$KEN_HOME/venv" ] && ! "$KEN_HOME/venv/bin/python" -c "import sys; raise SystemExit(0 if sys.version.startswith('$KEN_PYTHON.') else 1)" 2>/dev/null; then
+  dim "  (rebuilding environment on Python $KEN_PYTHON)"
+  rm -rf "$KEN_HOME/venv"
 fi
-if [ ! -d "$KEN_HOME/venv" ]; then
-  if [ "$PY" = "uv" ]; then
-    uv venv --seed --python 3.12 "$KEN_HOME/venv" >/dev/null
-  else
-    "$PY" -m venv "$KEN_HOME/venv"
-  fi
-fi
+[ -d "$KEN_HOME/venv" ] || uv venv -q --seed --managed-python --python "$KEN_PYTHON" "$KEN_HOME/venv"
 "$KEN_HOME/venv/bin/pip" install -q --upgrade pip
-"$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
+"$KEN_HOME/venv/bin/pip" install -q -U -r "$KEN_HOME/app/requirements.txt"
 ok "Python environment ready"
 
 if [ ! -d "$HOME/.cache/huggingface/hub/models--Systran--faster-whisper-small" ]; then

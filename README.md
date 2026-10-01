@@ -77,7 +77,7 @@ ken uninstall  remove the service (keeps your data)
 
 ## Requirements
 
-- macOS or Linux, `python3` (3.9+), `git`
+- macOS or Linux and `git`. The installer sets up Python 3.13 itself (via uv, no sudo)
 - A [Claude](https://claude.ai) subscription (Pro or Max)
 - A Telegram account
 

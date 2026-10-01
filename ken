@@ -17,6 +17,9 @@ svc() {
   fi
 }
 
+# Inside a function so bash reads the whole script before running it:
+# `ken update` replaces this very file mid-run.
+main() {
 case "${1:-help}" in
   start|stop|restart) svc "$1"; echo "done." ;;
   status) svc status ;;
@@ -30,7 +33,7 @@ case "${1:-help}" in
     fi
     echo "→ updating ken…"
     git -C "$KEN_HOME/app" pull
-    "$KEN_HOME/venv/bin/pip" install -q -r "$KEN_HOME/app/requirements.txt"
+    "$KEN_HOME/venv/bin/pip" install -q -U -r "$KEN_HOME/app/requirements.txt"
     cp "$KEN_HOME/app/ken" "$HOME/.local/bin/ken" 2>/dev/null || true
     svc restart
     echo "✓ updated and restarted." ;;
@@ -69,3 +72,5 @@ ken — your AI's computer
 EOF
     ;;
 esac
+}
+main "$@"
