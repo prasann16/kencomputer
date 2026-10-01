@@ -16,13 +16,17 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
+      # uv's Python carries its own OpenSSL. The runner's Python links a system one that can
+      # shadow the newer OpenSSL a source-built package (cryptography on Intel) needs.
+      - uses: astral-sh/setup-uv@v6
       - run: |
-          python -m venv .venv
-          .venv/bin/pip install -q -r requirements.txt pyinstaller
+          uv venv -q --seed --managed-python --python 3.13 .venv
+          uv pip install -q --python .venv/bin/python -r requirements.txt pyinstaller
           .venv/bin/python desktop/build_engine.py
-          tar -czf engine-${{ matrix.arch }}.tgz -C dist engine-${{ matrix.arch }}
+      # Fail the release if any native piece of the bundled engine can't load.
+      - run: |
+          dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "import ssl, cryptography.hazmat.bindings._rust, ctranslate2, av, aiohttp, claude_agent_sdk; print('engine loads:', ssl.OPENSSL_VERSION)"
+      - run: tar -czf engine-${{ matrix.arch }}.tgz -C dist engine-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: engine-${{ matrix.arch }}
