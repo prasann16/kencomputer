@@ -12,6 +12,10 @@ import logging
 from typing import Awaitable, Callable
 
 log = logging.getLogger("ken")
+# Claude Code's error when a model is newer than it supports ("...does not support this model;
+# version X or newer is required"). Ken retries on the default model instead of showing it.
+NEEDS_NEWER_CLI = "does not support this model"
+TOO_NEW = object()
 
 OnText = Callable[[str], Awaitable[None]]
 OnTool = Callable[[str], Awaitable[None]]
@@ -121,10 +125,20 @@ class ClaudeSession(Session):
         await self._ensure()
 
     async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
+        final = await self._ask(prompt, on_text, on_tool, on_delta)
+        if final is TOO_NEW:  # the model needs a newer Claude Code: answer on the default instead
+            log.warning("model %s needs a newer Claude Code; using the default until Ken updates", self.model)
+            self.brain.unsupported.add(self.model)
+            final = await self._ask(prompt, on_text, on_tool, on_delta)
+        return None if final is TOO_NEW else final
+
+    async def _ask(self, prompt, on_text, on_tool=None, on_delta=None):
         from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolUseBlock
 
         await self._ensure()
         model = self.brain.model_fn()
+        if model in self.brain.unsupported:
+            model = ""
         if model != self.model:
             await self.client.set_model(model or None)
             self.model = model
@@ -151,6 +165,9 @@ class ClaudeSession(Session):
                     text = "\n".join(
                         b.text for b in msg.content if isinstance(b, TextBlock) and b.text
                     ).strip()
+                    if NEEDS_NEWER_CLI in text:
+                        final = TOO_NEW
+                        continue
                     if text and text != last_text:
                         last_text = final = text
                         await on_text(text)
@@ -158,6 +175,9 @@ class ClaudeSession(Session):
                     if msg.session_id:
                         self.session_id = msg.session_id
                     result = (msg.result or "").strip()
+                    if NEEDS_NEWER_CLI in result or final is TOO_NEW:
+                        final = TOO_NEW
+                        continue
                     if result and result != last_text:
                         final = result
                         await on_text(result)
@@ -187,6 +207,7 @@ class ClaudeBrain(Brain):
 
     def __init__(self, model_fn: Callable[[], str] = lambda: "", *, permission_mode="bypassPermissions", can_use_tool=None, mcp_factory=None) -> None:
         self.model_fn = model_fn
+        self.unsupported: set[str] = set()  # models the installed Claude Code rejected
         self.permission_mode = permission_mode
         self.can_use_tool = can_use_tool
         self.mcp_factory = mcp_factory

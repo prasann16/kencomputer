@@ -1,6 +1,7 @@
-python-telegram-bot>=21
-python-dotenv
-httpx
-faster-whisper
-claude-agent-sdk
-aiohttp
+python-telegram-bot>=22.8
+python-dotenv>=1.2
+httpx>=0.28
+faster-whisper>=1.2.1
+# Claude Code ships inside the SDK; new models need a recent one. Updates install with -U.
+claude-agent-sdk>=0.2.163
+aiohttp>=3.14
