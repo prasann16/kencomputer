@@ -43,7 +43,7 @@ jobs:
           npm ci
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
           # Create the draft first: both arches finish together and would otherwise each make one.
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --notes 
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --notes "Ken for Mac ${GITHUB_REF_NAME#v}"
           echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
           npx electron-builder --mac --arm64 --x64 --publish always
         env:
