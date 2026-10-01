@@ -26,6 +26,8 @@ jobs:
       # Fail the release if any native piece of the bundled engine can't load.
       - run: |
           dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "import ssl, cryptography.hazmat.bindings._rust, ctranslate2, av, aiohttp, claude_agent_sdk; print('engine loads:', ssl.OPENSSL_VERSION)"
+          # Voice: decode audio the way a voice note is decoded (no model download needed).
+          dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "import wave, tempfile; from faster_whisper.audio import decode_audio; p = tempfile.mktemp(suffix='.wav'); w = wave.open(p, 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(3200)); w.close(); print('voice decodes:', len(decode_audio(p)), 'samples')"
       - run: tar -czf engine-${{ matrix.arch }}.tgz -C dist engine-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
