@@ -775,7 +775,12 @@ async def claude_connected() -> None:
 
 async def start_engine() -> None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: build_system(for_project=True))
-    ENGINE.history_hook = lambda role, text: log_history("you" if role == "you" else "assistant", text)
+    def on_home_message(role: str, text: str) -> None:
+        log_history("you" if role == "you" else "assistant", text)
+        if role != "you":
+            BORN_FLAG.touch(exist_ok=True)  # Ken's first real reply (in the app or Telegram) is its birth
+
+    ENGINE.history_hook = on_home_message
     old = load_sessions().get(str(ALLOWED_USER_ID))
     if old and not ENGINE.kv_get(f"session:{HOME}"):
         ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed
