@@ -47,7 +47,7 @@ git tag v0.1.2 && git push origin v0.1.2      # wait for the release build
 desktop/check-release.sh v0.1.2 --publish
 ```
 
-Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
+Download files keep fixed names, so `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-arm64.dmg` (and `Ken-x64.dmg`) always point at the newest release. Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
 
 **Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
 
