@@ -1,0 +1,59 @@
+# Once a week: move Ken's parts (Claude Code above all) to their newest versions, test them,
+# and prepare a release. Publishing stays one command on a Mac, named in the issue this opens.
+name: Weekly update
+on:
+  schedule:
+    - cron: "0 9 * * 1"  # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+jobs:
+  update:
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: lock
+        run: |
+          uv pip compile requirements.in --universal --python-version 3.10 --no-header --upgrade -o requirements.txt -q
+          git diff --quiet requirements.txt && echo "Nothing new this week." || echo "changed=true" >> "$GITHUB_OUTPUT"
+      - if: steps.lock.outputs.changed
+        run: |
+          # Every part must have a ready-made build for every kind of computer Ken runs on.
+          for platform in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            MACOSX_DEPLOYMENT_TARGET=14.0 uv pip install -q --dry-run --only-binary :all: --python-platform "$platform" \
+              --python-version 3.13 --target "$RUNNER_TEMP/dry" -r requirements.txt
+          done
+          uv venv -q --seed --managed-python --python 3.13 .venv
+          uv pip install -q --python .venv/bin/python -r requirements.txt pytest pytest-asyncio pytest-aiohttp
+          tests/check.sh
+      - if: steps.lock.outputs.changed
+        run: |
+          last="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+          tag="${last%.*}.$(( ${last##*.} + 1 ))"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "Weekly update of Ken's parts" requirements.txt
+          git tag -a "$tag" -m "Ken for Mac ${tag#v}"
+          git push -q origin HEAD "$tag"
+          gh workflow run release.yml --ref "$tag"
+          gh issue create --title "Ken ${tag#v} is ready to publish" --body "The weekly update moved these parts and the tests passed:
+
+          \`\`\`diff
+          $(git show --format= --unified=0 HEAD -- requirements.txt | grep -E '^[+-][a-z]' )
+          \`\`\`
+
+          When the [release build](https://github.com/${{ github.repository }}/actions/workflows/release.yml) finishes, publish it from a Mac:
+
+              desktop/check-release.sh $tag --publish"

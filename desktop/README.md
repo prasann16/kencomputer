@@ -35,16 +35,23 @@ home that already has a terminal install (`~/.ken/app/bot.py`) keeps using that 
 
 ## Releasing
 
-Push a version tag. `.github/workflows/release.yml` builds the engine on an Apple Silicon
-and an Intel runner, then signs, notarizes and uploads Ken for both to a **draft** GitHub
-Release. Check the draft and publish it; installed apps download the update within four
-hours and install it the next time their window is closed while Ken is idle.
+Four rules keep a change from breaking Ken somewhere else:
+
+1. **Locked parts.** `requirements.txt` pins the exact version of every package (generated from `requirements.in`). Dev, terminal installs and release builds all install the same versions.
+2. **Every change is tested.** Pull requests and `main` run `tests/check.sh`: the unit tests, plus a check that Ken's native parts load and can decode a voice note.
+3. **A tag builds a draft.** `.github/workflows/release.yml` builds the engine on an Apple Silicon and an Intel runner, runs the same native-parts check inside each bundled engine, then signs, notarizes and uploads Ken to a **draft** GitHub Release.
+4. **One command publishes.** It downloads the draft like a user would, checks macOS accepts it, sends a real chat message and a real voice note to its engine, and publishes only if all of that passes:
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.1.2 && git push origin v0.1.2      # wait for the release build
+desktop/check-release.sh v0.1.2 --publish
 ```
 
-Repository secrets the workflow needs:
+Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
+
+**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
+
+Repository secrets the release workflow needs:
 
 | Secret | What |
 |---|---|
@@ -57,6 +64,5 @@ Repository secrets the workflow needs:
 ## Tests
 
 ```sh
-.venv/bin/python -m pytest tests -q --asyncio-mode=auto
-npm run test:desktop
+tests/check.sh
 ```
