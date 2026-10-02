@@ -41,7 +41,8 @@
       "hardenedRuntime": true,
       "entitlements": "desktop/entitlements.mac.plist",
       "entitlementsInherit": "desktop/entitlements.mac.plist",
-      "notarize": true
+      "notarize": true,
+      "artifactName": "Ken-${arch}.${ext}"
     },
     "icon": "desktop/icon.png",
     "extraResources": [

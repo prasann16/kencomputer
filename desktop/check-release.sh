@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null && { echo "Port $PORT is in use; stop whatever is on it and re-run."; exit 1; }
 VERSION="${TAG#v}"
-[ "$(uname -m)" = arm64 ] && DMG="Ken-$VERSION-arm64.dmg" || DMG="Ken-$VERSION.dmg"
+[ "$(uname -m)" = arm64 ] && DMG="Ken-arm64.dmg" || DMG="Ken-x64.dmg"
 echo "Checking $TAG ($DMG)"
 
 # 1. Download it like a browser would (quarantined), and let macOS judge it.
