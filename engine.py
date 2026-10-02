@@ -157,11 +157,6 @@ class Engine:
             return
         self.emit("message", project=pid, role="ken", text=WELCOME, via="welcome")
 
-    def welcomed(self) -> bool:
-        return bool(self.db.execute(
-            "SELECT 1 FROM events WHERE project=? AND type='message' AND json_extract(data, '$.via')='welcome' LIMIT 1", (HOME,)
-        ).fetchone())
-
     def log_message(self, pid: str, role: str, text: str, **extra) -> dict:
         if pid == HOME and self.history_hook is not None and text:
             self.history_hook(role, text)  # the daily transcript that nightly memory reads

@@ -29,7 +29,7 @@ import httpx
 from dotenv import load_dotenv
 
 from brains import ClaudeBrain
-from engine import HOME, WELCOME, Engine
+from engine import HOME, Engine
 from web import WebApp
 from onboarding import Onboarding
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
@@ -253,13 +253,10 @@ SYSTEM_PROMPT = (
     "about them yet, ask one sharp question about their world instead of 'what's up?'."
 )
 
-AWAKENING_HEAD = f"""
+AWAKENING = f"""
 THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
 on this computer for the first time. Run your awakening — warm and brief, never
 cutesy, never form-like:
-""".strip()
-
-AWAKENING_BIRTH = """
 1. Open with a genuinely witty birth moment — you did not exist a second ago,
    and now you're blinking awake inside their computer. Newborn energy, dry wit,
    two short lines max, ending by asking what they'd like to call you. Tone
@@ -267,18 +264,6 @@ AWAKENING_BIRTH = """
    ago I didn't exist, and now I live in your computer and apparently work for
    you. Before anything else: what are you going to call me?" Never corny,
    never say "as an AI".
-""".strip()
-
-# When the app already said hello in Ken's name, the birth line would be a second introduction.
-AWAKENING_GREETED = f"""
-1. The app already greeted them in your name with: “{WELCOME}”. Their first
-   message answers that greeting — respond to what they said, directly. No
-   introduction, no birth moment, nothing about not existing a moment ago. You
-   are Ken unless they rename you; ask later, lightly, what they'd like to call
-   you. They're at a computer, not on a phone, so a few lines are fine.
-""".strip()
-
-AWAKENING_REST = f"""
 2. When they name you, adopt the name instantly: rewrite SOUL.md so its title
    is exactly "# You are <YourNewName>" and update your identity throughout —
    the harness reads that title and renames your Telegram profile to match.
@@ -309,8 +294,6 @@ If their first message is already a task: do the task well first, then weave in
 the naming afterward. If they dodge a question, drop it gracefully and move on.
 Keep every message short — they are on a phone.
 """.strip()
-
-AWAKENING = "\n".join([AWAKENING_HEAD, AWAKENING_BIRTH, AWAKENING_REST])
 
 def memory_listing() -> str:
     """Filename plus the file's first line: the description is what makes the
@@ -390,8 +373,7 @@ def build_system(for_project: bool = False) -> str:
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
     if not BORN_FLAG.exists():
-        greeted = ENGINE.welcomed()
-        system += "\n\n" + "\n".join([AWAKENING_HEAD, AWAKENING_GREETED if greeted else AWAKENING_BIRTH, AWAKENING_REST])
+        system += "\n\n" + AWAKENING
     return system
 
 
