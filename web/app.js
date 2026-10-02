@@ -181,7 +181,7 @@ function useRecorder(onAudio, toast) {
   return {status,stream,seconds,start,finish,heard,error,peak:(p)=>{peaks.current.push(p);if(p>0.0000001)setHeard(true);}};
 }
 
-function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey, recordRequest }) {
+function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey }) {
   const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem('ken-draft:' + storageKey) || '{}'); } catch { return {}; } })();
   const [text, setText] = useState(savedDraft.text || '');
   const [files, setFiles] = useState(savedDraft.files || []);
@@ -199,7 +199,6 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
   const commands = text.startsWith('/') && !text.includes(' ') ? COMMANDS.filter(([name])=>name.startsWith(text)) : [];
   const [commandIndex,setCommandIndex]=useState(0);
   useEffect(()=>setCommandIndex(0),[text]);
-  useEffect(() => { if (recordRequest) recorder.start(); }, [recordRequest]);
 
   useEffect(() => {
     const el = ta.current;
@@ -455,7 +454,6 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
     return () => { for (const [name, fn] of Object.entries(events)) removeEventListener(name, fn); };
   }, []);
   const [dropped, setDropped] = useState(null);
-  const [recordRequest, setRecordRequest] = useState(0);
   const messages = chat ? chat.messages : [];
   const clearedAt = chat ? chat.cleared_at || 0 : 0;
   const busy = chat && chat.busy;
@@ -489,7 +487,7 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
 >
     <div class="scroll" ref=${thread} onScroll=${() => { const el = thread.current; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
       <div class="thread conversation-thread">
-        ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'Hey, I’m Ken. Your assistant.'}</p><p>${project ? 'Tell me what you’d like to work on.' : clearedAt ? 'A fresh thread. What would you like to work on?' : 'Tell me what you do for work and what you’d like off your plate.'}</p>${voice && !project && !clearedAt && html`<button class="text-action voice-invite" onClick=${() => setRecordRequest((n) => n + 1)}>${Icon.mic} Record a voice note</button><p class="welcome-hint">Or just type below.</p>`}</div>`}
+        ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'A fresh thread.'}</p><p>${project ? 'Tell me what you’d like to work on.' : 'What would you like to work on?'}</p></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
         ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
         <div ref=${spacer} aria-hidden="true"></div>
@@ -498,7 +496,7 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
     <div class="chat-bottom">
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
-      <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} recordRequest=${recordRequest} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
+      <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
         onVoice=${(...args)=>{pinNext();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
         onSend=${async (text, files) => { pinNext(); await onSend(text, files); }}/>
     </div>

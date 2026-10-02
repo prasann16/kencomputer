@@ -193,7 +193,9 @@ class WebApp:
         return _json(p)
 
     async def chat(self, request):
-        return _json(self.engine.chat_view(self._pid(request)))
+        pid = self._pid(request)
+        self.engine.welcome(pid)
+        return _json(self.engine.chat_view(pid))
 
     async def open_chat(self, request):
         self._spawn(self.engine.on_open(self._pid(request)))

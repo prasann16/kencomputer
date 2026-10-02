@@ -28,6 +28,7 @@ log = logging.getLogger("ken")
 HOME = "home"  # the conversation with Ken itself
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
+WELCOME = "Hey, I’m Ken. Your assistant.\n\nTell me what you do for work and what you’d like off your plate. A voice note is perfect."
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -148,6 +149,18 @@ class Engine:
             (pid, limit),
         ).fetchall()
         return [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
+
+    def welcome(self, pid: str) -> None:
+        """Ken's first words in a brand-new home chat, as a real message that stays in the
+        thread. Not passed to history_hook: the harness counts Ken's first real reply as its birth."""
+        if pid != HOME or self.db.execute("SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (pid,)).fetchone():
+            return
+        self.emit("message", project=pid, role="ken", text=WELCOME, via="welcome")
+
+    def welcomed(self) -> bool:
+        return bool(self.db.execute(
+            "SELECT 1 FROM events WHERE project=? AND type='message' AND json_extract(data, '$.via')='welcome' LIMIT 1", (HOME,)
+        ).fetchone())
 
     def log_message(self, pid: str, role: str, text: str, **extra) -> dict:
         if pid == HOME and self.history_hook is not None and text:
