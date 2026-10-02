@@ -486,35 +486,16 @@ async def sync_identity(update: Update) -> None:
         log.warning("telegram rename failed: %s", e)
 
 
-async def upgrade_packages(app_dir: Path) -> bool:
-    """pip install -U the requirements; True if any installed version changed."""
-    pip = KEN_HOME / "venv" / "bin" / "pip"
-    if not pip.exists():
-        return False
-
-    async def run(*args: str) -> str:
-        p = await asyncio.create_subprocess_exec(
-            str(pip), *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await p.communicate()
-        return out.decode()
-
-    before = await run("freeze")
-    await run("install", "-q", "-U", "-r", str(app_dir / "requirements.txt"))
-    return await run("freeze") != before
-
-
 async def self_update(app) -> None:
-    """Pull-based updates: hourly code check, daily package upgrade (new Claude Code
-    versions arrive that way), restart when anything changed.
+    """Pull-based updates: check the repo hourly, restart into the new version.
 
-    The service manager (systemd/launchd) restarts us, so exiting is the update.
-    Never interrupts a task in flight."""
+    requirements.txt pins exact versions, so new parts (a newer Claude Code) arrive
+    with the code. The service manager (systemd/launchd) restarts us, so exiting is
+    the update. Never interrupts a task in flight."""
     if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
     app_dir = KEN_HOME / "app"
     await asyncio.sleep(300)  # settle after boot
-    packages_checked = 0.0  # upgrade on the first pass too: the service may have run for weeks
     while True:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -528,19 +509,19 @@ async def self_update(app) -> None:
             )
             out, _ = await head.communicate()
             new_rev = out.decode().strip()
-            new_code = bool(new_rev) and new_rev != RUNNING_REV
-            if new_code or time.time() - packages_checked > 86400:
+            if new_rev and new_rev != RUNNING_REV:
                 if ENGINE.busy():
-                    log.info("update check due but a task is running — waiting")
+                    log.info("update available but a task is running — waiting")
                 else:
-                    changed = await upgrade_packages(app_dir)
-                    packages_checked = time.time()
-                    if new_code or changed:
-                        while ENGINE.busy():  # a task started during the upgrade
-                            await asyncio.sleep(30)
-                        log.info("updating: %s -> %s%s (restarting)", RUNNING_REV[:8], new_rev[:8],
-                                 " with upgraded packages" if changed else "")
-                        os._exit(0)  # service manager restarts us into the new code
+                    log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
+                    pip = KEN_HOME / "venv" / "bin" / "pip"
+                    if pip.exists():
+                        p = await asyncio.create_subprocess_exec(
+                            str(pip), "install", "-q", "-r", str(app_dir / "requirements.txt"),
+                            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        await p.communicate()
+                    os._exit(0)  # service manager restarts us into the new code
         except Exception as e:
             log.warning("self-update check failed: %s", e)
         await asyncio.sleep(3600)

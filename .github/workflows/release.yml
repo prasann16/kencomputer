@@ -1,9 +1,11 @@
-# Push a tag like v0.1.0 → signed, notarized Ken for Apple Silicon and Intel as a draft GitHub
-# Release. Check the draft, then publish it: installed apps update to it within a few hours.
+# A tag like v0.1.2 → signed, notarized Ken for Apple Silicon and Intel as a draft GitHub
+# Release. Then, on a Mac: desktop/check-release.sh v0.1.2 --publish
+# (it tests the real download with a chat message and a voice note, and publishes if they pass).
 name: Release Mac app
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:  # the weekly update starts it this way, on the tag it made
 
 jobs:
   engine:
@@ -16,18 +18,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      # uv's Python carries its own OpenSSL. The runner's Python links a system one that can
-      # shadow the newer OpenSSL a source-built package (cryptography on Intel) needs.
+      # uv's Python carries its own OpenSSL, and requirements.txt pins every part.
       - uses: astral-sh/setup-uv@v6
       - run: |
           uv venv -q --seed --managed-python --python 3.13 .venv
-          uv pip install -q --python .venv/bin/python -r requirements.txt pyinstaller
+          uv pip install -q --python .venv/bin/python -r requirements.txt pyinstaller==6.22.3
           .venv/bin/python desktop/build_engine.py
-      # Fail the release if any native piece of the bundled engine can't load.
-      - run: |
-          dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "import ssl, cryptography.hazmat.bindings._rust, ctranslate2, av, aiohttp, claude_agent_sdk; print('engine loads:', ssl.OPENSSL_VERSION)"
-          # Voice: decode audio the way a voice note is decoded (no model download needed).
-          dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "import wave, tempfile; from faster_whisper.audio import decode_audio; p = tempfile.mktemp(suffix='.wav'); w = wave.open(p, 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(3200)); w.close(); print('voice decodes:', len(decode_audio(p)), 'samples')"
+      # Stop the release if the bundled engine can't load a native part or decode a voice note.
+      - run: dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "exec(open('desktop/checks/parts.py').read())"
       - run: tar -czf engine-${{ matrix.arch }}.tgz -C dist engine-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
@@ -37,13 +35,19 @@ jobs:
   app:
     needs: engine
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
-        with: { pattern: engine-*, merge-multiple: true }
+        with:
+          pattern: engine-*
+          merge-multiple: true
       - run: |
+          case "$GITHUB_REF_NAME" in v[0-9]*) ;; *) echo "Run this on a version tag, not $GITHUB_REF_NAME"; exit 1 ;; esac
           mkdir -p dist
           for a in arm64 x64; do tar -xzf engine-$a.tgz -C dist; done
           npm ci
@@ -60,5 +64,3 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    permissions:
-      contents: write
