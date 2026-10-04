@@ -90,10 +90,16 @@ class Onboarding:
         return {"url": url}
 
     async def submit(self, code: str) -> dict:
-        """Give the CLI the code from the browser; save the token it prints."""
-        if self.fd is None:
-            raise RuntimeError("Start connecting Claude first.")
-        os.write(self.fd, code.strip().encode() + b"\r")
+        """Give the CLI the code from the browser; save the token it prints.
+
+        If the sign-in has gone away (the CLI exited, or was never started),
+        open a fresh one instead of failing: the user approves and pastes again."""
+        try:
+            if self.fd is None or self.exited:
+                raise OSError("sign-in not running")
+            os.write(self.fd, code.strip().encode() + b"\r")
+        except OSError:
+            return {**await self.start(), "error": "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."}
         token = await self._wait_for(TOKEN, 60)
         self.stop()
         if not token:
