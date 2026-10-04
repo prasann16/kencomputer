@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import logging
 import os
 import pty
 import re
 import shutil
 import struct
 import termios
+import time
 from pathlib import Path
 from typing import Callable
+
+log = logging.getLogger("ken")
 
 ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
@@ -56,6 +60,12 @@ class Onboarding:
         self.fd: int | None = None
         self.output = ""
         self.exited = False
+        self.started = 0.0
+
+    @property
+    def active(self) -> bool:
+        """A sign-in is under way: the app must not restart the engine (e.g. to update) now."""
+        return self.pid is not None and not self.exited and time.time() - self.started < 1800
 
     def status(self) -> dict:
         return {"claude": self.connected(), "voice": self.voice_status()}
@@ -82,6 +92,7 @@ class Onboarding:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))  # wide: URL on one line
         os.set_blocking(fd, False)
         self.pid, self.fd, self.output, self.exited = pid, fd, "", False
+        self.started = time.time()
         asyncio.get_running_loop().add_reader(fd, self._read)
         url = await self._wait_for(AUTH_URL, 30)
         if not url:
@@ -105,7 +116,10 @@ class Onboarding:
         if not token:
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
         save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
-        await self.on_connected()
+        try:
+            await self.on_connected()  # the token is saved either way
+        except Exception:
+            log.exception("post-connect refresh failed")
         return self.status()
 
     def _read(self) -> None:

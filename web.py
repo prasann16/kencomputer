@@ -133,7 +133,9 @@ class WebApp:
     # -------------------------------------------------------------------- api
 
     async def meta(self, request):
-        return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands), "busy": self.engine.busy()})
+        return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands),
+                      # busy: don't restart the engine (e.g. to update) now
+                      "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
         return _json(self.setup.status() if self.setup else {"claude": True, "voice": {"state": "ready"}})
