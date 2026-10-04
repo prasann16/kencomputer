@@ -80,27 +80,44 @@ async function connect() {
 
 // Updates download in the background and install while the window is closed and Ken
 // isn't mid-task; the app then relaunches straight back into the menu bar.
+// The chat shows one quiet "Update ready · Restart" pill once an update has downloaded;
+// a check the user asked for (Ken menu, menu-bar icon) also reports "up to date".
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
-let updateReady = false;
-async function installIfIdle() {
-  if (!updateReady || win?.isVisible()) return;
+let updateReady = false, manualCheck = false;
+const tellPage = (state) => { if (win && !win.isDestroyed()) win.webContents.send('update:state', state); };
+async function engineBusy() {
   try {
     const { token, origin } = service();
-    const meta = await (await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(2000) })).json();
-    if (meta.busy) return;
-  } catch {}
-  writeFileSync(quietRelaunch, '');
+    return (await (await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(2000) })).json()).busy;
+  } catch { return false; }
+}
+function restartIntoUpdate(quiet) {
+  if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
   require('electron-updater').autoUpdater.quitAndInstall(true, true);
+}
+async function installIfIdle() {
+  if (updateReady && !win?.isVisible() && !(await engineBusy())) restartIntoUpdate(true);
+}
+async function installNow() {
+  if (!updateReady) return;
+  if (await engineBusy()) { tellPage({ state: 'busy' }); return; }
+  restartIntoUpdate(false);
+}
+function checkNow(manual) {
+  if (!app.isPackaged) { if (manual) tellPage({ state: 'none', version: app.getVersion() }); return; }
+  manualCheck = manual;
+  require('electron-updater').autoUpdater.checkForUpdates().catch(() => {});
 }
 function checkForUpdates() {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
-  autoUpdater.on('update-downloaded', () => { updateReady = true; installIfIdle(); });
-  autoUpdater.on('error', (error) => console.error('update check failed:', error.message));
-  const check = () => autoUpdater.checkForUpdates().catch(() => {});
-  check();
-  setInterval(check, 4 * 60 * 60 * 1000);
+  autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
+  autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
+  autoUpdater.on('update-downloaded', (info) => { updateReady = true; manualCheck = false; tellPage({ state: 'ready', version: info.version }); installIfIdle(); });
+  autoUpdater.on('error', (error) => { console.error('update check failed:', error.message); if (manualCheck) tellPage({ state: 'error' }); manualCheck = false; });
+  checkNow(false);
+  setInterval(() => checkNow(false), 4 * 60 * 60 * 1000);
   setInterval(installIfIdle, 10 * 60 * 1000);  // retry after a busy engine finishes
 }
 
@@ -146,6 +163,12 @@ async function start() {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return requestMicrophone(systemPreferences, process.platform);
   });
+  ipcMain.handle('update:action', async (event, action) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (action === 'check') checkNow(true);
+    if (action === 'install') await installNow();
+    if (action === 'state') return updateReady ? { state: 'ready' } : { state: 'idle', version: app.getVersion() };
+  });
   ipcMain.handle('microphone:settings', async (event, kind) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (process.platform === 'darwin') await shell.openExternal(kind === 'privacy' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' : 'x-apple.systempreferences:com.apple.preference.sound?input');
@@ -154,7 +177,7 @@ async function start() {
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 20, height: 20 }));
   tray.setToolTip('Ken');
-  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
+  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, { label: 'Check for Updates…', click: () => { show(); checkNow(true); } }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
   tray.on('click', show);
   checkForUpdates();
 }
@@ -164,7 +187,7 @@ else {
   app.on('second-instance', show);
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { role: 'appMenu' },
+      { label: app.name, submenu: [{ role: 'about' }, { label: 'Check for Updates…', click: () => { show(); checkNow(true); } }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
       { role: 'editMenu' },
       { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
       { role: 'windowMenu' },

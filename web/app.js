@@ -507,8 +507,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
 const modelName = (id) => { const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
 
-function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected }) {
-  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
+function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, update, onUpdate }) {
+  return html`<header class="chat-header"><div class="ken-brand"><img src="/ken.svg" alt=""/><span>Ken</span>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${update === 'ready' && html`<button class="update-pill" onClick=${onUpdate} title="A new version of Ken has downloaded. Restart to use it.">Update ready · Restart</button>`}${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
 }
 
 // First run: connect Claude with the same `claude setup-token` the installer runs.
@@ -546,6 +546,19 @@ function App() {
   const loadModel=()=>api('/api/command',{json:{text:'/model'}}).then(setModel).catch(()=>{});
   const [awake,setAwake]=useState(null);
   const [setup,setSetup]=useState(null);
+  // Updates: the app says when one has downloaded; a manual check also says "up to date".
+  const [update,setUpdate]=useState(null);
+  useEffect(()=>{
+    const native=window.kenDesktop; if(!native?.onUpdateState)return;
+    native.updateAction('state').then((s)=>setUpdate(s.state==='ready'?'ready':null)).catch(()=>{});
+    return native.onUpdateState((s)=>{
+      if(s.state==='ready'){setUpdate('ready');return;}
+      if(s.state==='none')toast(`You’re up to date (${s.version}).`);
+      if(s.state==='downloading')toast(`Downloading Ken ${s.version}…`);
+      if(s.state==='busy')toast('Ken is in the middle of something. It’ll restart into the update when it’s done.');
+      if(s.state==='error')toast('Couldn’t check for updates. Try again later.');
+    });
+  },[]);
   const loadSetup=()=>api('/api/setup').then(setSetup).catch(()=>{});
   useEffect(()=>{loadSetup();},[]);
   // Poll while something is still getting ready (sign-in elsewhere, the voice model download).
@@ -723,7 +736,7 @@ function App() {
   };
   const projects = today ? today.projects : [];
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class="shell"><main class="main"><${ChatHeader} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
+  return html`<div class="shell"><main class="main"><${ChatHeader} update=${update} onUpdate=${()=>window.kenDesktop.updateAction('install').catch((e)=>toast(e.message))} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
     ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
