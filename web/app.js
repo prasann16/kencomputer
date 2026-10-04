@@ -516,7 +516,7 @@ function Connect({ onDone }) {
   const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const go = async (body) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: body, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); } if (r.claude) onDone(r); }
+    try { const r = await api('/api/setup', { json: body, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); } if (r.error) setError(r.error); if (r.claude) onDone(r); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   };
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
@@ -525,7 +525,8 @@ function Connect({ onDone }) {
       <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? 'Opening Claude…' : 'Connect Claude'}</button>`}
     ${step === 'code' && html`<p>Approve Ken in your browser, then paste the code Claude shows you.</p>${field('Paste the code')}
       <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>
-      <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>`}
+      <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
+      <button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   </div>`;
 }

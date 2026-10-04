@@ -148,6 +148,9 @@ class WebApp:
                 return _json(await self.setup.submit(str(b["code"])))
         except RuntimeError as exc:
             return _json({"error": str(exc)}, 400)
+        except Exception:
+            log.exception("Connect Claude failed")
+            return _json({"error": "Something went wrong connecting Claude. Click Connect Claude to try again."}, 500)
         return _json({"error": "Nothing to do."}, 400)
 
     async def command(self, request):
