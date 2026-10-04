@@ -80,10 +80,11 @@ async function connect() {
 
 // Updates download in the background and install while the window is closed and Ken
 // isn't mid-task; the app then relaunches straight back into the menu bar.
-// The chat shows one quiet "Update ready · Restart" pill once an update has downloaded;
-// a check the user asked for (Ken menu, menu-bar icon) also reports "up to date".
+// Updates stay out of the chat. Once one has downloaded, the "Check for Updates…" item in
+// the Ken menu and the menu-bar icon becomes "Restart to update to x.y.z"; a check the user
+// asked for reports "up to date" with a quiet toast.
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
-let updateReady = false, manualCheck = false;
+let updateReady = false, updateVersion = '', manualCheck = false;
 const tellPage = (state) => { if (win && !win.isDestroyed()) win.webContents.send('update:state', state); };
 async function engineBusy() {
   try {
@@ -114,7 +115,7 @@ function checkForUpdates() {
   const { autoUpdater } = require('electron-updater');
   autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
   autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
-  autoUpdater.on('update-downloaded', (info) => { updateReady = true; manualCheck = false; tellPage({ state: 'ready', version: info.version }); installIfIdle(); });
+  autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); if (manualCheck) tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
   autoUpdater.on('error', (error) => { console.error('update check failed:', error.message); if (manualCheck) tellPage({ state: 'error' }); manualCheck = false; });
   checkNow(false);
   setInterval(() => checkNow(false), 4 * 60 * 60 * 1000);
@@ -163,12 +164,6 @@ async function start() {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return requestMicrophone(systemPreferences, process.platform);
   });
-  ipcMain.handle('update:action', async (event, action) => {
-    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
-    if (action === 'check') checkNow(true);
-    if (action === 'install') await installNow();
-    if (action === 'state') return updateReady ? { state: 'ready' } : { state: 'idle', version: app.getVersion() };
-  });
   ipcMain.handle('microphone:settings', async (event, kind) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (process.platform === 'darwin') await shell.openExternal(kind === 'privacy' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' : 'x-apple.systempreferences:com.apple.preference.sound?input');
@@ -177,21 +172,32 @@ async function start() {
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 20, height: 20 }));
   tray.setToolTip('Ken');
-  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, { label: 'Check for Updates…', click: () => { show(); checkNow(true); } }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
   tray.on('click', show);
+  buildMenus();
   checkForUpdates();
+}
+
+// One item covers updates: it checks, or, once an update has downloaded, restarts into it.
+function updateItem() {
+  return updateReady
+    ? { label: `Restart to update to ${updateVersion}`, click: () => installNow() }
+    : { label: 'Check for Updates…', click: () => { show(); checkNow(true); } };
+}
+function buildMenus() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { role: 'editMenu' },
+    { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
+    { role: 'windowMenu' },
+  ]));
+  if (tray) tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', show);
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { label: app.name, submenu: [{ role: 'about' }, { label: 'Check for Updates…', click: () => { show(); checkNow(true); } }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
-      { role: 'editMenu' },
-      { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
-      { role: 'windowMenu' },
-    ]));
+    buildMenus();
     try { await start(); } catch (error) { dialog.showErrorBox('Could not open Ken', error.message); app.quit(); }
   });
   app.on('activate', show);
