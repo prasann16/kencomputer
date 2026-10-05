@@ -56,7 +56,10 @@ done
 [ "$(echo "$REPLY" | tr -d '[:space:].' | tr 'A-Z' 'a-z')" = ok ] && pass "chat: Ken replied" || fail "chat: got \"${REPLY:-no reply}\""
 
 # 4. A real voice note, spoken by the Mac's own voice.
-say -o "$WORK/voice.aiff" "Hello Ken, how are you today?"
+# A named built-in voice: the default voice can return silence while macOS swaps it.
+say -v Samantha -o "$WORK/voice.aiff" "Hello Ken, how are you today?"
+afinfo "$WORK/voice.aiff" 2>/dev/null | grep -qE 'estimated duration: [1-9]' \
+  || { fail "test audio: macOS 'say' produced no speech, so voice wasn't tested"; }
 TEXT="$(api --data-binary @"$WORK/voice.aiff" "http://127.0.0.1:$PORT/api/voice")"
 echo "$TEXT" | grep -qi hello && pass "voice: heard $(echo "$TEXT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("text",""))')" \
   || fail "voice: $TEXT"
