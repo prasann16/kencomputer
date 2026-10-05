@@ -35,10 +35,12 @@ GATEKEEPER="$(spctl -a -vv -t exec "$APP" 2>&1)"
 case "$GATEKEEPER" in *accepted*"Notarized Developer ID"*) pass "macOS accepts it (signed, notarized)" ;;
   *) fail "Gatekeeper: $GATEKEEPER" ;; esac
 
-# 2. Start the bundled engine in a throwaway home.
+# 2. Start the bundled engine in a throwaway home, with the env the app gives it.
 HOME_DIR="$WORK/home"; mkdir -p "$HOME_DIR"
 # `exec` so $! is the engine itself and cleanup really stops it.
 (cd /tmp && KEN_HOME="$HOME_DIR" KEN_APP_VERSION="$VERSION" TELEGRAM_BOT_TOKEN= KEN_WEB_PORT=$PORT \
+  KEN_NODE="$APP/Contents/MacOS/Ken" \
+  KEN_BROWSER_MCP="$APP/Contents/Resources/browser/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js" \
   exec "$APP/Contents/Resources/engine/ken-engine" > "$WORK/engine.log" 2>&1) &
 ENGINE=$!
 for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break; sleep 1; done

@@ -35,9 +35,11 @@ const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), '
 const esc = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 // Ken runs as a background service so Telegram and schedules work with the window closed.
-// A terminal install (install.sh) keeps its own service; otherwise the app runs the engine it ships.
+// The app always runs the engine it ships (so updates reach it). An older terminal install
+// (install.sh) shares the Ken home, so its service is switched off rather than left running old code.
+const terminalAgent = 'dev.kencomputer.ken';
 async function startService() {
-  if (!app.isPackaged || existsSync(terminalInstall)) {
+  if (!app.isPackaged) {
     const ken = [path.join(os.homedir(), '.local/bin/ken'), '/usr/local/bin/ken', '/opt/homebrew/bin/ken'].find(existsSync);
     if (!ken) throw new Error('Ken’s engine isn’t installed. Run this repo’s bot.py, or install Ken.');
     return run(ken, ['start']);
@@ -62,6 +64,10 @@ async function startService() {
 </dict></plist>
 `);
   const domain = `gui/${process.getuid()}`;
+  if (existsSync(terminalInstall)) {
+    await run('/bin/launchctl', ['bootout', `${domain}/${terminalAgent}`]);
+    await run('/bin/launchctl', ['disable', `${domain}/${terminalAgent}`]);
+  }
   await run('/bin/launchctl', ['bootout', `${domain}/${appAgent}`]);
   await run('/bin/launchctl', ['bootstrap', domain, appAgentFile]);
 }
@@ -69,7 +75,7 @@ async function startService() {
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
 async function connect() {
   // When the app runs its own engine, the engine must be this app version.
-  const want = app.isPackaged && !existsSync(terminalInstall) ? app.getVersion() : null;
+  const want = app.isPackaged ? app.getVersion() : null;
   const ready = (rev) => rev !== null && (want === null || rev === want);
   if (ready(await running(service()))) return service();
   await startService();
