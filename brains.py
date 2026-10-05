@@ -54,6 +54,7 @@ class Brain:
         cwd: str,
         system: str | Callable[[], str],
         resume: str | None = None,
+        model_fn: Callable[[], str] | None = None,
     ) -> Session:
         raise NotImplementedError
 
@@ -75,8 +76,9 @@ def describe_tool(name: str, args: dict) -> str:
 class ClaudeSession(Session):
     """A persistent Claude Code session (Agent SDK): no per-message cold start."""
 
-    def __init__(self, brain: "ClaudeBrain", cwd: str, system, resume: str | None) -> None:
+    def __init__(self, brain: "ClaudeBrain", cwd: str, system, resume: str | None, model_fn=None) -> None:
         self.brain = brain
+        self.model_fn = model_fn or brain.model_fn  # a project may choose its own model
         self.cwd = cwd
         self.system = system
         self.session_id = resume
@@ -89,7 +91,7 @@ class ClaudeSession(Session):
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
         system = self.system() if callable(self.system) else self.system
-        model = self.brain.model_fn()
+        model = self.model_fn()
         options = ClaudeAgentOptions(
             system_prompt={"type": "preset", "preset": "claude_code", "append": system},
             permission_mode=self.brain.permission_mode,
@@ -136,7 +138,7 @@ class ClaudeSession(Session):
         from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolUseBlock
 
         await self._ensure()
-        model = self.brain.model_fn()
+        model = self.model_fn()
         if model in self.brain.unsupported:
             model = ""
         if model != self.model:
@@ -212,5 +214,5 @@ class ClaudeBrain(Brain):
         self.can_use_tool = can_use_tool
         self.mcp_factory = mcp_factory
 
-    def session(self, *, cwd, system, resume=None) -> Session:
-        return ClaudeSession(self, cwd, system, resume)
+    def session(self, *, cwd, system, resume=None, model_fn=None) -> Session:
+        return ClaudeSession(self, cwd, system, resume, model_fn)

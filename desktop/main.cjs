@@ -164,6 +164,24 @@ async function start() {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return requestMicrophone(systemPreferences, process.platform);
   });
+  // A native menu (e.g. a project's ⋯ or right-click); resolves with the chosen item's id, or null.
+  ipcMain.handle('menu:popup', (event, items) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    return new Promise((resolve) => {
+      let chosen = null;
+      const menu = Menu.buildFromTemplate(items.map((i) => i.separator ? { type: 'separator' } : { label: String(i.label), click: () => { chosen = i.id; } }));
+      menu.popup({ window: win, callback: () => setImmediate(() => resolve(chosen)) });
+    });
+  });
+  ipcMain.handle('folder:open', async (event, folder) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (typeof folder === 'string' && existsSync(folder)) await shell.openPath(folder);
+  });
+  ipcMain.handle('folder:pick', async (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });
+    return canceled ? '' : filePaths[0];
+  });
   ipcMain.handle('microphone:settings', async (event, kind) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (process.platform === 'darwin') await shell.openExternal(kind === 'privacy' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' : 'x-apple.systempreferences:com.apple.preference.sound?input');
