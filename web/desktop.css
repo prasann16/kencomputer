@@ -92,3 +92,6 @@ html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:16px}
 .modal .np-folder{padding:7px 10px;border-radius:8px;font-size:13.5px}.modal .np-note{font-size:12px}
 .modal .np-actions .btn{height:32px;padding:0 14px;font-size:13.5px;border-radius:8px}
 .side-label{margin-top:14px}
+.side-top{height:62px}
+.side-item:focus{outline:none}.side-item:focus-visible{outline:2px solid #c4c4c2;outline-offset:-2px}
+.proj-more{-webkit-app-region:no-drag;display:grid;place-items:center;width:26px;height:26px;margin-left:2px;border:0;border-radius:7px;background:none;color:#9a9a98;cursor:pointer}.proj-more:hover{background:#f4f4f3;color:#333}

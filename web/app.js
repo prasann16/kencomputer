@@ -507,8 +507,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
 const modelName = (id) => { const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
 
-function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, title, onToggleSide }) {
-  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide projects" title="Projects (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
+function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, title, onToggleSide, onProjectMenu }) {
+  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide projects" title="Projects (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Project options" title="Project options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
 }
 
 // First run: connect Claude with the same `claude setup-token` the installer runs.
@@ -532,15 +532,35 @@ function Connect({ onDone }) {
 }
 
 // Projects: Ken's main chat first, then one chat per project, each with its own memory and folder.
-function Sidebar({ chats, current, unread, onNew }) {
+function Sidebar({ chats, current, unread, onNew, onProjectMenu }) {
   return html`<nav class="side" aria-label="Chats">
     <div class="side-top"></div>
-    ${chats.map((c, i) => html`${i === 1 && html`<div class="side-label">Projects</div>`}<a class=${'side-item' + (c.id === current ? ' sel' : '')} href=${c.id === 'home' ? '#/' : '#/p/' + c.id}>
+    ${chats.map((c, i) => html`${i === 1 && html`<div class="side-label">Projects</div>`}<a class=${'side-item' + (c.id === current ? ' sel' : '')} href=${c.id === 'home' ? '#/' : '#/p/' + c.id} onContextMenu=${(e) => { if (c.id !== 'home' && onProjectMenu) { e.preventDefault(); onProjectMenu(e, c.id); } }}>
       ${c.id === 'home' ? html`<img src="/ken.svg" alt=""/>` : html`<i class="proj-dot" style=${{background:c.color}}></i>`}
       <span class="side-name">${c.name}</span>${c.busy ? html`<b class="side-busy" title="Working"></b>` : unread[c.id] && html`<b class="side-unread" title="New messages"></b>`}</a>`)}
     ${chats.length <= 1 && html`<div class="side-label">Projects</div>`}
     <button class="side-item side-new" onClick=${onNew}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="side-name">New project</span></button>
   </nav>`;
+}
+
+function RenameProject({ project, onClose, onDone }) {
+  const [name, setName] = useState(project.name), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const save = async () => { setBusy(true); try { await api(`/api/projects/${project.id}`, { method: 'PATCH', json: { name: name.trim() } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
+  return html`<${Modal} title="Rename project" onClose=${onClose}>
+    <label class="np-label">Name<input class="np-input" autofocus value=${name} onInput=${(e) => setName(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && name.trim() && !busy && save()}/></label>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy || !name.trim()} onClick=${save}>Rename</button></div>
+  <//>`;
+}
+
+function RemoveProject({ project, onClose, onDone }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const remove = async () => { setBusy(true); try { await api(`/api/projects/${project.id}`, { method: 'DELETE' }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
+  return html`<${Modal} title=${`Remove “${project.name}” from Ken?`} onClose=${onClose}>
+    <p class="np-help">It leaves the sidebar. Its folder and files on your computer aren't touched, and its chat and notes are kept in Ken's folder.</p>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${remove}>Remove</button></div>
+  <//>`;
 }
 
 function NewProject({ onClose, onCreated }) {
@@ -583,6 +603,21 @@ function App() {
   const toggleSide=()=>setSideOpen((o)=>{try{localStorage.setItem('ken-sidebar',o?'0':'1');}catch{}return !o;});
   useEffect(()=>{const onKey=(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='\\'){e.preventDefault();toggleSide();}};addEventListener('keydown',onKey);return()=>removeEventListener('keydown',onKey);},[]);
   const [newProject,setNewProject]=useState(false);
+  const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
+  const [projectMeta,setProjectMeta]=useState(null);
+  const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/projects/${id}`).then((v)=>setProjectMeta(v.project)).catch(()=>setProjectMeta(null)); };
+  const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
+  // ⋯ and right-click on a project: a native menu in the Mac app.
+  const projectMenu=async(e,id)=>{
+    const native=window.kenDesktop; if(!native?.popupMenu)return;
+    const project=chats.find((c)=>c.id===id); if(!project)return;
+    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'rename',label:'Rename…'},{id:'folder',label:'Change folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    if(choice==='open'){ const v=await api(`/api/projects/${id}`); native.openFolder(v.project.workdir); }
+    if(choice==='rename')setProjectDialog({kind:'rename',project});
+    if(choice==='remove')setProjectDialog({kind:'remove',project});
+    if(choice==='folder'){ const path=await native.pickFolder(); if(!path)return;
+      try{ await api(`/api/projects/${id}`,{method:'PATCH',json:{path}}); toast(`Ken now works in ${path.replace(/^\/Users\/[^/]+/,'~')}.`); if(id===pid)loadProjectMeta(id); }catch(err){toast(err.message);} }
+  };
   // Unread: a chat whose last message is newer than when it was last open.
   const seen=()=>{try{return JSON.parse(localStorage.getItem('ken-seen')||'{}');}catch{return {};}};
   const [seenAt,setSeenAt]=useState(seen);
@@ -652,7 +687,7 @@ function App() {
     const refresh = setInterval(load, 15000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); };
   }, []);
-  useEffect(() => { load(); }, [pid]);
+  useEffect(() => { load(); loadProjectMeta(pid); }, [pid]);
   useEffect(() => {
     let ws, timer, pending, closed = false, rev = null, retry = 0;
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
@@ -778,11 +813,15 @@ function App() {
   useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
   const unread = Object.fromEntries(chats.map((c) => [c.id, c.id !== pid && c.last_ts > (seenAt[c.id] || 0)]));
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model} onModel=${(m)=>m&&api('/api/command',{json:{text:'/model '+m}}).then(loadModel).catch((e)=>toast(e.message))}/>
+  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
+      ? api(`/api/projects/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
+      : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
     ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
+    ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
+    ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
     ${newProject && html`<${NewProject} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/>`}
     ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
   </div>`;

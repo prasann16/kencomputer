@@ -228,14 +228,35 @@ class Engine:
 
     def update_project(self, pid: str, **fields) -> dict:
         meta = self.get_project(pid)
-        for k in ("name", "blurb", "path"):
+        path = fields.get("path")
+        if path and not Path(os.path.expanduser(str(path).strip())).is_dir():
+            raise ValueError(f"folder not found: {path}")
+        if fields.get("name") is not None and not str(fields["name"]).strip():
+            raise ValueError("a project needs a name")
+        for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
-                meta[k] = str(fields[k]).strip()
+                meta[k] = str(fields[k]).strip()[:60 if k == "name" else 500]
+        if path is not None:
+            self.chats.pop(pid, None)  # the next message opens Claude in the new folder
         meta.pop("id", None)
         meta.pop("workdir", None)
         (self._pdir(pid) / "project.json").write_text(json.dumps(meta, indent=1) + "\n")
         self.emit("project.updated", project=pid)
         return self.get_project(pid)
+
+    async def remove_project(self, pid: str) -> None:
+        """Take a project off the list. Its chat and notes move to projects/.removed (recoverable);
+        the folder it worked in is never touched."""
+        self.get_project(pid)
+        if self.chat_busy(pid):
+            raise ValueError("Ken is working in this project. Stop it first.")
+        s = self.chats.pop(pid, None)
+        if s is not None:
+            await s.close()
+        trash = self.projects_dir / ".removed"
+        trash.mkdir(exist_ok=True)
+        self._pdir(pid).rename(trash / f"{pid}-{int(time.time())}")
+        self.emit("project.removed", project=pid)
 
     def get_autonomy(self, pid: str) -> dict:
         try:
@@ -353,7 +374,8 @@ class Engine:
         s = self.chats.get(pid)
         if s is None:
             cwd = self.home_cwd if pid == HOME else self.workdir(self.get_project(pid))
-            s = self.brain.session(cwd=str(cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"))
+            model = (lambda: self.get_project(pid).get("model") or self.brain.model_fn()) if pid != HOME else None
+            s = self.brain.session(cwd=str(cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"), model_fn=model)
             self.chats[pid] = s
         return s
 

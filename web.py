@@ -317,7 +317,17 @@ class WebApp:
 
     async def update_project(self, request):
         b = await self._body(request)
-        return _json(self.engine.update_project(self._project(request), **{k: b.get(k) for k in ("name", "blurb", "path")}))
+        try:
+            return _json(self.engine.update_project(self._project(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+
+    async def remove_project(self, request):
+        try:
+            await self.engine.remove_project(self._project(request))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+        return _json({"ok": True})
 
     async def put_context(self, request):
         pid = self._project(request)
@@ -429,6 +439,7 @@ class WebApp:
         r.add_get("/api/today", self.today)
         r.add_get("/api/projects/{pid}", self.project)
         r.add_patch("/api/projects/{pid}", self.update_project)
+        r.add_delete("/api/projects/{pid}", self.remove_project)
         r.add_put("/api/projects/{pid}/context", self.put_context)
         r.add_put("/api/projects/{pid}/autonomy", self.put_autonomy)
         r.add_post("/api/runs", self.start_run)

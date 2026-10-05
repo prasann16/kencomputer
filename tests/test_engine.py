@@ -14,8 +14,9 @@ from engine import GREET_AFTER, HOME, Engine  # noqa: E402
 
 
 class FakeSession(Session):
-    def __init__(self, brain, cwd, system, resume):
+    def __init__(self, brain, cwd, system, resume, model_fn=None):
         self.brain, self.cwd, self.system, self.session_id = brain, cwd, system, resume
+        self.model_fn = model_fn or (lambda: "")
         self.busy = False
         self.warmed = False
 
@@ -47,8 +48,8 @@ class FakeBrain(Brain):
     def __init__(self):
         self.asks = []
 
-    def session(self, *, cwd, system, resume=None):
-        return FakeSession(self, cwd, system, resume)
+    def session(self, *, cwd, system, resume=None, model_fn=None):
+        return FakeSession(self, cwd, system, resume, model_fn)
 
 
 @pytest.fixture
@@ -221,3 +222,30 @@ async def test_agent_requests(engine):
     assert (engine.requests_dir / "rejected" / "c.json").exists()
     today = engine.today()
     assert today["approvals"] and today["done"] and today["projects"][0]["pending"] == 1
+
+
+def test_project_model_rename_and_folder(engine, tmp_path):
+    engine.create_project("Reader")
+    engine.update_project("reader", model="claude-haiku-4-5", name="My Reader")
+    p = engine.get_project("reader")
+    assert p["model"] == "claude-haiku-4-5" and p["name"] == "My Reader"
+    session = engine._chat_session("reader")
+    assert session.model_fn() == "claude-haiku-4-5"
+    with pytest.raises(ValueError):
+        engine.update_project("reader", path=str(tmp_path / "nope"))
+    with pytest.raises(ValueError):
+        engine.update_project("reader", name="  ")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert engine.update_project("reader", path=str(repo))["workdir"] == str(repo)
+
+
+async def test_remove_project_keeps_its_folder(engine, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "keep.txt").write_text("mine")
+    engine.create_project("Repo", path=str(repo))
+    await engine.remove_project("repo")
+    assert [p["id"] for p in engine.list_projects()] == []
+    assert (repo / "keep.txt").read_text() == "mine"
+    assert any((tmp_path / "projects/.removed").iterdir())
