@@ -164,6 +164,11 @@ async function start() {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return requestMicrophone(systemPreferences, process.platform);
   });
+  ipcMain.handle('folder:pick', async (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });
+    return canceled ? '' : filePaths[0];
+  });
   ipcMain.handle('microphone:settings', async (event, kind) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (process.platform === 'darwin') await shell.openExternal(kind === 'privacy' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' : 'x-apple.systempreferences:com.apple.preference.sound?input');
