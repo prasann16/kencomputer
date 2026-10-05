@@ -43,3 +43,9 @@ def test_weekdays_skip_the_weekend():
 
 def test_city_from_the_time_zone():
     assert isinstance(bot.home_city(), str)
+
+
+def test_new_install_after_the_slot_waits_for_tomorrow():
+    state = {"morning-brief": "2026-10-05 (first seen)"}  # what the scheduler records on first sight
+    assert not bot._job_due(BRIEF, at("09:40"), state)
+    assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)

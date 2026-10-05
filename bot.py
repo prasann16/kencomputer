@@ -66,7 +66,37 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 MODEL_CHOICE = KEN_HOME / "model"  # the model picked in the app or Telegram; survives restarts
 current_model = (MODEL_CHOICE.read_text().strip() if MODEL_CHOICE.exists() else "") or DEFAULT_MODEL
 KEN_HOME.mkdir(parents=True, exist_ok=True)
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model()))
+def browser_mcp() -> dict:
+    """The user's own Chrome, through Google's Chrome DevTools MCP server.
+
+    The Mac app ships the server and its own Node (KEN_NODE, KEN_BROWSER_MCP); a
+    terminal install uses Node from PATH. Without Node, Ken has no browser tools."""
+    import shutil
+
+    env = {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}
+    args = ["--autoConnect"]
+    node, script = os.environ.get("KEN_NODE"), os.environ.get("KEN_BROWSER_MCP")
+    if node and script and Path(script).exists():
+        return {"browser": {"type": "stdio", "command": node, "args": [script, *args], "env": {**env, "ELECTRON_RUN_AS_NODE": "1"}}}
+    local = Path(__file__).resolve().parent / "node_modules" / "chrome-devtools-mcp" / "build" / "src" / "bin" / "chrome-devtools-mcp.js"
+    if shutil.which("node") and local.exists():
+        return {"browser": {"type": "stdio", "command": shutil.which("node"), "args": [str(local), *args], "env": env}}
+    if shutil.which("npx"):
+        return {"browser": {"type": "stdio", "command": shutil.which("npx"), "args": ["-y", "chrome-devtools-mcp@1.10.1", *args], "env": env}}
+    return {}
+
+
+BROWSER_PROMPT = (
+    "BROWSER: the `browser` tools drive the user's own Chrome, signed in to their accounts: open a "
+    "new tab for your work (don't take over theirs), read pages, click, type, take screenshots. Use it "
+    "for anything that needs a website, a login or a form, including posting to their social accounts. "
+    "Before you post, send, buy, or change an account setting, show them exactly what you'll do and wait "
+    "for a yes. If the browser tools can't reach Chrome, tell them in two lines: in the Ken menu choose "
+    "Connect Chrome… (or open chrome://inspect/#remote-debugging in Chrome), switch on “Allow remote "
+    "debugging”, then click Allow when Chrome asks. Chrome 144 or newer is needed."
+)
+
+ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=browser_mcp))
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
@@ -379,6 +409,8 @@ def build_system(for_project: bool = False) -> str:
             system += "\n\n" + projects
     except Exception as e:
         log.warning("project listing failed: %s", e)
+    if browser_mcp():
+        system += "\n\n" + BROWSER_PROMPT
     if for_project:
         return system  # a project chat is Ken at work: no first-run setup or awakening
     pending = unresolved_setup()
@@ -765,6 +797,13 @@ async def scheduler(app) -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
+            # A job seen for the first time after today's slot (a new install at noon) starts
+            # tomorrow; catching up is only for jobs Ken was already running.
+            for job in jobs:
+                key = job.get("name", job.get("prompt", "")) if isinstance(job, dict) else ""
+                if key and key not in state and _job_due(job, now, {}):
+                    state[key] = time.strftime("%Y-%m-%d (first seen)", now)
+                    JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if isinstance(job, dict) and _job_due(job, now, state):
                     state[job.get("name", job.get("prompt", ""))] = time.strftime("%Y-%m-%d %H:%M", now)
