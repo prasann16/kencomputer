@@ -52,6 +52,8 @@ async function startService() {
   <key>EnvironmentVariables</key><dict>
     <key>KEN_HOME</key><string>${esc(home)}</string>
     <key>KEN_APP_VERSION</key><string>${app.getVersion()}</string>
+    <key>KEN_NODE</key><string>${esc(process.execPath)}</string>
+    <key>KEN_BROWSER_MCP</key><string>${esc(path.join(process.resourcesPath, 'browser', 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js'))}</string>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
   </dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
@@ -201,9 +203,15 @@ function updateItem() {
     ? { label: `Restart to update to ${updateVersion}`, click: () => installNow() }
     : { label: 'Check for Updates…', click: () => { show(); checkNow(true); } };
 }
+// Ken uses the user's own Chrome; Chrome needs remote debugging switched on once.
+function connectChrome() {
+  execFile('open', ['-a', 'Google Chrome', 'chrome://inspect/#remote-debugging'], (error) => {
+    if (error) dialog.showMessageBox({ message: 'Ken uses Google Chrome to work on websites.', detail: 'Install Chrome, then choose Connect Chrome… again.' });
+  });
+}
 function buildMenus() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
     { role: 'windowMenu' },
