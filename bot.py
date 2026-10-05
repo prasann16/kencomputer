@@ -268,7 +268,8 @@ cutesy, never form-like:
    is exactly "# You are <YourNewName>" and update your identity throughout —
    the harness reads that title and renames your Telegram profile to match.
 3. Over the next few messages, learn — ONE question per message: what to call
-   them · what they spend their days on · which city to keep their hours in.
+   them · what they spend their days on · which city to keep their hours in
+   (skip the city if the time-zone line in this prompt already names one).
    Save each answer into SOUL.md as you go, and briefly say you'll remember
    (once you have the city, set "city" to done in ~/.ken/setup.json).
 4. Then ask: "What's one thing you've been putting off that I could take off
@@ -329,6 +330,15 @@ def unresolved_setup() -> list[str]:
     return [k for k in SETUP_ITEMS if data.get(k, "unset") == "unset"]
 
 
+def home_city() -> str:
+    """The city in this computer's time zone (e.g. America/Toronto -> Toronto), or ''."""
+    try:
+        zone = os.path.realpath("/etc/localtime").split("zoneinfo/")[1]
+        return zone.split("/")[-1].replace("_", " ") if "/" in zone else ""
+    except (IndexError, OSError):
+        return ""
+
+
 def ensure_setup_file() -> None:
     """Every install gets the checklist. An install that already awoke answered
     brief time and city back then, so only the connections start unset."""
@@ -336,6 +346,8 @@ def ensure_setup_file() -> None:
         return
     born = BORN_FLAG.exists()
     data = {k: "done" if born and k in ("brief-time", "city") else "unset" for k in SETUP_ITEMS}
+    if home_city():
+        data["city"] = "done"  # the computer's time zone already says where they are
     try:
         SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
     except Exception as e:
@@ -372,6 +384,10 @@ def build_system(for_project: bool = False) -> str:
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
+    city = home_city()
+    if city:
+        system += (f"\n\nThis computer's time zone puts it in {city}. Until they tell you otherwise, "
+                   "use that for weather and local times; don't ask which city they're in.")
     if not BORN_FLAG.exists():
         system += "\n\n" + AWAKENING
     return system
@@ -717,8 +733,14 @@ async def run_outbound(app, job: dict) -> None:
         log.warning("outbound job failed (%s)", e)
 
 
+CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
+
+
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
-    if job.get("time") != time.strftime("%H:%M", now):
+    """Due once per scheduled day, at its time or up to CATCH_UP_HOURS after it (missed while asleep)."""
+    try:
+        hour, minute = (int(x) for x in str(job.get("time", "")).split(":"))
+    except ValueError:
         return False
     days = str(job.get("days", "daily")).lower()
     today = time.strftime("%a", now).lower()[:3]
@@ -726,8 +748,11 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
         return False
     if days not in ("daily", "weekdays") and today not in days:
         return False
-    stamp = time.strftime("%Y-%m-%d %H:%M", now)
-    return state.get(job.get("name", job.get("prompt", ""))) != stamp
+    late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
+    if not 0 <= late <= CATCH_UP_HOURS * 60:
+        return False
+    last = str(state.get(job.get("name", job.get("prompt", "")), ""))
+    return not last.startswith(time.strftime("%Y-%m-%d", now))
 
 
 async def scheduler(app) -> None:
