@@ -532,7 +532,7 @@ function Connect({ onDone }) {
 }
 
 // Projects: Ken's main chat first, then one chat per project, each with its own memory and folder.
-function Sidebar({ chats, current, unread, onNew, onProjectMenu }) {
+function Sidebar({ chats, current, unread, onNew, onProjectMenu, onConnections }) {
   return html`<nav class="side" aria-label="Chats">
     <div class="side-top"></div>
     ${chats.map((c, i) => html`${i === 1 && html`<div class="side-label">Projects</div>`}<a class=${'side-item' + (c.id === current ? ' sel' : '')} href=${c.id === 'home' ? '#/' : '#/p/' + c.id} onContextMenu=${(e) => { if (c.id !== 'home' && onProjectMenu) { e.preventDefault(); onProjectMenu(e, c.id); } }}>
@@ -540,7 +540,52 @@ function Sidebar({ chats, current, unread, onNew, onProjectMenu }) {
       <span class="side-name">${c.name}</span>${c.busy ? html`<b class="side-busy" title="Working"></b>` : unread[c.id] && html`<b class="side-unread" title="New messages"></b>`}</a>`)}
     ${chats.length <= 1 && html`<div class="side-label">Projects</div>`}
     <button class="side-item side-new" onClick=${onNew}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="side-name">New project</span></button>
+    <button class="side-item side-connections" onClick=${onConnections}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H7a5 5 0 000 10h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg><span class="side-name">Connections</span></button>
   </nav>`;
+}
+
+// What Ken can reach beyond your files: your Chrome, your email, your calendars.
+const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
+function Connections({ onClose, toast }) {
+  const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState('');
+  useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
+  const act = async (path, opts, after) => {
+    setBusy(true); setError('');
+    try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
+    finally { setBusy(false); }
+  };
+  const domain = (address.split('@')[1] || '').toLowerCase();
+  const help = APP_PASSWORD[domain];
+  if (!state) return html`<${Modal} title="Connections" onClose=${onClose}><p class="np-help">${error || 'Loading…'}</p><//>`;
+  const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
+  const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
+  const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
+  return html`<${Modal} title="Connections" onClose=${onClose}>
+    <p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
+    ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
+      state.chrome ? on('On') : html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Set up</button>`,
+      open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}
+    ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
+      state.email ? html`<span class="conn-who">${state.email.address}</span><button class="text-action" disabled=${busy} onClick=${() => act('/api/connections/email', { method: 'DELETE' })}>Disconnect</button>`
+        : open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); }}>Connect</button>`,
+      open === 'email' && !state.email && html`<div class="conn-form">
+        <input class="np-input" autofocus placeholder="you@gmail.com" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
+        <input class="np-input" type="password" placeholder="App password" value=${password} onInput=${(e) => setPassword(e.target.value)}/>
+        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
+        <p class="conn-steps">Use an app password, not your normal one. ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">Create one</a>` : 'Your email provider’s security settings can create one.'} ${domain.match(/gmail/) ? '(Google asks you to turn on 2-Step Verification first.)' : ''}</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
+      </div>`)}
+    ${row(icon('M4 6h16v14H4zM4 10h16M9 3v4M15 3v4'), 'Calendar', 'Ken reads your schedule for briefs and planning. Read-only.',
+      open !== 'calendar' && html`<button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>${state.calendars.length ? 'Add' : 'Connect'}</button>`,
+      html`${state.calendars.length > 0 && html`<div class="conn-list">${state.calendars.map((c, i) => html`<div>${on(c.name)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/calendar?index=${i}`, { method: 'DELETE' })}>Remove</button></div>`)}</div>`}
+      ${open === 'calendar' && html`<div class="conn-form">
+        <input class="np-input" autofocus placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value=${url} onInput=${(e) => setUrl(e.target.value)}/>
+        <p class="conn-steps">In Google Calendar: <b>Settings</b> → your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. Apple Calendar and Outlook have a similar private link.</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !url.trim()} onClick=${() => act('/api/connections/calendar', { json: { url } }, () => setUrl(''))}>${busy ? 'Checking…' : 'Add calendar'}</button></div>
+      </div>`}`)}
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+  <//>`;
 }
 
 function RenameProject({ project, onClose, onDone }) {
@@ -604,6 +649,7 @@ function App() {
   useEffect(()=>{const onKey=(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='\\'){e.preventDefault();toggleSide();}};addEventListener('keydown',onKey);return()=>removeEventListener('keydown',onKey);},[]);
   const [newProject,setNewProject]=useState(false);
   const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
+  const [connections,setConnections]=useState(false);
   const [projectMeta,setProjectMeta]=useState(null);
   const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/projects/${id}`).then((v)=>setProjectMeta(v.project)).catch(()=>setProjectMeta(null)); };
   const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
@@ -813,13 +859,14 @@ function App() {
   useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
   const unread = Object.fromEntries(chats.map((c) => [c.id, c.id !== pid && c.last_ts > (seenAt[c.id] || 0)]));
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
+  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu} onConnections=${()=>setConnections(true)}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
       ? api(`/api/projects/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
       : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
     ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
+    ${connections && html`<${Connections} toast=${toast} onClose=${()=>setConnections(false)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
     ${newProject && html`<${NewProject} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/>`}

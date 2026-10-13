@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 from brains import ClaudeBrain
 from engine import HOME, Engine
 from web import WebApp
+from connections import Connections
 from onboarding import Onboarding
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -96,7 +97,9 @@ BROWSER_PROMPT = (
     "debugging”, then click Allow when Chrome asks. Chrome 144 or newer is needed."
 )
 
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=browser_mcp))
+# Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.
+CONNECTIONS = Connections(KEN_HOME, on_change=lambda: claude_connected())
+ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=lambda: {**browser_mcp(), **CONNECTIONS.mcp()}))
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
@@ -411,6 +414,9 @@ def build_system(for_project: bool = False) -> str:
         log.warning("project listing failed: %s", e)
     if browser_mcp():
         system += "\n\n" + BROWSER_PROMPT
+    connected = CONNECTIONS.prompt()
+    if connected:
+        system += "\n\n" + connected
     if for_project:
         return system  # a project chat is Ken at work: no first-run setup or awakening
     pending = unresolved_setup()
@@ -852,7 +858,7 @@ async def start_engine() -> None:
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS)
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
