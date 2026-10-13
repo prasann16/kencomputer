@@ -45,6 +45,9 @@ async function startService() {
     return run(ken, ['start']);
   }
   const engine = path.join(process.resourcesPath, 'engine', 'ken-engine');
+  // The browser tool runs on the helper's Node: macOS keeps the helper out of the Dock, while
+  // the app's own binary run as Node shows up there as a second Ken that bounces forever.
+  const node = path.join(process.resourcesPath, '..', 'Frameworks', 'Ken Helper.app', 'Contents', 'MacOS', 'Ken Helper');
   mkdirSync(path.dirname(appAgentFile), { recursive: true }); mkdirSync(path.join(home, 'logs'), { recursive: true });
   writeFileSync(appAgentFile, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,7 +57,7 @@ async function startService() {
   <key>EnvironmentVariables</key><dict>
     <key>KEN_HOME</key><string>${esc(home)}</string>
     <key>KEN_APP_VERSION</key><string>${app.getVersion()}</string>
-    <key>KEN_NODE</key><string>${esc(process.execPath)}</string>
+    <key>KEN_NODE</key><string>${esc(node)}</string>
     <key>KEN_BROWSER_MCP</key><string>${esc(path.join(process.resourcesPath, 'browser', 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js'))}</string>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
   </dict>
@@ -69,7 +72,24 @@ async function startService() {
     await run('/bin/launchctl', ['disable', `${domain}/${terminalAgent}`]);
   }
   await run('/bin/launchctl', ['bootout', `${domain}/${appAgent}`]);
+  await stopOtherEngine();
   await run('/bin/launchctl', ['bootstrap', domain, appAgentFile]);
+}
+
+// Only one engine runs per Ken home (engine.lock holds its pid). One the app didn't
+// start, like a copy run by hand, is stopped so the app's own engine can take over.
+async function stopOtherEngine() {
+  let pid = 0;
+  try { pid = Number(readFileSync(path.join(home, 'engine.lock'), 'utf8').trim()); } catch {}
+  if (!pid || pid === process.pid) return;
+  const command = await new Promise((resolve) => execFile('/bin/ps', ['-p', String(pid), '-o', 'command='], (_e, out) => resolve(String(out || ''))));
+  if (!/ken-engine|bot\.py/.test(command)) return;  // gone, or the pid now belongs to something else
+  try { process.kill(pid, 'SIGTERM'); } catch {}
+  for (let i = 0; i < 20; i++) {
+    try { process.kill(pid, 0); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
@@ -81,9 +101,36 @@ async function connect() {
   await startService();
   for (let i = 0; i < 120; i++) {
     if (ready(await running(service()))) return service();
+    if (i === 40) await startService();  // nothing after 20 seconds: start it over once
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
+}
+
+// Connect, or tell the user plainly and let them try again. Null if they chose Quit.
+async function connectOrAsk() {
+  for (;;) {
+    try { return await connect(); } catch (error) {
+      const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
+      if (response !== 0) return null;
+    }
+  }
+}
+
+// Keep the window on a working engine: if it stops answering for 15 seconds, bring it back.
+function watchEngine() {
+  let misses = 0, healing = false;
+  setInterval(async () => {
+    if (healing || quitting) return;
+    if ((await running(service())) !== null) { misses = 0; return; }
+    if (++misses < 3) return;
+    healing = true; misses = 0;
+    await win.loadFile(path.join(__dirname, 'loading.html'));
+    const found = await connectOrAsk();
+    if (!found) { quitting = true; app.quit(); return; }
+    await win.loadURL(found.origin);
+    healing = false;
+  }, 5000);
 }
 
 // Updates download in the background and install while the window is closed and Ken
@@ -152,7 +199,9 @@ async function start() {
   win.once('ready-to-show', () => { if (!updated) win.show(); });
   await win.loadFile(path.join(__dirname, 'loading.html'));
 
-  const { origin, token } = await connect();
+  const found = await connectOrAsk();
+  if (!found) { quitting = true; app.quit(); return; }
+  const { origin, token } = found;
   await session.defaultSession.cookies.set({ url: origin, name: 'ken_token', value: token, httpOnly: true, sameSite: 'strict', path: '/' });
   // Only Ken's own page may use the microphone, and only for audio.
   const ours = (wc) => wc === win.webContents && new URL(wc.getURL()).origin === origin;
@@ -205,6 +254,7 @@ async function start() {
   tray.on('click', show);
   buildMenus();
   checkForUpdates();
+  watchEngine();
 }
 
 // One item covers updates: it checks, or, once an update has downloaded, restarts into it.

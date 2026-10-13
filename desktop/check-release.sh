@@ -39,7 +39,7 @@ case "$GATEKEEPER" in *accepted*"Notarized Developer ID"*) pass "macOS accepts i
 HOME_DIR="$WORK/home"; mkdir -p "$HOME_DIR"
 # `exec` so $! is the engine itself and cleanup really stops it.
 (cd /tmp && KEN_HOME="$HOME_DIR" KEN_APP_VERSION="$VERSION" TELEGRAM_BOT_TOKEN= KEN_WEB_PORT=$PORT \
-  KEN_NODE="$APP/Contents/MacOS/Ken" \
+  KEN_NODE="$APP/Contents/Frameworks/Ken Helper.app/Contents/MacOS/Ken Helper" \
   KEN_BROWSER_MCP="$APP/Contents/Resources/browser/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js" \
   exec "$APP/Contents/Resources/engine/ken-engine" > "$WORK/engine.log" 2>&1) &
 ENGINE=$!
