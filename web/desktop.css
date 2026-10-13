@@ -86,7 +86,7 @@ html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:16px}
 .np-folder{display:flex;align-items:center;gap:12px;margin-top:6px;padding:9px 12px;border:1px solid #e6e6e4;border-radius:9px;font-weight:400}.np-folder span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#666}
 .np-optional{font-weight:400;color:#9a9a9a}.np-note{display:block;margin-top:6px;font-weight:400;color:#9a9a9a}
 .np-actions{justify-content:flex-end;gap:8px;margin-top:8px}
-@media(max-width:700px){.side{display:none}}
+@media(max-width:700px){.side{display:none}html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:110px}}
 .modal{width:min(440px,calc(100vw - 32px));padding:24px 24px 20px;border-radius:14px}.modal h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin:0 0 4px}
 .modal .np-help{margin:0 0 20px;font-size:13.5px}.modal .np-label{margin:0 0 14px;font-size:12.5px}.modal .np-input{height:34px;font-size:13.5px;border-radius:8px}
 .modal .np-folder{padding:7px 10px;border-radius:8px;font-size:13.5px}.modal .np-note{font-size:12px}
