@@ -519,11 +519,17 @@ function Connect({ onDone }) {
     try { const r = await api('/api/setup', { json: body, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); } if (r.error) setError(r.error); if (r.claude) onDone(r); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   };
+  // Approving in the browser usually connects Ken by itself, with no code to paste.
+  useEffect(() => {
+    if (step !== 'code') return;
+    const timer = setInterval(async () => { try { const r = await api('/api/setup'); if (r.claude) { clearInterval(timer); onDone(r); } } catch {} }, 2000);
+    return () => clearInterval(timer);
+  }, [step]);
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
   return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect Claude</h1>
     ${step === 'start' && html`<p>Ken runs on your Claude subscription. Sign in once and you’re set.</p>
       <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? 'Opening Claude…' : 'Connect Claude'}</button>`}
-    ${step === 'code' && html`<p>Approve Ken in your browser, then paste the code Claude shows you.</p>${field('Paste the code')}
+    ${step === 'code' && html`<p>Approve Ken in your browser and Ken connects by itself. If Claude shows you a code instead, paste it here.</p>${field('Paste the code')}
       <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>
       <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
       <button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}

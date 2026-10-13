@@ -183,7 +183,7 @@ elif "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/nul
   ok "Claude is already signed in on this machine"
 else
   dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
-  dim "  A browser window will open — approve, then paste the code back here."
+  dim "  A browser window will open — approve there. If Claude shows a code, paste it here."
   say ""
   TOKEN_OUTPUT="$(mktemp)"
   "$CLAUDE_BIN" setup-token < /dev/tty > "$TOKEN_OUTPUT" 2>&1 || true
