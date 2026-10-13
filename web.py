@@ -48,7 +48,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -56,6 +56,7 @@ class WebApp:
         self.commands = commands or {}
         self.setup = setup
         self.connections = connections
+        self.jobs = jobs  # (list, set): the engine's standing jobs
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -160,14 +161,14 @@ class WebApp:
         return _json(self.connections.status() if self.connections else {})
 
     async def connections_change(self, request):
-        """Connect or disconnect: email {address, password, imap_host?}, calendar {url} or {remove: index}."""
+        """Connect or disconnect: email {address, password, imap_host?} or ?address=, calendar {url} or ?index=."""
         if not self.connections:
             return _json({"error": "Connections aren't available here."}, 400)
         kind, b = request.match_info["kind"], (await self._body(request) if request.method == "POST" else {})
         try:
             if kind == "email":
                 if request.method == "DELETE":
-                    return _json(await self.connections.disconnect_email())
+                    return _json(await self.connections.disconnect_email(request.query.get("address", "")))
                 return _json(await self.connections.connect_email(str(b.get("address", "")), str(b.get("password", "")), str(b.get("imap_host", ""))))
             if kind == "calendar":
                 if request.method == "DELETE":
@@ -176,6 +177,19 @@ class WebApp:
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
         raise web.HTTPNotFound()
+
+    async def jobs_list(self, request):
+        return _json(self.jobs[0]() if self.jobs else [])
+
+    async def jobs_change(self, request):
+        """Switch a standing job on or off, or move its time: {on?, time?}."""
+        if not self.jobs:
+            return _json({"error": "Jobs aren't available here."}, 400)
+        b = await self._body(request)
+        try:
+            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time")))
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
 
     async def command(self, request):
         """Run a slash command owned by the host (e.g. bot.py's /model, /coffee)."""
@@ -472,6 +486,8 @@ class WebApp:
         r.add_post("/api/command", self.command)
         r.add_get("/api/setup", self.setup_status)
         r.add_get("/api/connections", self.connections_status)
+        r.add_get("/api/jobs", self.jobs_list)
+        r.add_patch("/api/jobs/{name}", self.jobs_change)
         r.add_post("/api/connections/{kind}", self.connections_change)
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)

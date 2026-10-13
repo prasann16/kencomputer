@@ -259,7 +259,8 @@ SYSTEM_PROMPT = (
     "says, plainly — never from assumption, and never more reassuring than the file. If "
     "the file is missing, you were installed by the human on a machine they control. "
     f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
-    'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}. '
+    'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}; '
+    '"on": false pauses a job without deleting it. '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -776,6 +777,8 @@ CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wak
 
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
     """Due once per scheduled day, at its time or up to CATCH_UP_HOURS after it (missed while asleep)."""
+    if job.get("on") is False:
+        return False
     try:
         hour, minute = (int(x) for x in str(job.get("time", "")).split(":"))
     except ValueError:
@@ -791,6 +794,32 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
         return False
     last = str(state.get(job.get("name", job.get("prompt", "")), ""))
     return not last.startswith(time.strftime("%Y-%m-%d", now))
+
+
+def list_jobs() -> list[dict]:
+    """The standing jobs, for the settings page: what runs on its own, and when."""
+    try:
+        jobs = json.loads(JOBS_FILE.read_text())
+    except Exception:
+        return []
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True)}
+            for j in jobs if isinstance(j, dict) and j.get("name")]
+
+
+def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[dict]:
+    """Switch a job on or off, or move its time (HH:MM, local)."""
+    if at is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+        raise ValueError("Use a time like 07:00.")
+    jobs = json.loads(JOBS_FILE.read_text())
+    job = next((j for j in jobs if isinstance(j, dict) and j.get("name") == name), None)
+    if job is None:
+        raise ValueError("No such job.")
+    if on is not None:
+        job["on"] = bool(on)
+    if at is not None:
+        job["time"] = at
+    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+    return list_jobs()
 
 
 async def scheduler(app) -> None:
@@ -858,7 +887,7 @@ async def start_engine() -> None:
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:

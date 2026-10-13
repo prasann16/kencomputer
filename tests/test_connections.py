@@ -73,7 +73,7 @@ def test_known_servers_and_bad_login(tmp_path, monkeypatch):
             await c.connect_email("me@gmail.com", "abcd efgh ijkl mnop")
         monkeypatch.setattr(Email, "imap", lambda self: type("M", (), {"logout": lambda s: None})())
         await c.connect_email("me@gmail.com", "abcd efgh ijkl mnop")
-        saved = json.loads((tmp_path / "connections.json").read_text())["email"]
+        saved = json.loads((tmp_path / "connections.json").read_text())["emails"][0]
         assert saved["imap_host"] == "imap.gmail.com" and saved["password"] == "abcdefghijklmnop"
         assert oct((tmp_path / "connections.json").stat().st_mode)[-3:] == "600"
     import asyncio
@@ -83,9 +83,30 @@ def test_known_servers_and_bad_login(tmp_path, monkeypatch):
 def test_tools_and_prompt_follow_what_is_connected(tmp_path):
     c = Connections(tmp_path)
     assert c.mcp() == {} and c.prompt() == ""
-    c.save({"email": {"address": "me@gmail.com", "password": "x", "imap_host": "imap.gmail.com",
-                      "smtp_host": "smtp.gmail.com", "smtp_port": 465},
+    c.save({"emails": [{"address": "me@gmail.com", "password": "x", "imap_host": "imap.gmail.com",
+                        "smtp_host": "smtp.gmail.com", "smtp_port": 465}],
             "calendars": [{"name": "Work", "url": "https://example.com/work.ics"}]})
     assert "ken" in c.mcp()
     assert "EMAIL (me@gmail.com)" in c.prompt() and "CALENDAR (Work)" in c.prompt()
-    assert c.status()["email"] == {"address": "me@gmail.com"} and "password" not in json.dumps(c.status())
+    assert c.status()["emails"] == [{"address": "me@gmail.com"}] and "password" not in json.dumps(c.status())
+
+
+def test_several_email_accounts(tmp_path, monkeypatch):
+    async def run():
+        c = Connections(tmp_path)
+        # A file from before Ken took several accounts still loads.
+        (tmp_path / "connections.json").write_text(json.dumps({"email": {"address": "old@gmail.com", "password": "x",
+            "imap_host": "imap.gmail.com", "smtp_host": "smtp.gmail.com", "smtp_port": 465}}))
+        assert c.status()["emails"] == [{"address": "old@gmail.com"}]
+        monkeypatch.setattr(Email, "imap", lambda self: type("M", (), {"logout": lambda s: None})())
+        await c.connect_email("work@icloud.com", "pw")
+        await c.connect_email("old@gmail.com", "new-pw")  # reconnecting replaces, never duplicates
+        assert [e["address"] for e in c.status()["emails"]] == ["work@icloud.com", "old@gmail.com"]
+        assert "old@gmail.com, work@icloud.com" in c.prompt() or "work@icloud.com, old@gmail.com" in c.prompt()
+        assert "need the `account`" in c.prompt()
+        await c.disconnect_email("WORK@icloud.com")
+        assert c.status()["emails"] == [{"address": "old@gmail.com"}]
+        await c.disconnect_email("old@gmail.com")
+        assert c.status()["emails"] == [] and c.mcp() == {}
+    import asyncio
+    asyncio.run(run())
