@@ -49,3 +49,21 @@ def test_new_install_after_the_slot_waits_for_tomorrow():
     state = {"morning-brief": "2026-10-05 (first seen)"}  # what the scheduler records on first sight
     assert not bot._job_due(BRIEF, at("09:40"), state)
     assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)
+
+
+def test_a_switched_off_job_never_runs():
+    assert not bot._job_due({**BRIEF, "on": False}, at("07:00"), {})
+
+
+def test_settings_switch_and_move_a_job():
+    import json
+    import pytest
+    bot.JOBS_FILE.write_text(json.dumps([{**BRIEF, "prompt": "brief"}]))
+    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True}]
+    assert bot.set_job("morning-brief", on=False)[0]["on"] is False
+    assert bot.set_job("morning-brief", at="06:30")[0]["time"] == "06:30"
+    assert json.loads(bot.JOBS_FILE.read_text())[0]["prompt"] == "brief"  # the rest of the job is kept
+    with pytest.raises(ValueError):
+        bot.set_job("morning-brief", at="7am")
+    with pytest.raises(ValueError):
+        bot.set_job("nope", on=True)
