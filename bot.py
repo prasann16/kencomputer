@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import re
-import secrets
 import tempfile
 import time
 from pathlib import Path
@@ -204,9 +203,9 @@ SYSTEM_PROMPT = (
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
     "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
-    "shows your Home chat, project chats, and Settings: Connections (Chrome, Email, Calendar, "
-    "and Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
-    "time). Ken on your phone is their own Telegram bot, connected in Settings; it is the same "
+    "shows your Home chat, project chats, and Settings: Connections (Chrome, Email, Calendar), "
+    "Phone (Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
+    "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
     "Home conversation, memory and connections as the app, not a separate assistant. The "
     "header line of each message says where they wrote from. On their phone, keep it short "
     "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new and "
@@ -683,7 +682,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user and PHONE.pair(update.effective_user.id, (context.args or [""])[0]):
+    if update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or ""):
         await update.effective_message.reply_text(
             "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
             "Text me or send a voice note anytime."
@@ -694,8 +693,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         await update.effective_message.reply_text(
             "This Ken belongs to someone else." if ALLOWED_USER_ID else
-            "Almost there. On the computer Ken runs on, open Ken → Settings → Ken on your phone, "
-            "and scan the code there."
+            "Almost there. On the computer Ken runs on, open Ken → Settings → Phone, "
+            "then tap Start here again."
         )
         return
     if not BORN_FLAG.exists():
@@ -1186,13 +1185,14 @@ PAIR_MINUTES = 10
 
 class Phone:
     """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
-    Connected, paired and disconnected while Ken runs (Settings → Ken on your phone).
-    Pairing: whoever opens the one-time link shown in Settings becomes the owner."""
+    Connected, paired and disconnected while Ken runs (Settings → Phone).
+    Pairing, like the terminal installer: the first person to tap Start on a just-connected
+    bot becomes its owner. Nobody else knows the bot exists yet."""
 
     def __init__(self) -> None:
         self.app: Application | None = None
         self.username = ""
-        self.code, self.code_until = "", 0.0
+        self.pair_until = 0.0
         self.notify: asyncio.Task | None = None
         self.retry: asyncio.Task | None = None
 
@@ -1201,21 +1201,21 @@ class Phone:
         return self.app.bot if self.app else None
 
     def status(self) -> dict:
-        s = {"connected": self.app is not None, "bot": self.username, "paired": bool(self.app and ALLOWED_USER_ID)}
+        s = {"connected": self.app is not None, "bot": self.username, "paired": bool(self.app and ALLOWED_USER_ID),
+             "owner": os.environ.get("TELEGRAM_OWNER", "")}
         if self.app and not ALLOWED_USER_ID:
-            if not self.code or time.time() > self.code_until:
-                self.code, self.code_until = secrets.token_urlsafe(9), time.time() + PAIR_MINUTES * 60
-            s["code"] = self.code
-            s["link"] = f"https://t.me/{self.username}?start={self.code}"
+            self.pair_until = time.time() + PAIR_MINUTES * 60  # Settings is waiting for the tap
+            s["link"] = f"https://t.me/{self.username}"
         return s
 
-    def pair(self, user_id: int, code: str) -> bool:
+    def pair(self, user_id: int, name: str) -> bool:
         global ALLOWED_USER_ID
-        if ALLOWED_USER_ID or not code or code != self.code or time.time() > self.code_until:
+        if ALLOWED_USER_ID or time.time() > self.pair_until:
             return False
         ALLOWED_USER_ID = user_id
         save_env(KEN_HOME / ".env", "ALLOWED_USER_ID", str(user_id))
-        self.code = ""
+        save_env(KEN_HOME / ".env", "TELEGRAM_OWNER", name.replace("\n", " ")[:60])
+        self.pair_until = 0.0
         mark_setup("phone", "done")
         log.info("phone paired")
         return True
@@ -1293,10 +1293,10 @@ class Phone:
         if token != os.environ.get("TELEGRAM_BOT_TOKEN"):
             ALLOWED_USER_ID = 0  # a new bot: whoever pairs it next owns it
             drop_env(KEN_HOME / ".env", "ALLOWED_USER_ID")
+            drop_env(KEN_HOME / ".env", "TELEGRAM_OWNER")
         await self.stop()
         save_env(KEN_HOME / ".env", "TELEGRAM_BOT_TOKEN", token)
         await self.start(token)
-        self.code = ""
         return self.status()
 
     async def disconnect(self) -> dict:
@@ -1304,7 +1304,7 @@ class Phone:
         await self.stop()
         ALLOWED_USER_ID = 0
         self.username = ""
-        for key in ("TELEGRAM_BOT_TOKEN", "ALLOWED_USER_ID"):
+        for key in ("TELEGRAM_BOT_TOKEN", "ALLOWED_USER_ID", "TELEGRAM_OWNER"):
             drop_env(KEN_HOME / ".env", key)
         return self.status()
 
@@ -1323,7 +1323,7 @@ async def run() -> None:
     if token:
         PHONE.keep_starting(token)
     else:
-        log.info("ken is running; Ken on your phone isn't connected (Settings → Ken on your phone)")
+        log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
     await asyncio.Event().wait()
 
 

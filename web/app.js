@@ -41,7 +41,7 @@ const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
 const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null });
 
-// Just enough markdown for chat: code blocks, tables, `code`, **bold**, links. Never raw HTML.
+// Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
 function inline(text) {
   return text.split(/(`[^`\n]+`)/g).map((seg, i) => {
@@ -56,7 +56,7 @@ const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) =
 function prose(text) {
   return text.split(/((?:^\|.*\|[ \t]*(?:\n|$)){2,})/m).map((part, i) => {
     const lines = part.trim().split('\n');
-    if (i % 2 === 0 || !/^\|[\s:|-]+\|$/.test(lines[1] || '')) return inline(part);
+    if (i % 2 === 0 || !/^\|[\s:|-]+\|$/.test(lines[1] || '')) return inline(part.replace(/^([ \t]*)[-*][ \t]+(?=\S)/gm, '$1• '));
     return html`<div class="table"><table><thead><tr>${cells(lines[0]).map((c) => html`<th>${inline(c)}</th>`)}</tr></thead>
       <tbody>${lines.slice(2).map((l) => html`<tr>${cells(l).map((c) => html`<td>${inline(c)}</td>`)}</tr>`)}</tbody></table></div>`;
   });
@@ -550,7 +550,7 @@ function Sidebar({ chats, current, unread, onNew, onProjectMenu, onConnections }
   </nav>`;
 }
 
-// What Ken can reach beyond your files: your phone, your Chrome, your email, your calendars.
+// Settings: what Ken can reach (Chrome, email, calendars), Ken on your phone, and standing jobs.
 const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
 function Connections({ onClose, toast }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -582,28 +582,8 @@ function Connections({ onClose, toast }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" onClose=${onClose}>
-    <div class="set-tabs" role="tablist">${[['connections', 'Connections'], ['jobs', 'Jobs']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
-    ${tab === 'connections' && html`<p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
-    ${phone && row(icon('M8 2h8a1 1 0 011 1v18a1 1 0 01-1 1H8a1 1 0 01-1-1V3a1 1 0 011-1zM11 18h2'), 'Ken on your phone', 'Text or talk to Ken from anywhere, through Telegram. Same Ken, same chat.',
-      !phone.connected && open !== 'phone' && html`<button class="text-action" onClick=${() => { setOpen('phone'); setError(''); }}>Set up</button>`,
-      html`${phone.paired && html`<div class="conn-list"><div>${on('@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Disconnect</button></div></div>`}
-      ${!phone.connected && open === 'phone' && html`<div class="conn-form">
-        <ol class="phone-steps">
-          <li><b>On your phone, open Telegram and search for <code>@BotFather</code>.</b> It’s Telegram’s official helper for making your own Ken there.
-            <p class="conn-steps">Telegram on this computer? <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">Open BotFather</a>. No Telegram yet? It’s free in the App Store and Google Play.</p></li>
-          <li><b>Send BotFather <code>/newbot</code></b>, then pick a name (like “My Ken”) and a username that ends in <b>bot</b>.</li>
-          <li><b>Paste the code BotFather sends back.</b> It looks like <code>1234567890:AAH…</code>
-            <p class="conn-steps">Copied it on your iPhone? It pastes straight here if your Mac uses the same Apple ID. Otherwise send it to yourself by email or message.</p>
-            <input class="np-input" placeholder="1234567890:AAH…" value=${botToken} onInput=${(e) => setBotToken(e.target.value)}/></li>
-        </ol>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => phoneAct({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Next'}</button></div>
-      </div>`}
-      ${phone.connected && !phone.paired && phone.link && html`<div class="conn-form">
-        <p class="phone-last"><b>Last step.</b> In Telegram, open <b>@${phone.bot}</b> and send this, so it knows it’s yours:</p>
-        <code class="phone-code">/start ${phone.code}</code>
-        <p class="conn-steps">Works for 10 minutes. Telegram on this computer? <a class="text-action" href=${phone.link} target="_blank" rel="noopener">Open @${phone.bot}</a> and tap Start instead.</p>
-        <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Cancel</button></div>
-      </div>`}`)}
+    <div class="set-tabs" role="tablist">${[['connections', 'Connections'], ['jobs', 'Jobs'], ['phone', 'Phone']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    ${tab === 'connections' && html`<div class="set-body"><p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
       state.chrome ? on('On') : html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Set up</button>`,
       open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}
@@ -624,12 +604,27 @@ function Connections({ onClose, toast }) {
         <input class="np-input" autofocus placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value=${url} onInput=${(e) => setUrl(e.target.value)}/>
         <p class="conn-steps">In Google Calendar: <b>Settings</b> → your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. Apple Calendar and Outlook have a similar private link.</p>
         <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !url.trim()} onClick=${() => act('/api/connections/calendar', { json: { url } }, () => setUrl(''))}>${busy ? 'Checking…' : 'Add calendar'}</button></div>
-      </div>`}`)}`}
-    ${tab === 'jobs' && html`<p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
+      </div>`}`)}</div>`}
+    ${tab === 'phone' && phone && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p>
+    ${phone.paired ? html`<div class="conn-list phone-list"><div>${on(phone.owner ? `@${phone.bot} · ${phone.owner}` : '@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Disconnect</button></div></div>`
+    : phone.connected ? html`<div class="conn-form phone-form">
+        <p class="phone-last">Last step: open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> on your phone and tap <b>Start</b>.</p>
+        <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Cancel</button></div>
+      </div>`
+    : html`<div class="conn-form phone-form">
+        <ol class="phone-steps">
+          <li>In Telegram, message <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a></li>
+          <li>Send <code>/newbot</code> and follow along</li>
+          <li>Paste the code it gives you</li>
+        </ol>
+        <input class="np-input" placeholder="1234567890:AAH…" value=${botToken} onInput=${(e) => setBotToken(e.target.value)}/>
+        <div class="row np-actions"><button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => phoneAct({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Connect'}</button></div>
+      </div>`}</div>`}
+    ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
     ${jobs.map((j) => row(icon('M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'), JOB_NAMES[j.name] || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()),
       JOB_HELP[j.name] || (j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days),
       html`<input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j.name, { time: e.target.value })}/>
-        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => job(j.name, { on: e.target.checked })}/>`))}`}
+        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => job(j.name, { on: e.target.checked })}/>`))}</div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   <//>`;
 }
