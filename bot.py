@@ -1156,7 +1156,30 @@ def ensure_home() -> None:
         shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
 
 
+ENGINE_LOCK = KEN_HOME / "engine.lock"
+
+
+def one_engine():
+    """One engine per Ken home. Two would fight over Telegram and the app's port, so a
+    second one waits here until the first stops, then takes over."""
+    import fcntl
+
+    lock = open(ENGINE_LOCK, "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.seek(0)
+        log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    lock.seek(0)
+    lock.truncate()
+    lock.write(str(os.getpid()))
+    lock.flush()
+    return lock  # held open (and so locked) for the life of the engine
+
+
 def main() -> None:
+    lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
     if not BOT_TOKEN:
