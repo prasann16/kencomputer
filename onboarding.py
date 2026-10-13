@@ -1,8 +1,9 @@
 """First-run setup without a terminal: connect Claude, report voice readiness.
 
 Connecting runs the same `claude setup-token` the installer runs, in a
-pseudo-terminal: the CLI opens the browser, the user approves and pastes the
-code shown there, and the long-lived token lands in ~/.ken/.env.
+pseudo-terminal: the CLI opens the browser and the user approves. Usually the
+browser hands the sign-in straight back to the CLI; if Claude shows a code
+instead, the user pastes it. Either way the long-lived token lands in ~/.ken/.env.
 """
 from __future__ import annotations
 
@@ -61,6 +62,8 @@ class Onboarding:
         self.output = ""
         self.exited = False
         self.started = 0.0
+        self.watch: asyncio.Task | None = None
+        self.saved = ""
 
     @property
     def active(self) -> bool:
@@ -98,13 +101,33 @@ class Onboarding:
         if not url:
             self.stop()
             raise RuntimeError("Couldn’t open Claude sign-in. Try again.")
+        self.watch = asyncio.create_task(self._watch())
         return {"url": url}
+
+    async def _watch(self) -> None:
+        """Approving in the browser usually finishes the sign-in with no code to paste: save the token the CLI prints."""
+        token = await self._wait_for(TOKEN, 1800)
+        if token:
+            await self._save(token)
+        self.stop()
+
+    async def _save(self, token: str) -> None:
+        if token == self.saved:  # the browser and a pasted code can both deliver it
+            return
+        self.saved = token
+        save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
+        try:
+            await self.on_connected()  # the token is saved either way
+        except Exception:
+            log.exception("post-connect refresh failed")
 
     async def submit(self, code: str) -> dict:
         """Give the CLI the code from the browser; save the token it prints.
 
         If the sign-in has gone away (the CLI exited, or was never started),
         open a fresh one instead of failing: the user approves and pastes again."""
+        if self.connected():  # the browser already finished the sign-in
+            return self.status()
         try:
             if self.fd is None or self.exited:
                 raise OSError("sign-in not running")
@@ -115,11 +138,7 @@ class Onboarding:
         self.stop()
         if not token:
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
-        save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
-        try:
-            await self.on_connected()  # the token is saved either way
-        except Exception:
-            log.exception("post-connect refresh failed")
+        await self._save(token)
         return self.status()
 
     def _read(self) -> None:
@@ -145,6 +164,9 @@ class Onboarding:
         return ""
 
     def stop(self) -> None:
+        if self.watch and self.watch is not asyncio.current_task():
+            self.watch.cancel()
+        self.watch = None
         if self.pid:
             try:
                 os.kill(self.pid, 9)
