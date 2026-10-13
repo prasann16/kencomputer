@@ -550,13 +550,25 @@ function Sidebar({ chats, current, unread, onNew, onProjectMenu, onConnections }
   </nav>`;
 }
 
-// What Ken can reach beyond your files: your Chrome, your email, your calendars.
+// What Ken can reach beyond your files: your phone, your Chrome, your email, your calendars.
 const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
 function Connections({ onClose, toast }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState('');
   const [jobs, setJobs] = useState([]), [tab, setTab] = useState('connections');
-  useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); api('/api/jobs').then(setJobs).catch(() => {}); }, []);
+  const [phone, setPhone] = useState(null), [botToken, setBotToken] = useState('');
+  useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); api('/api/jobs').then(setJobs).catch(() => {}); api('/api/phone').then(setPhone).catch(() => {}); }, []);
+  // While the phone hasn't opened the pairing link yet, check every 2 seconds.
+  useEffect(() => {
+    if (!phone?.link) return;
+    const timer = setInterval(() => api('/api/phone').then((p) => { setPhone(p); if (p.paired) toast(`Ken is on your phone. Say hi to @${p.bot}.`); }).catch(() => {}), 2000);
+    return () => clearInterval(timer);
+  }, [phone?.link]);
+  const phoneAct = async (opts) => {
+    setBusy(true); setError('');
+    try { setPhone(await api('/api/phone', opts)); setBotToken(''); setOpen(''); } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
   const job = async (name, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(name)}`, { method: 'PATCH', json: change })); } catch (e) { setError(e.message); } };
   const act = async (path, opts, after) => {
     setBusy(true); setError('');
@@ -572,6 +584,26 @@ function Connections({ onClose, toast }) {
   return html`<${Modal} title="Settings" onClose=${onClose}>
     <div class="set-tabs" role="tablist">${[['connections', 'Connections'], ['jobs', 'Jobs']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'connections' && html`<p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
+    ${phone && row(icon('M8 2h8a1 1 0 011 1v18a1 1 0 01-1 1H8a1 1 0 01-1-1V3a1 1 0 011-1zM11 18h2'), 'Ken on your phone', 'Text or talk to Ken from anywhere, through Telegram. Same Ken, same chat.',
+      !phone.connected && open !== 'phone' && html`<button class="text-action" onClick=${() => { setOpen('phone'); setError(''); }}>Set up</button>`,
+      html`${phone.paired && html`<div class="conn-list"><div>${on('@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Disconnect</button></div></div>`}
+      ${!phone.connected && open === 'phone' && html`<div class="conn-form">
+        <ol class="phone-steps">
+          <li><b>On your phone, open Telegram and search for <code>@BotFather</code>.</b> It’s Telegram’s official helper for making your own Ken there.
+            <p class="conn-steps">Telegram on this computer? <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">Open BotFather</a>. No Telegram yet? It’s free in the App Store and Google Play.</p></li>
+          <li><b>Send BotFather <code>/newbot</code></b>, then pick a name (like “My Ken”) and a username that ends in <b>bot</b>.</li>
+          <li><b>Paste the code BotFather sends back.</b> It looks like <code>1234567890:AAH…</code>
+            <p class="conn-steps">Copied it on your iPhone? It pastes straight here if your Mac uses the same Apple ID. Otherwise send it to yourself by email or message.</p>
+            <input class="np-input" placeholder="1234567890:AAH…" value=${botToken} onInput=${(e) => setBotToken(e.target.value)}/></li>
+        </ol>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => phoneAct({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Next'}</button></div>
+      </div>`}
+      ${phone.connected && !phone.paired && phone.link && html`<div class="conn-form">
+        <p class="phone-last"><b>Last step.</b> In Telegram, open <b>@${phone.bot}</b> and send this, so it knows it’s yours:</p>
+        <code class="phone-code">/start ${phone.code}</code>
+        <p class="conn-steps">Works for 10 minutes. Telegram on this computer? <a class="text-action" href=${phone.link} target="_blank" rel="noopener">Open @${phone.bot}</a> and tap Start instead.</p>
+        <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Cancel</button></div>
+      </div>`}`)}
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
       state.chrome ? on('On') : html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Set up</button>`,
       open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}

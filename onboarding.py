@@ -51,6 +51,13 @@ def save_env(env_file: Path, key: str, value: str) -> None:
     os.environ[key] = value
 
 
+def drop_env(env_file: Path, key: str) -> None:
+    """Remove KEY from the .env file (and this process)."""
+    if env_file.exists():
+        env_file.write_text("".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith(key + "=")))
+    os.environ.pop(key, None)
+
+
 class Onboarding:
     def __init__(self, home: Path, connected: Callable[[], bool], on_connected: Callable, voice_ready: Callable[[], bool]) -> None:
         self.env_file = home / ".env"

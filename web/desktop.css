@@ -105,6 +105,7 @@ html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:16px}
 .conn-on{display:inline-flex;align-items:center;gap:6px;color:#3f7d4f;font-size:13px}.conn-on i{width:6px;height:6px;border-radius:50%;background:#3fa35b}
 .conn-form{display:flex;flex-direction:column;gap:8px;margin:12px 0 0 44px}.conn-form .np-input{margin-top:0}
 .conn-steps{margin:2px 0 0 44px;font-size:12.5px;line-height:1.5;color:#7a7a78}.conn-form .conn-steps{margin-left:0}
+.phone-steps{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5}.phone-steps .np-input{margin-top:8px}.phone-last{margin:0;font-size:13px}.phone-code{align-self:flex-start;font-size:15px;padding:6px 10px;border-radius:6px;background:#f2f2f0;user-select:all}
 .conn-list{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 44px}.conn-list>div{display:flex;align-items:center;justify-content:space-between;font-size:13px}
 .set-tabs{display:flex;gap:4px;margin:4px 0 18px;padding:3px;border-radius:9px;background:#f4f4f3;width:max-content}.set-tabs button{border:0;background:none;padding:5px 12px;border-radius:7px;font:inherit;font-size:13px;color:#6b6b6b;cursor:pointer}.set-tabs button.on{background:#fff;color:#222;box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .job-time{height:30px;padding:0 8px;border:1px solid #e3e3e1;border-radius:7px;font:inherit;font-size:13px;color:#333;background:#fff}.job-time:disabled{color:#aaa}

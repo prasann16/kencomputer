@@ -26,6 +26,7 @@ from brains import Brain
 log = logging.getLogger("ken")
 
 HOME = "home"  # the conversation with Ken itself
+WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
 WELCOME = "Hey, I’m Ken. Your assistant.\n\nTell me what you do for work and what you’d like off your plate. A voice note is perfect."
@@ -355,9 +356,11 @@ class Engine:
         except Exception:
             return ""
 
-    async def state(self, pid: str) -> str:
+    async def state(self, pid: str, via: str | None = None) -> str:
         """A one-line snapshot sent with each message so replies can be specific."""
         parts = [time.strftime("%a %d %b %H:%M")]
+        if via in WHERE:
+            parts.append(WHERE[via])
         if pid != HOME:
             since = self._last_message_ts(pid)
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
@@ -418,7 +421,7 @@ class Engine:
         body = prompt if prompt is not None else text
         if files and prompt is None:
             body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(files)})"
-        body = f"{await self.state(pid)}\n{body}"
+        body = f"{await self.state(pid, via)}\n{body}"
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
         async with lock:
             self.broadcast("chat.busy", pid, busy=True)
