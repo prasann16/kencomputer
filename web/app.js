@@ -665,7 +665,7 @@ function NewProject({ onClose, onCreated }) {
       ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">Pick a code project's folder to work in it and reuse its CLAUDE.md.</small></div>
+      <small class="np-note">Pick a project folder and Ken works right in it.</small></div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy || !name.trim()} onClick=${create}>${busy ? 'Creating…' : 'Create project'}</button></div>
   <//>`;
