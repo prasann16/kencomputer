@@ -549,7 +549,7 @@ const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords',
 function Connections({ onClose, toast }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState('');
-  const [jobs, setJobs] = useState([]);
+  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('connections');
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); api('/api/jobs').then(setJobs).catch(() => {}); }, []);
   const job = async (name, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(name)}`, { method: 'PATCH', json: change })); } catch (e) { setError(e.message); } };
   const act = async (path, opts, after) => {
@@ -564,8 +564,8 @@ function Connections({ onClose, toast }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" onClose=${onClose}>
-    <h3 class="set-head">Connections</h3>
-    <p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
+    <div class="set-tabs" role="tablist">${[['connections', 'Connections'], ['jobs', 'Every day']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    ${tab === 'connections' && html`<p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
       state.chrome ? on('On') : html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Set up</button>`,
       open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}
@@ -586,9 +586,8 @@ function Connections({ onClose, toast }) {
         <input class="np-input" autofocus placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value=${url} onInput=${(e) => setUrl(e.target.value)}/>
         <p class="conn-steps">In Google Calendar: <b>Settings</b> → your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. Apple Calendar and Outlook have a similar private link.</p>
         <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !url.trim()} onClick=${() => act('/api/connections/calendar', { json: { url } }, () => setUrl(''))}>${busy ? 'Checking…' : 'Add calendar'}</button></div>
-      </div>`}`)}
-    ${jobs.length > 0 && html`<h3 class="set-head">Every day</h3>
-    <p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
+      </div>`}`)}`}
+    ${tab === 'jobs' && html`<p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
     ${jobs.map((j) => row(icon('M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'), JOB_NAMES[j.name] || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()),
       JOB_HELP[j.name] || (j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days),
       html`<input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j.name, { time: e.target.value })}/>
