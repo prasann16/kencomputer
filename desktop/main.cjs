@@ -189,7 +189,7 @@ async function start() {
     const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
     if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
   }
-  win = new BrowserWindow({ title: 'Ken', width: 900, height: 700, minWidth: 480, minHeight: 420, backgroundColor: '#ffffff', show: false,
+  win = new BrowserWindow({ title: 'Ken', width: 1100, height: 760, minWidth: 480, minHeight: 420, backgroundColor: '#ffffff', show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.on('close', (event) => { if (!quitting) { event.preventDefault(); win.hide(); } });
