@@ -181,6 +181,10 @@ async function start() {
       menu.popup({ window: win, callback: () => setImmediate(() => resolve(chosen)) });
     });
   });
+  ipcMain.handle('chrome:connect', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    connectChrome();
+  });
   ipcMain.handle('folder:open', async (event, folder) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (typeof folder === 'string' && existsSync(folder)) await shell.openPath(folder);

@@ -10,6 +10,8 @@ import openai_codex  # noqa: F401
 from codex_cli_bin import bundled_codex_path
 import cryptography.hazmat.bindings._rust  # noqa: F401
 import ctranslate2  # noqa: F401
+import icalendar  # noqa: F401
+import recurring_ical_events  # noqa: F401
 from faster_whisper.audio import decode_audio
 
 wav = "desktop/checks/voice.wav"  # run from the repo root

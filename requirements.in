@@ -17,3 +17,6 @@ onnxruntime<1.24 ; sys_platform == 'darwin' and platform_machine == 'x86_64'
 # cryptography 49+ ships no Intel Mac build; compiling it there needs Rust and a matching OpenSSL
 # (the v0.1.0 Intel chat failure). 48.x has a ready-made build with OpenSSL inside.
 cryptography<49 ; sys_platform == 'darwin' and platform_machine == 'x86_64'
+# Calendar: read a calendar's private iCal link, including recurring events.
+icalendar
+recurring-ical-events

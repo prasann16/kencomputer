@@ -1,9 +1,10 @@
 """First-run setup without a terminal: connect a brain, report voice readiness.
 
 Connecting runs the brain's own sign-in CLI in a pseudo-terminal, the same one
-the installer runs: `claude setup-token` (approve in the browser, paste the code
-shown there, the long-lived token lands in ~/.ken/.env) or `codex login`
-(approve in the browser and it finishes by itself).
+the installer runs, and the user approves in the browser. Usually that finishes
+the sign-in by itself: `claude setup-token` prints a long-lived token (it lands
+in ~/.ken/.env), `codex login` saves its own and exits. If Claude shows a code
+instead, the user pastes it.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from brains import Brain, Brains
+from brains import Brain, Brains, Login
 
 log = logging.getLogger("ken")
 
@@ -50,11 +51,18 @@ class Onboarding:
         self.output = ""
         self.exited = False
         self.started = 0.0
+        self.watch: asyncio.Task | None = None
+        self.saved = ""
 
     @property
     def active(self) -> bool:
         """A sign-in is under way: the app must not restart the engine (e.g. to update) now."""
         return self.pid is not None and not self.exited and time.time() - self.started < 1800
+
+    @property
+    def pending(self) -> bool:
+        """A sign-in hasn't finished: still waiting on the browser, or on Ken's refresh after it."""
+        return bool(self.watch and not self.watch.done())
 
     def status(self) -> dict:
         # A brain counts once its models are in, so the picker the app loads next has them.
@@ -98,25 +106,42 @@ class Onboarding:
         if not url:
             self.stop()
             raise RuntimeError(f"Couldn’t open {brain.label} sign-in. Try again.")
-        if not login.paste:
-            asyncio.create_task(self._finish_by_itself(brain, pid))
+        self.saved = ""
+        self.watch = asyncio.create_task(self._watch(brain, login))
         return {"brain": brain.name, "url": url, "code": code, "paste": login.paste}
 
-    async def _finish_by_itself(self, brain: Brain, pid: int) -> None:
-        """A sign-in that completes in the browser: the CLI exits once it's saved."""
-        while self.pid == pid and not self.exited and self.active:
-            await asyncio.sleep(1)
-        if self.pid == pid:
-            self.stop()
+    async def _watch(self, brain: Brain, login: Login) -> None:
+        """Approving in the browser usually finishes the sign-in with no code to paste:
+        save the token the CLI prints (Claude), or wait for it to save its own and exit (Codex)."""
+        if login.token:
+            token = await self._wait_for(login.token, 1800)
+            if token:
+                await self._save(brain, login, token)
+        else:
+            while not self.exited and self.active:
+                await asyncio.sleep(1)
+            await self._settle(brain)
+        self.stop()
+
+    async def _save(self, brain: Brain, login: Login, token: str) -> None:
+        if token == self.saved:  # the browser and a pasted code can both deliver it
+            return
+        self.saved = token
+        save_env(self.env_file, login.env_key, token)
+        await self._settle(brain)
+
+    async def _settle(self, brain: Brain) -> None:
+        """Signed in: reopen sessions and fetch its models before it counts as connected."""
         brain.forget()
-        if brain.connected():
-            self.settling = brain.name
-            try:
-                await self.on_connected()
-            except Exception:
-                log.exception("post-connect refresh failed")
-            finally:
-                self.settling = None
+        if not brain.connected():
+            return
+        self.settling = brain.name
+        try:
+            await self.on_connected()
+        except Exception:
+            log.exception("post-connect refresh failed")
+        finally:
+            self.settling = None
 
     async def submit(self, code: str) -> dict:
         """Give the CLI the code from the browser; save the token it prints.
@@ -125,23 +150,19 @@ class Onboarding:
         open a fresh one instead of failing: the user approves and pastes again."""
         brain = self.brain or self.brains.all["claude"]
         login = brain.login()
+        if self.saved:  # the browser already finished the sign-in
+            return self.status()
         try:
             if self.fd is None or self.exited:
                 raise OSError("sign-in not running")
             os.write(self.fd, code.strip().encode() + b"\r")
         except OSError:
             return {**await self.start(brain.name), "error": "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."}
-        token = await self._wait_for(login.token, 60) if login.token else ""
+        token = await self._wait_for(login.token, 60)
         self.stop()
-        if login.token and not token:
+        if not token:
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
-        if token:
-            save_env(self.env_file, login.env_key, token)
-        brain.forget()
-        try:
-            await self.on_connected()  # the token is saved either way
-        except Exception:
-            log.exception("post-connect refresh failed")
+        await self._save(brain, login, token)
         return self.status()
 
     def _read(self) -> None:
@@ -167,6 +188,9 @@ class Onboarding:
         return ""
 
     def stop(self) -> None:
+        if self.watch and self.watch is not asyncio.current_task() and not self.settling:
+            self.watch.cancel()  # a sign-in that already landed finishes its refresh
+        self.watch = None
         if self.pid:
             try:
                 os.kill(self.pid, 9)

@@ -508,9 +508,11 @@ class CodexBrain(Brain):
     def thread_config(self) -> dict:
         config: dict = {"web_search": "live"}  # Claude Code searches the live web too
         servers = self.mcp_factory() if self.mcp_factory else {}
-        if servers:
+        # Codex starts MCP servers as processes; an in-process (SDK) server is Claude's alone.
+        processes = {name: spec for name, spec in servers.items() if spec.get("type", "stdio") == "stdio"}
+        if processes:
             config["mcp_servers"] = {
-                name: {k: v for k, v in spec.items() if k != "type"} for name, spec in servers.items()
+                name: {k: v for k, v in spec.items() if k != "type"} for name, spec in processes.items()
             }
         return config
 
