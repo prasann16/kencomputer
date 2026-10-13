@@ -1,7 +1,7 @@
 #!/bin/bash
 # Ken installer — https://kencomputer.dev
 #   curl -fsSL https://kencomputer.dev/install | bash
-# Gives your AI its own computer: Claude Code + Telegram + memory, always on.
+# Gives your AI its own computer: Claude Code or Codex + Telegram + memory, always on.
 set -euo pipefail
 umask 077
 
@@ -53,7 +53,7 @@ say "  ken ●  — give your AI its own computer"
 if [ "${KEN_AUTH_MODE:-subscription}" = api ]; then
   dim "  You'll need Telegram and your own Anthropic API key."
 else
-  dim "  You'll need Telegram and a Claude subscription."
+  dim "  You'll need Telegram and a Claude or ChatGPT subscription."
 fi
 say ""
 
@@ -103,6 +103,10 @@ fi
 "$KEN_HOME/venv/bin/pip" install -q --upgrade pip
 "$KEN_HOME/venv/bin/pip" install -q -U -r "$KEN_HOME/app/requirements.txt"
 ok "Python environment ready"
+# The brains' CLIs ship inside their Python packages: Claude Code with the Agent SDK, Codex with openai-codex.
+brain_cli() { (cd "$KEN_HOME/app" && "$KEN_HOME/venv/bin/python" -c "from brains import $1Brain; print($1Brain().cli())"); }
+CLAUDE_BIN="${CLAUDE_BIN:-$(brain_cli Claude)}"
+CODEX_BIN="${CODEX_BIN:-$(brain_cli Codex)}"
 
 if [ ! -d "$HOME/.cache/huggingface/hub/models--Systran--faster-whisper-small" ]; then
   dim "  Fetching the voice-transcription model (one-time, ~460MB — hang tight)…"
@@ -159,42 +163,69 @@ else
   ok "Hi ${FIRST_NAME:-there}! Locked to your Telegram account ($USER_ID)"
 fi
 
-# ---------- 5. claude auth ----------
-say ""
-say "── Connecting Claude ──"
-OAUTH_TOKEN=""
-API_KEY="${ANTHROPIC_API_KEY:-}"
-if [ "${KEN_AUTH_MODE:-subscription}" = "api" ]; then
-  if [ -z "$API_KEY" ]; then
-    ask_secret "Paste your own Anthropic API key (billed to your account):"
-    API_KEY="$REPLY"
-  fi
-  [ -n "$API_KEY" ] || fail "An API key is required"
-  # Do not inherit a subscription token when explicitly selecting API billing.
-  if ! env -u CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY="$API_KEY" \
-      "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
-    fail "Claude API check failed; check the key, account credit, and network"
-  fi
-  ok "Claude API connected"
-elif "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
-  if [ -f "$KEN_HOME/.env" ]; then
-    OAUTH_TOKEN="$(sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' "$KEN_HOME/.env")"
-  fi
-  ok "Claude is already signed in on this machine"
-else
-  dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
-  dim "  A browser window will open — approve, then paste the code back here."
+# ---------- 5. connect a brain ----------
+# Claude or ChatGPT (Codex). The other can be added any time with /connect.
+BRAIN="${KEN_BRAIN:-}"
+[ "${KEN_AUTH_MODE:-subscription}" = "api" ] && BRAIN=claude
+if [ -z "$BRAIN" ]; then
   say ""
-  TOKEN_OUTPUT="$(mktemp)"
-  "$CLAUDE_BIN" setup-token < /dev/tty > "$TOKEN_OUTPUT" 2>&1 || true
-  OAUTH_TOKEN="$(grep -oE 'sk-ant-oat[A-Za-z0-9_-]+' "$TOKEN_OUTPUT" | tail -1 || true)"
-  rm -f "$TOKEN_OUTPUT"
-  if [ -z "$OAUTH_TOKEN" ]; then
-    ask_secret "Paste the token (starts with sk-ant-oat…):"
-    OAUTH_TOKEN="$REPLY"
+  say "── Which AI should Ken run on? ──"
+  dim "  1. Claude   (your Claude Pro or Max subscription)"
+  dim "  2. ChatGPT  (your ChatGPT Plus or Pro subscription, through Codex)"
+  ask "Pick 1 or 2 [1]:"
+  case "$REPLY" in 2|chatgpt|ChatGPT|codex|Codex) BRAIN=codex ;; *) BRAIN=claude ;; esac
+fi
+# Keep a Claude token from an earlier install: the .env is rewritten below.
+OAUTH_TOKEN="$([ -f "$KEN_HOME/.env" ] && sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' "$KEN_HOME/.env" || true)"
+API_KEY="${ANTHROPIC_API_KEY:-}"
+say ""
+if [ "$BRAIN" = "codex" ]; then
+  say "── Connecting ChatGPT ──"
+  if "$CODEX_BIN" login status </dev/null >/dev/null 2>&1; then
+    ok "ChatGPT is already signed in on this machine"
+  elif [ -n "${OPENAI_API_KEY:-}" ]; then
+    printenv OPENAI_API_KEY | "$CODEX_BIN" login --with-api-key >/dev/null 2>&1 \
+      || fail "Couldn't sign in to Codex with OPENAI_API_KEY; check the key"
+    ok "OpenAI API connected"
+  else
+    dim "  Ken runs on your ChatGPT subscription, through Codex."
+    dim "  Open the link below on any device, sign in, and enter the code."
+    say ""
+    "$CODEX_BIN" login --device-auth < /dev/tty || fail "ChatGPT sign-in didn't finish — re-run the installer"
+    ok "ChatGPT connected"
   fi
-  [ -n "$OAUTH_TOKEN" ] || fail "No Claude token — run 'claude setup-token' and re-run the installer"
-  ok "Claude connected"
+else
+  say "── Connecting Claude ──"
+  if [ "${KEN_AUTH_MODE:-subscription}" = "api" ]; then
+    OAUTH_TOKEN=""
+    if [ -z "$API_KEY" ]; then
+      ask_secret "Paste your own Anthropic API key (billed to your account):"
+      API_KEY="$REPLY"
+    fi
+    [ -n "$API_KEY" ] || fail "An API key is required"
+    # Do not inherit a subscription token when explicitly selecting API billing.
+    if ! env -u CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY="$API_KEY" \
+        "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
+      fail "Claude API check failed; check the key, account credit, and network"
+    fi
+    ok "Claude API connected"
+  elif "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
+    ok "Claude is already signed in on this machine"
+  else
+    dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
+    dim "  A browser window will open — approve, then paste the code back here."
+    say ""
+    TOKEN_OUTPUT="$(mktemp)"
+    "$CLAUDE_BIN" setup-token < /dev/tty > "$TOKEN_OUTPUT" 2>&1 || true
+    OAUTH_TOKEN="$(grep -oE 'sk-ant-oat[A-Za-z0-9_-]+' "$TOKEN_OUTPUT" | tail -1 || true)"
+    rm -f "$TOKEN_OUTPUT"
+    if [ -z "$OAUTH_TOKEN" ]; then
+      ask_secret "Paste the token (starts with sk-ant-oat…):"
+      OAUTH_TOKEN="$REPLY"
+    fi
+    [ -n "$OAUTH_TOKEN" ] || fail "No Claude token — run 'claude setup-token' and re-run the installer"
+    ok "Claude connected"
+  fi
 fi
 
 # ---------- 6. config + memory ----------
@@ -248,7 +279,7 @@ EOF
 
 - The human installed Ken themselves, on a machine they control, with the open-source install script. Nobody at kencomputer.dev has any access to it.
 - Everything lives here: SOUL.md, memory, history, files, credentials. Voice notes are transcribed on this machine.
-- What leaves this machine: calls to the Claude API (Anthropic) to run you, on their own Claude subscription or API key, and whatever a connected service is told to fetch or send.
+- What leaves this machine: calls to the model you run on, Claude (Anthropic) or ChatGPT (OpenAI, through Codex), on their own subscription or API key, and whatever a connected service is told to fetch or send.
 - Backups: nothing automatic. If this machine dies, ~/.ken is gone unless they back it up themselves. Say so if asked.
 EOF
   fi

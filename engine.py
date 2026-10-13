@@ -374,10 +374,27 @@ class Engine:
         s = self.chats.get(pid)
         if s is None:
             cwd = self.home_cwd if pid == HOME else self.workdir(self.get_project(pid))
-            model = (lambda: self.get_project(pid).get("model") or self.brain.model_fn()) if pid != HOME else None
-            s = self.brain.session(cwd=str(cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"), model_fn=model)
+            s = self.brain.session(cwd=str(cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"),
+                                   model_fn=self._model_fn(pid), recap=lambda: self.recap(pid))
             self.chats[pid] = s
         return s
+
+    def _model_fn(self, pid: str) -> Callable[[], str] | None:
+        """A project may choose its own model (and with it, its brain)."""
+        return (lambda: self.get_project(pid).get("model") or self.brain.model_fn()) if pid != HOME else None
+
+    def recap(self, pid: str, limit: int = 20) -> str:
+        """This thread's recent messages, for a brain that's taking over the chat
+        mid-conversation. The newest message from them is left out: it's the prompt."""
+        boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+        messages = [m for m in self.messages(pid, limit + 1) if m["id"] > boundary and m.get("text")]
+        if messages and messages[-1].get("role") == "you":
+            messages.pop()
+        if not messages:
+            return ""
+        lines = [f"{'Them' if m.get('role') == 'you' else 'You'}: {m['text'][:2000]}" for m in messages[-limit:]]
+        return ("=== this chat so far (you were on another model until now; carry on from here) ===\n"
+                + "\n\n".join(lines) + "\n=== end of recent messages ===")
 
     def chat_busy(self, pid: str) -> bool:
         lock = self.chat_locks.get(pid)
@@ -605,6 +622,7 @@ class Engine:
                 cwd=str(self.workdir(self.get_project(pid))),
                 system=lambda: self.system(pid) + f'\n\nBackground run: "{run["title"]}". Nobody is watching; '
                 "don't ask questions. End with 1-3 lines on what happened, with links.",
+                model_fn=self._model_fn(pid),
             )
             self.run_sessions[rid] = session
             last = ""

@@ -138,21 +138,22 @@ class WebApp:
                       "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {"claude": True, "voice": {"state": "ready"}})
+        return _json(self.setup.status() if self.setup else {"connected": True, "brains": [], "voice": {"state": "ready"}})
 
     async def setup_action(self, request):
-        """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
+        """Sign-in: {"action": "start", "brain": "codex"} opens that brain's sign-in,
+        {"code": ...} finishes one that wants a code pasted back (Claude)."""
         b = await self._body(request)
         try:
             if b.get("action") == "start":
-                return _json(await self.setup.start())
+                return _json(await self.setup.start(str(b.get("brain") or "claude")))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"])))
         except RuntimeError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
-            log.exception("Connect Claude failed")
-            return _json({"error": "Something went wrong connecting Claude. Click Connect Claude to try again."}, 500)
+            log.exception("sign-in failed")
+            return _json({"error": "Something went wrong signing in. Try connecting again."}, 500)
         return _json({"error": "Nothing to do."}, 400)
 
     async def command(self, request):

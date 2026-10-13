@@ -131,12 +131,17 @@ onnxruntime==1.23.2
     # via
     #   -r requirements.in
     #   faster-whisper
+openai-codex==0.162.1
+    # via -r requirements.in
+openai-codex-cli-bin==0.162.1
+    # via openai-codex
 opentelemetry-api==1.45.0
     # via mcp
 packaging==26.3
     # via
     #   huggingface-hub
     #   onnxruntime
+    #   openai-codex
 propcache==0.5.4
     # via
     #   aiohttp
@@ -149,6 +154,7 @@ pydantic==2.13.5
     # via
     #   mcp
     #   mcp-types
+    #   openai-codex
 pydantic-core==2.46.5
     # via pydantic
 pyjwt==2.15.1

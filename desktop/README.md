@@ -1,6 +1,6 @@
 # Ken for Mac
 
-A window onto Ken's engine, `bot.py`: the same engine Telegram uses, owning memory, schedules, voice transcription and (optionally) Telegram, and serving the chat UI from `web/` on `127.0.0.1:7777`. Released builds carry that engine, Python and the Claude CLI inside `Ken.app`, so users install nothing else; in development the app connects to a `bot.py` you run.
+A window onto Ken's engine, `bot.py`: the same engine Telegram uses, owning memory, schedules, voice transcription and (optionally) Telegram, and serving the chat UI from `web/` on `127.0.0.1:7777`. Released builds carry that engine, Python and the Claude and Codex CLIs inside `Ken.app`, so users install nothing else; in development the app connects to a `bot.py` you run.
 
 The app itself only:
 
@@ -8,11 +8,11 @@ The app itself only:
 - signs in with the token in `~/.ken/web-token` (set as a cookie, never in a URL)
 - shows the chat, asks macOS for microphone access, keeps a menu-bar icon, and updates itself
 
-First-run setup lives in the engine (`onboarding.py`): Connect Claude runs `claude setup-token`, the same as `install.sh`, and the chat shows voice-model download progress.
+First-run setup lives in the engine (`onboarding.py`): Continue with Claude runs `claude setup-token` and Continue with ChatGPT runs `codex login`, the same CLIs `install.sh` uses, and the chat shows voice-model download progress. Either one unlocks Ken; the other can be added later from the model picker or `/connect`.
 
 Closing the window hides it. Quitting the app leaves the service (and Telegram) running.
 
-Telegram and the Mac app share everything: the same conversation, the same `voice.py` transcription, and the same commands. `/model`, `/coffee` and `/decaf` are plain functions in `bot.py` exposed to the chat through `POST /api/command`. `/new` and `/stop` use the chat endpoints.
+Telegram and the Mac app share everything: the same conversation, the same `voice.py` transcription, and the same commands. `/model`, `/connect`, `/coffee` and `/decaf` are plain functions in `bot.py` exposed to the chat through `POST /api/command`. `/new` and `/stop` use the chat endpoints.
 
 ## Development
 
@@ -25,7 +25,7 @@ npm ci && npm run desktop
 ## Build
 
 ```sh
-npm run build:engine   # bundles bot.py, Python and the Claude CLI into dist/engine-<arch>
+npm run build:engine   # bundles bot.py, Python and the Claude and Codex CLIs into dist/engine-<arch>
 npm run pack           # ad-hoc signed dist/desktop/mac*/Ken.app for local testing
 ```
 
@@ -49,7 +49,7 @@ desktop/check-release.sh v0.1.2 --publish
 
 Download files keep fixed names, so `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-arm64.dmg` (and `Ken-x64.dmg`) always point at the newest release. Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
 
-**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
+**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (newer Claude Code and Codex above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
 
 Repository secrets the release workflow needs:
 

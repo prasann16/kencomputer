@@ -506,27 +506,56 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
 
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
 const modelName = (id) => { const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
+// The brain's own display name (GPT-6.1-Sol), else one made from the id.
+const modelLabel = (m) => m.name && m.name !== m.id ? m.name : modelName(m.id);
 
-function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, title, onToggleSide, onProjectMenu }) {
-  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide projects" title="Projects (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Project options" title="Project options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
+// Models grouped by the brain they run on; a brain that isn't signed in offers to connect instead.
+function ModelSelect({ model, onModel, onConnect }) {
+  const groups = model.groups.filter((g) => g.models.length);
+  const pick = (e) => { const v = e.target.value; if (v.startsWith('connect:')) { e.target.value = model.current || ''; onConnect(v.slice(8)); } else onModel(v); };
+  return html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${pick}>${!model.current && html`<option value="">Default model</option>`}${groups.length > 1
+    ? groups.map((g) => html`<optgroup label=${g.label}>${g.models.map((m) => html`<option value=${m.id}>${modelLabel(m)}</option>`)}</optgroup>`)
+    : groups.flatMap((g) => g.models).map((m) => html`<option value=${m.id}>${modelLabel(m)}</option>`)}${model.groups.filter((g) => !g.connected).map((g) => html`<option value=${'connect:' + g.brain}>Connect ${g.label}…</option>`)}</select>`;
 }
 
-// First run: connect Claude with the same `claude setup-token` the installer runs.
-function Connect({ onDone }) {
-  const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const go = async (body) => {
-    setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: body, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); } if (r.error) setError(r.error); if (r.claude) onDone(r); }
-    catch (e) { setError(e.message); } finally { setBusy(false); }
+function ChatHeader({ onClear, clearing, model, onModel, onConnect, status, onRetry, awake, onAwake, connected, title, onToggleSide, onProjectMenu }) {
+  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide projects" title="Projects (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Project options" title="Project options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.groups?.some((g) => g.models.length) && html`<${ModelSelect} model=${model} onModel=${onModel} onConnect=${onConnect}/>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
+}
+
+// Connect a brain with its own sign-in CLI, the same one the installer runs: `claude setup-token`
+// (approve, paste the code back) or `codex login` (approve, and it finishes by itself).
+// First run offers every brain; `only` is one being added later, from /connect or the model picker.
+function Connect({ brains, only, onDone, onCancel }) {
+  const [step, setStep] = useState('start'), [brain, setBrain] = useState(null), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(''), [error, setError] = useState('');
+  const options = brains.filter((b) => only ? b.name === only : !b.connected);
+  const target = brain || (only && options[0]);
+  const go = async (body, b = target) => {
+    setBusy(b?.name || 'code'); setError('');
+    try {
+      const r = await api('/api/setup', { json: body, timeout: 90000 });
+      if (r.url) { setBrain(b); setUrl(r.url); setValue(''); setStep(r.paste ? 'code' : 'browser'); }
+      if (r.error) setError(r.error);
+      if (r.connected && r.brains?.some((x) => x.name === b?.name && x.connected)) onDone(r);
+    }
+    catch (e) { setError(e.message); } finally { setBusy(''); }
   };
+  const start = (b) => go({ action: 'start', brain: b.name }, b);
+  // A browser sign-in that finishes on its own: watch for it to land.
+  useEffect(() => {
+    if (step !== 'browser' || !brain) return;
+    const t = setInterval(() => api('/api/setup').then((r) => { if (r.brains?.some((x) => x.name === brain.name && x.connected)) onDone(r); }).catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [step, brain?.name]);
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
-  return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect Claude</h1>
-    ${step === 'start' && html`<p>Ken runs on your Claude subscription. Sign in once and you’re set.</p>
-      <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? 'Opening Claude…' : 'Connect Claude'}</button>`}
-    ${step === 'code' && html`<p>Approve Ken in your browser, then paste the code Claude shows you.</p>${field('Paste the code')}
-      <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>
-      <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
-      <button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}
+  const fallback = html`<a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
+      <button class="text-action" disabled=${!!busy} onClick=${() => start(brain)}>Start over</button>`;
+  return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>${target ? `Connect ${target.label}` : 'Connect your AI'}</h1>
+    ${step === 'start' && html`<p>${target ? `Ken runs on your ${target.label} subscription. Sign in once and you’re set.` : 'Ken runs on the subscription you already have. Sign in once and you’re set; you can add the other later.'}</p>
+      <div class="connect-choices">${options.map((b) => html`<button class="btn primary" disabled=${!!busy} onClick=${() => start(b)}>${busy === b.name ? `Opening ${b.label}…` : `Continue with ${b.label}`}</button>`)}</div>`}
+    ${step === 'code' && html`<p>Approve Ken in your browser, then paste the code ${brain.label} shows you.</p>${field('Paste the code')}
+      <button class="btn primary" disabled=${!!busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>${fallback}`}
+    ${step === 'browser' && html`<p>Approve Ken in your browser. This page moves on by itself once you have.</p>${fallback}`}
+    ${onCancel && html`<button class="text-action" onClick=${onCancel}>Not now</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   </div>`;
 }
@@ -577,7 +606,7 @@ function NewProject({ onClose, onCreated }) {
       ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">Pick a code project's folder to work in it and reuse its CLAUDE.md.</small></div>
+      <small class="np-note">Pick a code project's folder to work in it and reuse its CLAUDE.md or AGENTS.md.</small></div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy || !name.trim()} onClick=${create}>${busy ? 'Creating…' : 'Create project'}</button></div>
   <//>`;
@@ -598,6 +627,7 @@ function App() {
   const loadModel=()=>api('/api/command',{json:{text:'/model'}}).then(setModel).catch(()=>{});
   const [awake,setAwake]=useState(null);
   const [setup,setSetup]=useState(null);
+  const [connecting,setConnecting]=useState(null); // a brain being added from /connect or the model picker
   const [chats,setChats]=useState([]);
   const [sideOpen,setSideOpen]=useState(()=>{try{return localStorage.getItem('ken-sidebar')!=='0';}catch{return true;}});
   const toggleSide=()=>setSideOpen((o)=>{try{localStorage.setItem('ken-sidebar',o?'0':'1');}catch{}return !o;});
@@ -635,7 +665,7 @@ function App() {
   const loadSetup=()=>api('/api/setup').then(setSetup).catch(()=>{});
   useEffect(()=>{loadSetup();},[]);
   // Poll while something is still getting ready (sign-in elsewhere, the voice model download).
-  useEffect(()=>{if(!setup || (setup.claude && setup.voice.state==='ready'))return;const t=setInterval(loadSetup,2000);return()=>clearInterval(t);},[setup?.claude,setup?.voice?.state]);
+  useEffect(()=>{if(!setup || (setup.connected && setup.voice.state==='ready'))return;const t=setInterval(loadSetup,2000);return()=>clearInterval(t);},[setup?.connected,setup?.voice?.state]);
   const loadAwake=()=>api('/api/command',{json:{text:'/awake'}}).then((r)=>setAwake(r.awake)).catch(()=>{});
   const [preview, setPreview] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -784,7 +814,9 @@ function App() {
     if(['/stop','stop','stop working'].includes(value)){await api(`/api/chats/${pid}/stop`,{json:{}});return true;}
     if(value.startsWith('/')){
       const result=await api('/api/command',{json:{text:text.trim()}});
-      setChoices(result.choices?.length?result.choices.map(m=>({label:m,text:text.trim().split(' ')[0]+' '+m})):null);
+      if(result.connect){setConnecting(result.connect);loadSetup();return true;}
+      const verb=text.trim().split(' ')[0];
+      setChoices(result.groups?result.groups.flatMap(g=>g.models).map(m=>({label:modelLabel(m),text:verb+' '+m.id})):result.choices?.length?result.choices.map(m=>({label:m,text:verb+' '+m})):null);
       if(result.reply)toast(result.reply);
       if(value.startsWith('/model'))loadModel();
       if('awake' in result)setAwake(result.awake);
@@ -813,10 +845,10 @@ function App() {
   useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
   const unread = Object.fromEntries(chats.map((c) => [c.id, c.id !== pid && c.last_ts > (seenAt[c.id] || 0)]));
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
+  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu}/>`}<main class="main"><${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.connected} onConnect=${(b)=>{setConnecting(b);loadSetup();}} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
       ? api(`/api/projects/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
       : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
-    ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+    ${setup && (!setup.connected || connecting) ? html`<${Connect} brains=${setup.brains} only=${setup.connected ? connecting : null} onCancel=${setup.connected ? ()=>setConnecting(null) : null} onDone=${(r)=>{setSetup(r);setConnecting(null);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
