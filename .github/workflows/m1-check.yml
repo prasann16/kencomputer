@@ -1,34 +1,36 @@
-# Install an older Apple Silicon release on a real M-series Mac, start it hidden (as it is
-# after an update), and watch the auto-update quit, install and relaunch.
+# On a real M-series Mac: install the draft build v0.0.99 (this fix, versioned below the
+# published 0.1.14), start it hidden as it is after an update, and watch it update to 0.1.14.
 name: M1 check
 on: { push: { branches: [m1-check] } }
 jobs:
   m1:
     runs-on: macos-15
+    permissions: { contents: write }  # drafts are only visible with write access
     steps:
       - run: |
-          gh release download v0.1.12 --repo prasann16/kencomputer -p Ken-arm64.dmg
+          for i in $(seq 1 30); do gh release download v0.0.99 --repo prasann16/kencomputer -p Ken-arm64.dmg && break; echo "waiting for the draft build…"; sleep 60; done
+          [ -f Ken-arm64.dmg ] || exit 1
           hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
           cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
           xattr -d com.apple.quarantine /Applications/Ken.app 2>/dev/null || true
           mkdir -p ~/.ken/desktop-data && touch ~/.ken/desktop-data/updated   # start hidden: an update then installs at once
-          open /Applications/Ken.app
+          nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app.log 2>&1 &
         env: { GH_TOKEN: "${{ github.token }}" }
       - run: |
           set +e; mkdir -p shots
-          for i in $(seq 1 60); do
+          for i in $(seq 1 36); do
             v=$(defaults read /Applications/Ken.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null)
             echo "== $((i*10))s app=$v ken: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ') shipit: $(pgrep -x ShipIt | tr '\n' ' ')"
             screencapture -x shots/$i.png; sleep 10
           done
+          curl -s -o /dev/null -w "engine answers: HTTP %{http_code}\n" http://127.0.0.1:7777/
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: shots, path: shots }
       - if: always()
         run: |
           set +e
-          for f in ~/.ken/logs/*; do echo "===== $f"; tail -60 "$f"; done
-          echo "===== updater cache"; ls -la ~/Library/Caches/ken-desktop-updater ~/Library/Caches/ken-desktop-updater/pending 2>&1
-          echo "===== ShipIt logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -80 "$f"; done
-          echo "===== crash reports"; ls -t ~/Library/Logs/DiagnosticReports | head; for f in $(ls -t ~/Library/Logs/DiagnosticReports/*Ken* 2>/dev/null | head -2); do head -60 "$f"; done
-          echo "===== system log"; log show --last 12m --predicate 'process == "ShipIt" OR process == "Ken" OR eventMessage CONTAINS "kencomputer"' --style compact 2>/dev/null | grep -v "Ken Helper" | tail -120
+          echo "===== app stderr"; cat ~/app.log
+          for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
+          echo "===== ShipIt logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
+          echo "===== crash reports"; ls -t ~/Library/Logs/DiagnosticReports | head

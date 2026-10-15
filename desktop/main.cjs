@@ -147,9 +147,18 @@ async function engineBusy() {
     return (await (await fetch(origin + '/api/meta', { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(2000) })).json()).busy;
   } catch { return false; }
 }
-function restartIntoUpdate(quiet) {
+// macOS refuses to replace Ken.app while anything inside it is running, and the engine
+// lives inside it: with the engine up, the install is cancelled and Ken never comes back.
+// So the engine (and its launchd agent, or it comes straight back) stops first; the
+// relaunched app starts the new engine itself.
+async function stopService() {
+  await run('/bin/launchctl', ['bootout', `gui/${process.getuid()}/${appAgent}`]);
+  await stopOtherEngine();
+}
+async function restartIntoUpdate(quiet) {
   if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
+  await stopService();
   require('electron-updater').autoUpdater.quitAndInstall(true, true);
 }
 async function installIfIdle() {
