@@ -1,4 +1,5 @@
 """Only one engine runs per Ken home: a second waits until the first stops, then takes over."""
+import os
 import subprocess
 import sys
 import time
@@ -8,7 +9,7 @@ SECOND = "import bot; bot.one_engine(); print('second', flush=True)"
 
 
 def test_a_second_engine_waits_for_the_first(tmp_path):
-    env = {"KEN_HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "TELEGRAM_BOT_TOKEN": ""}
+    env = {**os.environ, "KEN_HOME": str(tmp_path), "TELEGRAM_BOT_TOKEN": ""}
     first = subprocess.Popen([sys.executable, "-c", FIRST], env=env, stdout=subprocess.PIPE, text=True)
     assert first.stdout.readline().strip() == "first"
     assert (tmp_path / "engine.lock").read_text() == str(first.pid)

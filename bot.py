@@ -591,7 +591,7 @@ async def self_update() -> None:
                     log.info("update available but a task is running — waiting")
                 else:
                     log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
-                    pip = KEN_HOME / "venv" / "bin" / "pip"
+                    pip = KEN_HOME / "venv" / "bin" / "pip"  # on Windows, winrun.py installs them
                     if pip.exists():
                         p = await asyncio.create_subprocess_exec(
                             str(pip), "install", "-q", "-r", str(app_dir / "requirements.txt"),
@@ -1037,6 +1037,8 @@ def coffee() -> str:
     import subprocess
 
     global _coffee
+    if sys.platform != "darwin":
+        return "Keeping the computer awake only works on a Mac for now."
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     _coffee = subprocess.Popen(
@@ -1164,20 +1166,41 @@ ENGINE_LOCK = KEN_HOME / "engine.lock"
 def one_engine():
     """One engine per Ken home. Two would fight over Telegram and the app's port, so a
     second one waits here until the first stops, then takes over."""
-    import fcntl
-
     lock = open(ENGINE_LOCK, "a+")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock.seek(0)
-        log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    if os.name == "nt":
+        _lock_windows(lock)
+    else:
+        import fcntl
+
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.seek(0)
+            log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
+            fcntl.flock(lock, fcntl.LOCK_EX)
     lock.seek(0)
     lock.truncate()
     lock.write(str(os.getpid()))
     lock.flush()
     return lock  # held open (and so locked) for the life of the engine
+
+
+def _lock_windows(lock) -> None:
+    """Windows has no flock: lock one byte well past the pid, so the pid stays readable."""
+    import msvcrt
+
+    warned = False
+    while True:
+        lock.seek(1 << 20)
+        try:
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError:
+            if not warned:
+                lock.seek(0)
+                log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
+                warned = True
+            time.sleep(2)
 
 
 PAIR_MINUTES = 10
