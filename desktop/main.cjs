@@ -177,6 +177,8 @@ function checkNow(manual) {
 function checkForUpdates() {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
+  // The release check feeds the app a local "newer" copy of itself to prove it can update.
+  if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
   autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
   autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
   autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); if (manualCheck) tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
