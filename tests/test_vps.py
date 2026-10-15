@@ -153,6 +153,18 @@ class DeploymentTests(unittest.TestCase):
                                 input=json.dumps({'result': messages}), text=True, capture_output=True, check=True)
         self.assertEqual(result.stdout.strip(), '42')
 
+    def test_installer_answers_new_private_messages_while_waiting(self):
+        script = (ROOT / 'install.sh').read_text().rsplit('\nmain\n', 1)[0]
+        updates = [
+            {'update_id': 1, 'message': {'text': '/start', 'chat': {'type': 'private', 'id': 42}}},  # already answered
+            {'update_id': 2, 'message': {'text': '/start', 'chat': {'type': 'private', 'id': 43}}},
+            {'update_id': 3, 'message': {'text': 'hello?', 'chat': {'type': 'private', 'id': 43}}},
+            {'update_id': 4, 'message': {'text': '/start', 'chat': {'type': 'group', 'id': 99}}},
+        ]
+        result = subprocess.run(['bash', '-c', script + '\nnew_messages 1'],
+                                input=json.dumps({'result': updates}), text=True, capture_output=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ['2\t43\tstart', '3\t43\tother'])
+
 
 @unittest.skipIf(os.name == "nt", "servers run Linux")
 class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):

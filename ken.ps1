@@ -45,14 +45,24 @@ switch ($Command) {
     Start-Process "http://127.0.0.1:$port/login?token=$token"
     "opened Ken in your browser."
   }
+  "setup" {
+    # Telegram and Claude again, from the installer that's already here; it restarts Ken after.
+    Stop-Ken
+    $env:KEN_SETUP = "1"
+    & (Join-Path $App "install.ps1")
+  }
   "config" { notepad (Join-Path $KenHome ".env") }
   "memory" { notepad (Join-Path $KenHome "work\SOUL.md") }
   "uninstall" {
-    $a = Read-Host "Remove ken from startup? Your memory & config in $KenHome stay. [y/N]"
+    $a = Read-Host "Remove Ken from this computer? Your memory & settings in $KenHome stay. [y/N]"
     if ($a -ne "y") { break }
     Stop-Ken
     Remove-Item $Shortcut -ErrorAction SilentlyContinue
-    "removed. (delete $KenHome to remove everything)"
+    Remove-Item (Join-Path $KenHome "venv") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $KenHome "bin") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $KenHome "app") -Recurse -Force -ErrorAction SilentlyContinue
+    "Ken removed. Your memory & settings stay in $KenHome (delete that folder to remove those too)."
+    "To put it back, run the installer again."
   }
   default {
 @"
@@ -64,9 +74,10 @@ ken - your AI's computer
   ken update     pull the latest version and restart
   ken restart    restart ken
   ken start/stop
+  ken setup      connect Telegram and Claude again
   ken config     edit settings (.env)
   ken memory     edit your assistant's soul file (identity + memory)
-  ken uninstall  stop starting ken at login (keeps your data)
+  ken uninstall  remove Ken (keeps your memory & settings)
 "@
   }
 }

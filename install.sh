@@ -42,6 +42,16 @@ if len(sys.argv) > 2 and sys.argv[2]:
 print(messages[-1]['from'][sys.argv[1]]) if messages else sys.exit(1)
 " "$1" "${PAIRING_CODE:-}" 2>/dev/null
 }
+new_messages() { # $1: last update id seen -> lines "update_id<TAB>chat_id<TAB>start|other", private chats only
+  python3 -c "
+import json, sys
+seen = int(sys.argv[1])
+for u in json.load(sys.stdin)['result']:
+    m = u.get('message') or {}
+    if u['update_id'] > seen and m.get('chat', {}).get('type') == 'private':
+        print(u['update_id'], m['chat']['id'], 'start' if m.get('text', '').startswith('/start') else 'other', sep='\t')
+" "$1" 2>/dev/null
+}
 
 # Everything lives inside main() so bash parses the whole script before running
 # any of it — otherwise, under `curl | bash`, any command that reads stdin
@@ -116,7 +126,13 @@ CLAUDE_BIN="$("$KEN_HOME/venv/bin/python" -c "import claude_agent_sdk, pathlib; 
 [ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
 
 # ---------- 4. telegram bot ----------
-if [ -f "$KEN_HOME/.env" ] && grep -q "^TELEGRAM_BOT_TOKEN=." "$KEN_HOME/.env"; then
+# `ken setup` (KEN_SETUP=1) walks through Telegram and Claude again on an existing install.
+# A running Ken would swallow the pairing message, so it's stopped first; step 8 starts it again.
+if [ -n "${KEN_SETUP:-}" ]; then
+  if [ "$OS" = "Linux" ]; then systemctl --user stop ken 2>/dev/null || true
+  else launchctl unload "$HOME/Library/LaunchAgents/dev.kencomputer.ken.plist" 2>/dev/null || true; fi
+fi
+if [ -z "${KEN_SETUP:-}" ] && [ -f "$KEN_HOME/.env" ] && grep -q "^TELEGRAM_BOT_TOKEN=." "$KEN_HOME/.env"; then
   ok "Telegram already configured (delete ~/.ken/.env to redo)"
   BOT_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' "$KEN_HOME/.env" | cut -d= -f2-)"
   USER_ID="$(grep '^ALLOWED_USER_ID=' "$KEN_HOME/.env" | cut -d= -f2-)"
@@ -140,17 +156,27 @@ else
   tg deleteWebhook >/dev/null || true
   say ""
   say "── Step 2 of 2: introduce yourself ──"
-  PAIRING_CODE="$(python3 -c 'import secrets; print("ken-" + secrets.token_hex(8))')"
-  dim "  Open @$BOT_USER in Telegram — https://t.me/$BOT_USER — and send this code:"
-  say "  $PAIRING_CODE"
+  PAIRING_CODE="$(python3 -c 'import secrets; print(secrets.randbelow(900000) + 100000)')"  # 6 digits: easy to type on a phone
+  dim "  Open @$BOT_USER in Telegram — https://t.me/$BOT_USER — and send it this code:"
+  say ""
+  printf "      \033[1;7;36m  %s  \033[0m\n" "$PAIRING_CODE"
+  say ""
   dim "  This links your private Telegram account. I'll wait up to 15 minutes."
   printf "  waiting for your message to @%s " "$BOT_USER" > /dev/tty
-  USER_ID=""; FIRST_NAME=""
+  USER_ID=""; FIRST_NAME=""; LAST_SEEN=0
   for _ in $(seq 1 450); do
     UPD="$(tg "getUpdates?timeout=2" || true)"
     USER_ID="$(printf '%s' "$UPD" | last_sender id || true)"
     FIRST_NAME="$(printf '%s' "$UPD" | last_sender first_name || true)"
     [ -n "$USER_ID" ] && break
+    # Ken isn't running yet, so the installer answers the phone: Start gets the ask, anything else a nudge.
+    while IFS="$(printf '\t')" read -r UPDATE_ID CHAT_ID KIND; do
+      [ -n "$UPDATE_ID" ] || continue
+      [ "$UPDATE_ID" -gt "$LAST_SEEN" ] && LAST_SEEN="$UPDATE_ID"
+      if [ "$KIND" = start ]; then TEXT="👋 Hi! Type the 6-digit code shown on your computer."
+      else TEXT="That's not it — check the code on your computer screen and send just the 6 digits."; fi
+      tg sendMessage -d "chat_id=$CHAT_ID" --data-urlencode "text=$TEXT" >/dev/null || true
+    done <<< "$(printf '%s' "$UPD" | new_messages "$LAST_SEEN")"
     printf "." > /dev/tty
     sleep 2
   done
@@ -162,6 +188,7 @@ else
     exit 1
   fi
   ok "Hi ${FIRST_NAME:-there}! Locked to your Telegram account ($USER_ID)"
+  tg sendMessage -d "chat_id=$USER_ID" --data-urlencode "text=✓ Got you, ${FIRST_NAME:-there}. Finishing setup — I'll say hi in a minute." >/dev/null || true
 fi
 
 # ---------- 5. claude auth ----------
@@ -181,7 +208,7 @@ if [ "${KEN_AUTH_MODE:-subscription}" = "api" ]; then
     fail "Claude API check failed; check the key, account credit, and network"
   fi
   ok "Claude API connected"
-elif "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
+elif [ -z "${KEN_SETUP:-}" ] && "$CLAUDE_BIN" -p "Reply with exactly OK" --model haiku </dev/null >/dev/null 2>&1; then
   if [ -f "$KEN_HOME/.env" ]; then
     OAUTH_TOKEN="$(sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' "$KEN_HOME/.env")"
   fi

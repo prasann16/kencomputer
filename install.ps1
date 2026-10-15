@@ -105,7 +105,7 @@ if (-not (Test-Path $Claude)) {
 
 # ---------- 4. telegram bot ----------
 $script:BotToken = Env-Value "TELEGRAM_BOT_TOKEN"
-if ($script:BotToken) {
+if ($script:BotToken -and -not $env:KEN_SETUP) {  # `ken setup` walks through it again
   Ok "Telegram already configured (delete $KenHome\.env to redo)"
   $UserId = Env-Value "ALLOWED_USER_ID"
   $FirstName = "there"
@@ -126,18 +126,30 @@ if ($script:BotToken) {
   try { Tg "deleteWebhook" | Out-Null } catch {}
   Say ""
   Say "-- Step 2 of 2: introduce yourself --"
-  $Code = "ken-" + (-join ((1..16) | ForEach-Object { "{0:x}" -f (Get-Random -Maximum 16) }))
-  Dim "  Open @$BotUser in Telegram - https://t.me/$BotUser - and send this code:"
-  Say "  $Code"
+  $Code = [string](Get-Random -Minimum 100000 -Maximum 1000000)  # 6 digits: easy to type on a phone
+  Dim "  Open @$BotUser in Telegram - https://t.me/$BotUser - and send it this code:"
+  Say ""
+  Write-Host "        $Code  " -ForegroundColor Black -BackgroundColor Cyan
+  Say ""
   Dim "  This links your private Telegram account. I'll wait up to 15 minutes."
   Write-Host -NoNewline "  waiting for your message to @$BotUser "
-  $UserId = ""; $FirstName = ""
+  $UserId = ""; $FirstName = ""; $LastSeen = 0
   for ($i = 0; $i -lt 450 -and -not $UserId; $i++) {
     try {
-      $msg = (Tg "getUpdates?timeout=2").result | ForEach-Object { $_.message } |
+      $updates = (Tg "getUpdates?timeout=2").result
+      $msg = $updates | ForEach-Object { $_.message } |
         Where-Object { $_ -and $_.text -and $_.text.Trim() -eq $Code -and $_.chat.type -eq "private" } |
         Select-Object -Last 1
       if ($msg) { $UserId = [string]$msg.from.id; $FirstName = $msg.from.first_name }
+      elseif ($updates) {
+        # Ken isn't running yet, so the installer answers the phone: Start gets the ask, anything else a nudge.
+        foreach ($u in $updates) {
+          if ($u.update_id -le $LastSeen -or -not $u.message -or $u.message.chat.type -ne "private") { continue }
+          $LastSeen = $u.update_id
+          $text = if ("$($u.message.text)".StartsWith("/start")) { "Hi! Type the 6-digit code shown on your computer." } else { "That's not it - check the code on your computer screen and send just the 6 digits." }
+          try { Tg ("sendMessage?chat_id=$($u.message.chat.id)&text=" + [uri]::EscapeDataString($text)) | Out-Null } catch {}
+        }
+      }
     } catch {}
     if (-not $UserId) { Write-Host -NoNewline "."; Start-Sleep 2 }
   }
@@ -146,6 +158,7 @@ if ($script:BotToken) {
     Fail "SETUP DID NOT FINISH - no message arrived. Run the installer again and message the bot when asked."
   }
   Ok "Hi $FirstName! Locked to your Telegram account ($UserId)"
+  try { Tg ("sendMessage?chat_id=$UserId&text=" + [uri]::EscapeDataString("Got you, $FirstName. Finishing setup - I'll say hi in a minute.")) | Out-Null } catch {}
 }
 
 # ---------- 5. claude auth ----------
@@ -153,7 +166,7 @@ Say ""
 Say "-- Connecting Claude --"
 $OauthToken = ""
 & $Claude -p "Reply with exactly OK" --model haiku 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
+if ($LASTEXITCODE -eq 0 -and -not $env:KEN_SETUP) {
   $OauthToken = Env-Value "CLAUDE_CODE_OAUTH_TOKEN"
   Ok "Claude is already signed in on this computer"
 } else {
