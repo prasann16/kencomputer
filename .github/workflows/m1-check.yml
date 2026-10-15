@@ -1,4 +1,5 @@
-# Install an older Apple Silicon release on a real M-series Mac, close its window, and watch the auto-update.
+# Install an older Apple Silicon release on a real M-series Mac, start it hidden (as it is
+# after an update), and watch the auto-update quit, install and relaunch.
 name: M1 check
 on: { push: { branches: [m1-check] } }
 jobs:
@@ -10,15 +11,14 @@ jobs:
           hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
           cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
           xattr -d com.apple.quarantine /Applications/Ken.app 2>/dev/null || true
+          mkdir -p ~/.ken/desktop-data && touch ~/.ken/desktop-data/updated   # start hidden: an update then installs at once
           open /Applications/Ken.app
         env: { GH_TOKEN: "${{ github.token }}" }
       - run: |
           set +e; mkdir -p shots
-          sleep 30
-          osascript -e 'tell application "System Events" to tell process "Ken" to keystroke "w" using command down'
-          for i in $(seq 1 48); do
-            v=$(defaults read /Applications/Ken.app/Contents/Info.plist CFBundleShortVersionString)
-            echo "== $((i*10))s app=$v pids: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ')"
+          for i in $(seq 1 60); do
+            v=$(defaults read /Applications/Ken.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null)
+            echo "== $((i*10))s app=$v ken: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ') shipit: $(pgrep -x ShipIt | tr '\n' ' ')"
             screencapture -x shots/$i.png; sleep 10
           done
       - if: always()
@@ -27,7 +27,8 @@ jobs:
       - if: always()
         run: |
           set +e
-          for f in ~/.ken/logs/*; do echo "===== $f"; tail -100 "$f"; done
-          echo "===== updater"; ls -la ~/Library/Caches/ken-desktop-updater 2>&1
-          echo "===== ShipIt"; find ~/Library/Caches -path "*ShipIt*" -name "*.log" -exec tail -60 {} \; 2>/dev/null
-          echo "===== electron main log"; find ~/Library/Logs -iname "*ken*" -exec tail -80 {} \; 2>/dev/null
+          for f in ~/.ken/logs/*; do echo "===== $f"; tail -60 "$f"; done
+          echo "===== updater cache"; ls -la ~/Library/Caches/ken-desktop-updater ~/Library/Caches/ken-desktop-updater/pending 2>&1
+          echo "===== ShipIt logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -80 "$f"; done
+          echo "===== crash reports"; ls -t ~/Library/Logs/DiagnosticReports | head; for f in $(ls -t ~/Library/Logs/DiagnosticReports/*Ken* 2>/dev/null | head -2); do head -60 "$f"; done
+          echo "===== system log"; log show --last 12m --predicate 'process == "ShipIt" OR process == "Ken" OR eventMessage CONTAINS "kencomputer"' --style compact 2>/dev/null | grep -v "Ken Helper" | tail -120
