@@ -14,11 +14,16 @@ jobs:
           open /Applications/Ken.app
         env: { GH_TOKEN: "${{ github.token }}" }
       - run: |
+          set +e; mkdir -p shots
           for i in $(seq 1 24); do
-            echo "== $((i*10))s"; pgrep -fl "Ken|ken-engine" | head; launchctl print gui/$(id -u)/dev.kencomputer.app 2>/dev/null | grep -E "state|runs|last exit" ; sleep 10
+            echo "== $((i*10))s"; pgrep -fl "Ken|ken-engine" | head; launchctl print gui/$(id -u)/dev.kencomputer.app 2>/dev/null | grep -E "state|runs|last exit"; screencapture -x shots/$i.png; sleep 10
           done
       - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: shots, path: shots }
+      - if: always()
         run: |
+          set +e
           ls -la ~/.ken ~/.ken/logs || true
           for f in ~/.ken/logs/*; do echo "===== $f"; tail -200 "$f"; done
           echo "===== crash reports"; ls ~/Library/Logs/DiagnosticReports | tail
