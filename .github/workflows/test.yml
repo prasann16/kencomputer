@@ -25,6 +25,8 @@ jobs:
   # install.ps1 sets it up, answers, and stops with `ken stop`.
   windows:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"  # as winrun.py runs Ken
     defaults:
       run:
         shell: powershell
