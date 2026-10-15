@@ -1,6 +1,6 @@
 # Install the published Apple Silicon app on a real M-series Mac and watch it for 4 minutes.
 name: M1 check
-on: workflow_dispatch
+on: { push: { branches: [m1-check] } }
 jobs:
   m1:
     runs-on: macos-15
