@@ -28,7 +28,7 @@ switch ($Command) {
   "status" { if (Get-KenProcesses) { "* ken is running" } else { "o ken is stopped" } }
   "logs" {
     $n = if ($Arg) { [int]$Arg } else { 50 }
-    Get-Content (Join-Path $KenHome "logs\ken.log") -Tail $n
+    Get-Content (Join-Path $KenHome "logs\ken.log") -Tail $n -Encoding UTF8
   }
   "update" {
     "-> updating ken..."
