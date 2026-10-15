@@ -110,6 +110,11 @@ if [ ! -d "$HOME/.cache/huggingface/hub/models--Systran--faster-whisper-small" ]
 fi
 ok "Voice transcription ready"
 
+# Claude Code ships inside the Agent SDK Ken just installed.
+CLAUDE_BIN="$("$KEN_HOME/venv/bin/python" -c "import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude')")"
+[ -x "$CLAUDE_BIN" ] || CLAUDE_BIN="$(command -v claude || true)"
+[ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
+
 # ---------- 4. telegram bot ----------
 if [ -f "$KEN_HOME/.env" ] && grep -q "^TELEGRAM_BOT_TOKEN=." "$KEN_HOME/.env"; then
   ok "Telegram already configured (delete ~/.ken/.env to redo)"

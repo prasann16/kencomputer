@@ -1,5 +1,6 @@
 """Connections without a network: calendars, email composition, tools and prompts."""
 import json
+import os
 import time
 
 import icalendar
@@ -75,7 +76,8 @@ def test_known_servers_and_bad_login(tmp_path, monkeypatch):
         await c.connect_email("me@gmail.com", "abcd efgh ijkl mnop")
         saved = json.loads((tmp_path / "connections.json").read_text())["emails"][0]
         assert saved["imap_host"] == "imap.gmail.com" and saved["password"] == "abcdefghijklmnop"
-        assert oct((tmp_path / "connections.json").stat().st_mode)[-3:] == "600"
+        if os.name != "nt":  # Windows has no Unix file modes; the user folder is private there
+            assert oct((tmp_path / "connections.json").stat().st_mode)[-3:] == "600"
     import asyncio
     asyncio.run(run())
 

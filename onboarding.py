@@ -8,14 +8,11 @@ instead, the user pastes it. Either way the long-lived token lands in ~/.ken/.en
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
-import pty
 import re
 import shutil
 import struct
-import termios
 import time
 from pathlib import Path
 from typing import Callable
@@ -34,9 +31,10 @@ def claude_cli() -> str:
     try:
         import claude_agent_sdk
 
-        bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
-        if bundled.exists():
-            return str(bundled)
+        for name in ("claude", "claude.exe"):
+            bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / name
+            if bundled.exists():
+                return str(bundled)
     except ImportError:
         pass
     return shutil.which("claude") or "claude"
@@ -95,6 +93,10 @@ class Onboarding:
 
     async def start(self) -> dict:
         """Start `claude setup-token`; it opens the browser. Returns the sign-in URL as a fallback."""
+        import fcntl  # Mac and Linux only, like the app that uses this
+        import pty
+        import termios
+
         self.stop()
         pid, fd = pty.fork()
         if pid == 0:

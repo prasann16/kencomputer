@@ -28,6 +28,7 @@ vps = load('vps', 'deploy/vps.py')
 recovery = load('recovery', 'deploy/restore.py')
 
 
+@unittest.skipIf(os.name == "nt", "servers run Linux")
 class DeploymentTests(unittest.TestCase):
     def test_bundle_excludes_private_and_unlisted_files_and_hashes_source(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -153,6 +154,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), '42')
 
 
+@unittest.skipIf(os.name == "nt", "servers run Linux")
 class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_list_uses_selected_credentials(self):
         # Load just the I/O boundary to avoid starting the bot or loading real credentials.
