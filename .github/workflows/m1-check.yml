@@ -1,15 +1,20 @@
-# On a real M-series Mac: install the draft build v0.0.99 (this fix, versioned below the
-# published 0.1.14), start it hidden as it is after an update, and watch it update to 0.1.14.
+# Runs a Ken for Mac release on a real M-series Mac: install it, start it hidden (as it is
+# after an update), and watch it for six minutes. Give it an older release to watch that
+# release update itself to the newest one. Actions → M1 check → Run workflow.
 name: M1 check
-on: { push: { branches: [m1-check] } }
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release tag to install (empty = the newest)"
+        default: ""
 jobs:
   m1:
     runs-on: macos-15
-    permissions: { contents: write }  # drafts are only visible with write access
+    permissions: { contents: write }  # also lets it install a draft release
     steps:
       - run: |
-          for i in $(seq 1 30); do gh release download v0.0.99 --repo prasann16/kencomputer -p Ken-arm64.dmg && break; echo "waiting for the draft build…"; sleep 60; done
-          [ -f Ken-arm64.dmg ] || exit 1
+          gh release download ${{ inputs.release }} --repo ${{ github.repository }} -p Ken-arm64.dmg
           hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
           cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
           xattr -d com.apple.quarantine /Applications/Ken.app 2>/dev/null || true
@@ -20,7 +25,7 @@ jobs:
           set +e; mkdir -p shots
           for i in $(seq 1 36); do
             v=$(defaults read /Applications/Ken.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null)
-            echo "== $((i*10))s app=$v ken: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ') shipit: $(pgrep -x ShipIt | tr '\n' ' ')"
+            echo "== $((i*10))s app=$v ken: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ') installer: $(pgrep -x ShipIt | tr '\n' ' ')"
             screencapture -x shots/$i.png; sleep 10
           done
           curl -s -o /dev/null -w "engine answers: HTTP %{http_code}\n" http://127.0.0.1:7777/
@@ -30,7 +35,7 @@ jobs:
       - if: always()
         run: |
           set +e
-          echo "===== app stderr"; cat ~/app.log
+          echo "===== app log"; cat ~/app.log
           for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
-          echo "===== ShipIt logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
+          echo "===== installer logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
           echo "===== crash reports"; ls -t ~/Library/Logs/DiagnosticReports | head
