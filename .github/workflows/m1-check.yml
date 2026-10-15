@@ -1,0 +1,25 @@
+# Install the published Apple Silicon app on a real M-series Mac and watch it for 4 minutes.
+name: M1 check
+on: workflow_dispatch
+jobs:
+  m1:
+    runs-on: macos-15
+    steps:
+      - run: uname -m && sw_vers
+      - run: |
+          gh release download --repo prasann16/kencomputer -p Ken-arm64.dmg
+          hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
+          cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
+          xattr -d com.apple.quarantine /Applications/Ken.app 2>/dev/null || true
+          open /Applications/Ken.app
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - run: |
+          for i in $(seq 1 24); do
+            echo "== $((i*10))s"; pgrep -fl "Ken|ken-engine" | head; launchctl print gui/$(id -u)/dev.kencomputer.app 2>/dev/null | grep -E "state|runs|last exit" ; sleep 10
+          done
+      - if: always()
+        run: |
+          ls -la ~/.ken ~/.ken/logs || true
+          for f in ~/.ken/logs/*; do echo "===== $f"; tail -200 "$f"; done
+          echo "===== crash reports"; ls ~/Library/Logs/DiagnosticReports | tail
+          log show --last 5m --predicate 'process CONTAINS "Ken" OR eventMessage CONTAINS "dev.kencomputer"' --style compact | tail -150
