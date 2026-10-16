@@ -107,7 +107,8 @@ jobs:
       # the engine is running there, and without the fix the installer gives up).
       - run: |
           set +e
-          pkill -x Ken; sleep 3; rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
+          pkill -x Ken; for i in $(seq 1 20); do pgrep -x Ken >/dev/null || break; sleep 1; done; pkill -9 -x Ken; sleep 2
+          rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
           cp latest-mac.yml feed/  # the same valid build as 99.0.0 again
           chflags uchg /Applications/Ken.app
           touch ~/.ken/desktop-data/updated

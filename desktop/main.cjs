@@ -314,6 +314,9 @@ function buildMenus() {
   if (tray) tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
 }
 
+// Closing the window only hides Ken, but a quit asked for by macOS (log out, shut down),
+// a signal or the Quit menu must go through, not be cancelled by that.
+app.on('before-quit', () => { quitting = true; });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', show);
