@@ -102,21 +102,17 @@ jobs:
           [ "$fresh" = 1 ] || { echo "::error::a fresh install never answered"; exit 1; }
           [ "$updated" = 1 ] || { echo "::error::the app did not come back after updating itself"; exit 1; }
       # An update the installer can't finish must end with Ken back on screen asking for a
-      # download, never with Ken gone. The failure is the real one from 0.1.14: an engine
-      # still running from inside Ken.app (here a spare one, with its own home and port)
-      # makes the installer refuse to replace the app.
+      # download, never with Ken gone. The moment Ken quits to install, Ken.app is locked in
+      # place, so the installer can't replace it and gives up.
       - run: |
           set +e
           pkill -x Ken; for i in $(seq 1 20); do pgrep -x Ken >/dev/null || break; sleep 1; done; pkill -9 -x Ken; sleep 2
           rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
-          # The engine's Python, run from inside Ken.app, registers with macOS as a running copy of Ken (as the real engine does once its parts load).
-          nohup /Applications/Ken.app/Contents/Resources/engine/ken-engine -c "import ctypes, time; o = ctypes.CDLL('/usr/lib/libobjc.dylib'); ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit'); o.objc_getClass.restype = o.sel_registerName.restype = o.objc_msgSend.restype = ctypes.c_void_p; o.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]; o.objc_msgSend(o.objc_getClass(b'NSApplication'), o.sel_registerName(b'sharedApplication')); time.sleep(3600)" > ~/spare-engine.log 2>&1 &
-          for i in $(seq 1 30); do lsappinfo list | grep -q ken-engine && break; sleep 1; done
-          lsappinfo list | grep -q ken-engine && echo "spare engine is registered as a running app" || { echo "::error::the spare engine never registered as an app"; cat ~/spare-engine.log; exit 1; }
           cp latest-mac.yml feed/  # the same valid build as 99.0.0 again
           touch ~/.ken/desktop-data/updated
           KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app2.log 2>&1 &
           second=$!; gone=0; back=0
+          (while kill -0 "$second" 2>/dev/null; do sleep 0.2; done; chflags uchg /Applications/Ken.app; echo "Ken.app locked"; sleep 40; chflags nouchg /Applications/Ken.app; echo "Ken.app unlocked") &
           for i in $(seq 1 36); do
             ken="$(pgrep -x Ken | tr '\n' ' ')"
             echo "== $((i*10))s ken: $ken installer: $(pgrep -x ShipIt | tr '\n' ' ') failed: $(cat ~/.ken/desktop-data/update-failed 2>/dev/null)"
@@ -125,6 +121,7 @@ jobs:
             [ "$gone" = 1 ] && [ -n "$ken" ] && [ -f ~/.ken/desktop-data/update-failed ] && back=1 && echo "came back and asked for a download" && break
             sleep 10
           done
+          chflags nouchg /Applications/Ken.app 2>/dev/null
           [ "$gone" = 1 ] || { echo "::error::Ken never quit to install the update"; exit 1; }
           [ "$back" = 1 ] || { echo "::error::after a failed install, Ken did not come back and ask for a download"; exit 1; }
       - if: always()
