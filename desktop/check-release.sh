@@ -24,6 +24,10 @@ VERSION="${TAG#v}"
 [ "$(uname -m)" = arm64 ] && DMG="Ken-arm64.dmg" || DMG="Ken-x64.dmg"
 echo "Checking $TAG ($DMG)"
 
+# 0. The build's own checks passed (they install it on an Apple Silicon Mac and make it update itself).
+BUILD="$(gh run list -R "$REPO" --workflow release.yml --branch "$TAG" -L 1 --json conclusion -q '.[0].conclusion')"
+[ "$BUILD" = success ] && pass "release build and its Apple Silicon update check" || { fail "release build for $TAG: $BUILD (see gh run list --workflow release.yml --branch $TAG)"; exit 1; }
+
 # 1. Download it like a browser would (quarantined), and let macOS judge it.
 gh release download "$TAG" -R "$REPO" -p "$DMG" -D "$WORK" || { fail "download $DMG"; exit 1; }
 xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$WORK/$DMG"

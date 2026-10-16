@@ -140,6 +140,14 @@ function watchEngine() {
 // asked for reports "up to date" with a quiet toast.
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
 let updateReady = false, updateVersion = '', manualCheck = false;
+// If an update doesn't install, Ken must come back and say so rather than vanish and retry
+// forever: a note names the version being installed, a timer reopens Ken if the installer
+// didn't, and the next start sees the old version still running and tells the user to
+// download the new one (nothing can fix an app whose updater is broken but a fresh download).
+const installingNote = path.join(home, 'desktop-data', 'installing');
+let updateFailed = '';
+const downloadUrl = `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
+const failedState = () => updateFailed ? { state: 'failed', version: updateFailed, url: downloadUrl } : null;
 const tellPage = (state) => { if (win && !win.isDestroyed()) win.webContents.send('update:state', state); };
 async function engineBusy() {
   try {
@@ -158,11 +166,14 @@ async function stopService() {
 async function restartIntoUpdate(quiet) {
   if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
+  writeFileSync(installingNote, updateVersion);
+  const bundle = path.resolve(process.execPath, '..', '..', '..');
+  require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 120; pgrep -x Ken >/dev/null || open "$0"', bundle], { detached: true, stdio: 'ignore' }).unref();
   await stopService();
   require('electron-updater').autoUpdater.quitAndInstall(true, true);
 }
 async function installIfIdle() {
-  if (updateReady && !win?.isVisible() && !(await engineBusy())) restartIntoUpdate(true);
+  if (updateReady && updateVersion !== updateFailed && !win?.isVisible() && !(await engineBusy())) restartIntoUpdate(true);
 }
 async function installNow() {
   if (!updateReady) return;
@@ -177,6 +188,8 @@ function checkNow(manual) {
 function checkForUpdates() {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
+  // The release check feeds the app a local "newer" copy of itself to prove it can update.
+  if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
   autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
   autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
   autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); if (manualCheck) tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
@@ -205,7 +218,12 @@ async function start() {
   win.on('hide', installIfIdle);
   const updated = existsSync(quietRelaunch);
   if (updated) rmSync(quietRelaunch);
-  win.once('ready-to-show', () => { if (!updated) win.show(); });
+  try { updateFailed = readFileSync(installingNote, 'utf8').trim(); rmSync(installingNote); } catch {}
+  if (updateFailed === app.getVersion()) updateFailed = '';  // it installed
+  // A marker for the release check (and anyone debugging): this start follows a failed update.
+  const failedMarker = path.join(home, 'desktop-data', 'update-failed');
+  if (updateFailed) writeFileSync(failedMarker, updateFailed); else rmSync(failedMarker, { force: true });
+  win.once('ready-to-show', () => { if (!updated || updateFailed) win.show(); });
   await win.loadFile(path.join(__dirname, 'loading.html'));
 
   const found = await connectOrAsk();
@@ -225,6 +243,10 @@ async function start() {
   });
   session.defaultSession.on('will-download', (_event, item) => {
     item.setSaveDialogOptions({ title: 'Save from Ken', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())) });
+  });
+  ipcMain.handle('update:failed', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    return failedState();
   });
   ipcMain.handle('microphone:permission', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
