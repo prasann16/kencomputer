@@ -141,13 +141,14 @@ function watchEngine() {
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
 let updateReady = false, updateVersion = '', manualCheck = false;
 // If an update doesn't install, Ken must come back and say so rather than vanish and retry
-// forever: a note records the version being installed and when Ken.app on disk was last
-// changed, a timer reopens Ken if the installer didn't, and the next start that finds the
-// note with Ken.app unchanged tells the user to download the new version (nothing can fix
-// an app whose updater is broken but a fresh download).
+// forever: a note records the version being installed and which Ken.app was on disk, a
+// timer reopens Ken if the installer didn't, and the next start that finds the note with
+// the same Ken.app still on disk tells the user to download the new version (nothing can
+// fix an app whose updater is broken but a fresh download).
 const installingNote = path.join(home, 'desktop-data', 'installing');
 const bundlePath = path.resolve(process.execPath, '..', '..', '..');
-const bundleStamp = () => { try { return String(statSync(bundlePath).ctimeMs); } catch { return ''; } };
+// Which Ken.app is on disk: a replaced bundle is a different directory (or a rewritten Info.plist).
+const bundleStamp = () => { try { const b = statSync(bundlePath), p = statSync(path.join(bundlePath, 'Contents', 'Info.plist')); return `${b.ino}:${p.ino}:${p.mtimeMs}`; } catch { return ''; } };
 let updateFailed = '';
 const downloadUrl = `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
 const failedState = () => updateFailed ? { state: 'failed', version: updateFailed, url: downloadUrl } : null;
