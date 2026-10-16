@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   openFolder: (folder) => ipcRenderer.invoke('folder:open', folder),
   popupMenu: (items) => ipcRenderer.invoke('menu:popup', items),
   connectChrome: () => ipcRenderer.invoke('chrome:connect'),
+  updateFailed: () => ipcRenderer.invoke('update:failed'),
   onUpdateState: (callback) => { const listener = (_event, state) => callback(state); ipcRenderer.on('update:state', listener); return () => ipcRenderer.removeListener('update:state', listener); },
 });
