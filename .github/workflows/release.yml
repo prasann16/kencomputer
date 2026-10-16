@@ -109,10 +109,10 @@ jobs:
           set +e
           pkill -x Ken; for i in $(seq 1 20); do pgrep -x Ken >/dev/null || break; sleep 1; done; pkill -9 -x Ken; sleep 2
           rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
-          mkdir -p "$RUNNER_TEMP/spare"
-          KEN_HOME="$RUNNER_TEMP/spare" KEN_WEB_PORT=7798 TELEGRAM_BOT_TOKEN= nohup /Applications/Ken.app/Contents/Resources/engine/ken-engine > ~/spare-engine.log 2>&1 &
+          # The engine's Python, run from inside Ken.app, registers with macOS as a running copy of Ken (as the real engine does once its parts load).
+          nohup /Applications/Ken.app/Contents/Resources/engine/ken-engine -c "import ctypes, time; o = ctypes.CDLL('/usr/lib/libobjc.dylib'); ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit'); o.objc_getClass.restype = o.sel_registerName.restype = o.objc_msgSend.restype = ctypes.c_void_p; o.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]; o.objc_msgSend(o.objc_getClass(b'NSApplication'), o.sel_registerName(b'sharedApplication')); time.sleep(3600)" > ~/spare-engine.log 2>&1 &
           for i in $(seq 1 30); do lsappinfo list | grep -q ken-engine && break; sleep 1; done
-          lsappinfo list | grep -q ken-engine && echo "spare engine is registered as a running app" || echo "::warning::the spare engine never registered as an app; the installer may not refuse"
+          lsappinfo list | grep -q ken-engine && echo "spare engine is registered as a running app" || { echo "::error::the spare engine never registered as an app"; cat ~/spare-engine.log; exit 1; }
           cp latest-mac.yml feed/  # the same valid build as 99.0.0 again
           touch ~/.ken/desktop-data/updated
           KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app2.log 2>&1 &
