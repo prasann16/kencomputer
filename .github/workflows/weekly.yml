@@ -1,4 +1,4 @@
-# Once a week: move Ken's parts (Claude Code above all) to their newest versions, test them,
+# Once a week: move Ken's parts (Claude Code and Codex above all) to their newest versions, test them,
 # and prepare a release. Publishing stays one command on a Mac, named in the issue this opens.
 name: Weekly update
 on:

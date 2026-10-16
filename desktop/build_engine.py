@@ -11,8 +11,9 @@ subprocess.run([
     str(root / '.venv' / 'bin' / 'python'), '-m', 'PyInstaller', '--noconfirm', '--clean', '--name', 'ken-engine',
     '--distpath', str(root / 'dist' / f'engine-{arch}'), '--workpath', str(root / 'build' / 'engine'),
     '--specpath', str(root / 'build'), '--paths', str(root),
-    # Only data files the code can't import: the bundled `claude` CLI and Whisper's assets.
-    '--collect-data', 'claude_agent_sdk', '--collect-data', 'faster_whisper',
+    # Only data files the code can't import: the bundled `claude` and `codex` CLIs and Whisper's assets.
+    '--collect-data', 'claude_agent_sdk', '--collect-data', 'codex_cli_bin', '--collect-data', 'faster_whisper',
+    '--copy-metadata', 'openai-codex',  # the Codex SDK reports its version to the CLI
     # Optional extras Ken never uses: Whisper's silence filter (off in voice.py) and a download accelerator.
     '--exclude-module', 'onnxruntime', '--exclude-module', 'hf_xet',
     *data('web', 'web'), *data('SOUL.template.md'), *data('jobs.default.json'),

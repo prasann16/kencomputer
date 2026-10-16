@@ -10,6 +10,7 @@ import json
 import re
 import smtplib
 import ssl
+import sys
 import time
 from datetime import date, datetime, timedelta
 from email.header import decode_header, make_header
@@ -412,3 +413,30 @@ class Connections:
                               schema({"start": s, "days": i}, []))(
                 result(lambda a: cals.events(a.get("start", ""), a.get("days", 1)))))
         return {"ken": create_sdk_mcp_server("ken", tools=tools)} if tools else {}
+
+    def stdio_mcp(self) -> dict:
+        """The same tools as a process of their own, for a brain that can't host them in-process (Codex)."""
+        data = self.load()
+        if not (data.get("emails") or data.get("calendars")):
+            return {}
+        app = str(Path(__file__).resolve().parent)
+        code = f"import sys; sys.path.insert(0, {app!r}); import connections; connections.serve({str(self.file.parent)!r})"
+        # The bundled engine runs `-c` code itself (see the top of bot.py), so this works in the app too.
+        return {"ken": {"type": "stdio", "command": sys.executable, "args": ["-c", code]}}
+
+
+def serve(home: str) -> None:
+    """Serve Ken's email and calendar tools over stdio: Connections.stdio_mcp() starts this."""
+    import anyio
+    from mcp.server.stdio import stdio_server
+
+    config = Connections(Path(home)).mcp().get("ken")
+    if not config:
+        return
+    server = config["instance"]
+
+    async def run() -> None:
+        async with stdio_server() as (read, write):
+            await server.run(read, write, server.create_initialization_options())
+
+    anyio.run(run)

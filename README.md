@@ -2,9 +2,9 @@
 
 **Give your AI its own computer.**
 
-Ken is Claude Code with a body: always on, reachable from your phone via Telegram — text or voice notes — with persistent memory, on a machine you own. Ship a fix from a hike. Have it plan your trip mid-run. Tell it something once; it knows it forever.
+Ken is Claude Code (or Codex) with a body: always on, reachable from your phone via Telegram — text or voice notes — with persistent memory, on a machine you own. Ship a fix from a hike. Have it plan your trip mid-run. Tell it something once; it knows it forever.
 
-> You already pay for Claude. Ken gives it a body — heartbeat, hands, a home, and a memory.
+> You already pay for Claude or ChatGPT. Ken gives it a body — heartbeat, hands, a home, and a memory.
 
 🌐 **[kencomputer.dev](https://kencomputer.dev)** · hosted version waitlist there too
 
@@ -20,17 +20,17 @@ curl -fsSL https://kencomputer.dev/install | bash
 
 1. **Create a Telegram bot** — message [@BotFather](https://t.me/BotFather), send `/newbot`, paste the token.
 2. **Pair your account** — send the installer's one-time code to your new bot in a private chat; Ken locks itself to your Telegram account.
-3. **Connect Claude** — sign in with the Claude subscription you already have. No API keys, no per-token bills.
+3. **Connect Claude or ChatGPT** — sign in with the subscription you already have (ChatGPT runs through OpenAI's Codex). No API keys, no per-token bills. Add the other one any time with `/connect`.
 
 Then just talk to it.
 
 ## What you get
 
-- **A real assistant on a real computer** — it runs Claude Code (Anthropic's own agent) with full access to its machine: installs tools, runs code, browses the web, manages projects, sets up its own cron jobs.
+- **A real assistant on a real computer** — it runs Claude Code (Anthropic's own agent) or Codex (OpenAI's) with full access to its machine: installs tools, runs code, browses the web, manages projects, sets up its own cron jobs.
 - **Voice notes** — transcribed locally on your machine (never sent to a third party), then handled like text.
 - **A morning brief** — every day, first thing, without asking: open loops, what's on today, weather if it knows your city. Pick the time in your first conversation; a nightly review writes memory so tomorrow's brief knows more.
 - **Persistent memory** — Ken keeps notes on you, your projects, and your rules in `~/.ken/work/SOUL.md` — its soul file. Tell it once — it knows tomorrow. It updates its own memory when you say "remember…".
-- **Model switching** — `/model opus`, `/model haiku`, `/model default`. Live list from your own account.
+- **Model switching** — `/model opus`, `/model haiku`, `/model gpt`, `/model default`. Live list from your own accounts. Connect both and any chat can run on either: Ken on Claude, a project on GPT.
 - **Controls** — `/stop` kills the running task, `/new` starts a fresh conversation.
 
 ## Connecting things
@@ -79,12 +79,12 @@ ken uninstall  remove Ken (keeps your memory & settings)
 ## Requirements
 
 - macOS or Linux and `git`. The installer sets up Python 3.13 itself (via uv, no sudo)
-- A [Claude](https://claude.ai) subscription (Pro or Max)
+- A [Claude](https://claude.ai) subscription (Pro or Max) or a [ChatGPT](https://chatgpt.com) one (Plus or Pro)
 - A Telegram account
 
 ## Security notes, honestly
 
-- Ken runs Claude Code with `--dangerously-skip-permissions` in its workspace — that's what makes it *able to do things*. Run it on a machine you're comfortable giving it. A cheap dedicated VPS is the sweet spot: full power, blast radius of one.
+- Ken runs Claude Code with `--dangerously-skip-permissions` (and Codex with full access, never asking) in its workspace — that's what makes it *able to do things*. Run it on a machine you're comfortable giving it. A cheap dedicated VPS is the sweet spot: full power, blast radius of one.
 - Only your Telegram user ID gets answered; everyone else is ignored.
 - Your credentials live in `~/.ken/.env` (chmod 600) on your machine — nowhere else.
 - Everything Ken remembers is plaintext on your disk: `SOUL.md`, its journal, and full conversation transcripts in `~/.ken/history/`. Readable and deletable by you at any time — and not encrypted at rest, so treat that machine like the personal computer it is.

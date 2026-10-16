@@ -48,7 +48,7 @@ class FakeBrain(Brain):
     def __init__(self):
         self.asks = []
 
-    def session(self, *, cwd, system, resume=None, model_fn=None):
+    def session(self, *, cwd, system, resume=None, model_fn=None, recap=None):
         return FakeSession(self, cwd, system, resume, model_fn)
 
 

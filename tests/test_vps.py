@@ -169,22 +169,20 @@ class DeploymentTests(unittest.TestCase):
 @unittest.skipIf(os.name == "nt", "servers run Linux")
 class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_list_uses_selected_credentials(self):
-        # Load just the I/O boundary to avoid starting the bot or loading real credentials.
-        tree = ast.parse((ROOT / 'bot.py').read_text())
-        node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'refresh_models_file')
+        import brains
+
         for api_key in ('test-api', ''):
-            with self.subTest(api=bool(api_key)), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(api=bool(api_key)):
                 client = AsyncMock()
                 client.__aenter__.return_value = client
                 response = Mock()
-                response.json.return_value = {'data': [{'id': 'test-model'}]}
+                response.json.return_value = {'data': [{'id': 'test-model', 'display_name': 'Claude Test 1'}]}
                 client.get.return_value = response
                 oauth = Mock(return_value='test-oauth')
-                namespace = dict(os=SimpleNamespace(environ={'ANTHROPIC_API_KEY': api_key}),
-                                 asyncio=asyncio, get_oauth_token=oauth, MODELS_FILE=Path(temp) / 'models',
-                                 httpx=SimpleNamespace(AsyncClient=lambda: client), log=Mock())
-                exec(compile(ast.Module(body=[node], type_ignores=[]), 'bot.py', 'exec'), namespace)
-                await namespace['refresh_models_file']()
+                with patch.dict(os.environ, {'ANTHROPIC_API_KEY': api_key}), \
+                        patch.object(brains, 'claude_oauth_token', oauth), \
+                        patch.object(brains.httpx, 'AsyncClient', lambda: client):
+                    models = await brains.ClaudeBrain().models()
                 headers = client.get.call_args.kwargs['headers']
                 if api_key:
                     self.assertEqual(headers['x-api-key'], api_key)
@@ -193,7 +191,7 @@ class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(headers['Authorization'], 'Bearer test-oauth')
                     self.assertNotIn('x-api-key', headers)
-                self.assertEqual(namespace['MODELS_FILE'].read_text(), 'test-model\n')
+                self.assertEqual(models, [('test-model', 'Test 1')])
 
 
 if __name__ == '__main__':

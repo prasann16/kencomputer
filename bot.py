@@ -1,8 +1,8 @@
 """Ken — a personal AI assistant with its own computer.
 
-Thin harness: Telegram message (text or voice) -> Claude Code headless -> reply.
-The brain is Claude Code; the memory is SOUL.md in the workspace; this file
-is just plumbing. https://kencomputer.dev
+Thin harness: Telegram message (text or voice) -> Claude Code or Codex headless -> reply.
+The brain is Claude Code or Codex (each chat runs on whichever owns its model);
+the memory is SOUL.md in the workspace; this file is just plumbing. https://kencomputer.dev
 """
 
 from __future__ import annotations
@@ -25,10 +25,9 @@ import tempfile
 import time
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 
-from brains import ClaudeBrain
+from brains import Brains, ClaudeBrain, CodexBrain
 from engine import HOME, Engine
 from web import WebApp
 from connections import Connections
@@ -97,12 +96,20 @@ BROWSER_PROMPT = (
 )
 
 # Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.
-CONNECTIONS = Connections(KEN_HOME, on_change=lambda: claude_connected())
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=lambda: {**browser_mcp(), **CONNECTIONS.mcp()}))
+CONNECTIONS = Connections(KEN_HOME, on_change=lambda: brain_connected())
+# Claude first: with both connected and no model chosen, Ken runs on Claude. Claude hosts the
+# email and calendar tools in-process; Codex runs the same tools as a process of their own.
+BRAINS = Brains([
+    ClaudeBrain(mcp_factory=lambda: {**browser_mcp(), **CONNECTIONS.mcp()}),
+    CodexBrain(mcp_factory=lambda: {**browser_mcp(), **CONNECTIONS.stdio_mcp()}),
+], lambda: active_model())
+ENGINE = Engine(KEN_HOME, BRAINS)
+SETUP: Onboarding | None = None
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
-MODELS_FILE = KEN_HOME / "available-models.txt"
+MODELS_FILE = KEN_HOME / "available-models.txt"  # every connected brain's model ids, for the assistant
+MODELS_CACHE = KEN_HOME / "models.json"  # the same lists with names, by brain, for pickers and restarts
 MODEL_REQUEST = KEN_HOME / "model-request"
 HISTORY_DIR = KEN_HOME / "history"
 SESSIONS_FILE = KEN_HOME / ".sessions.json"
@@ -208,15 +215,17 @@ SYSTEM_PROMPT = (
     "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
     "Home conversation, memory and connections as the app, not a separate assistant. The "
     "header line of each message says where they wrote from. On their phone, keep it short "
-    "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new and "
-    "/model; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
+    "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new, "
+    "/model and /connect; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
     "they ask how to connect something or how to use you on their phone, point them to the "
     "exact place in Settings in one line. If SOUL.md describes your body differently (older "
     "installs say you are only a Telegram bot), this paragraph is the truth: quietly fix SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
-    f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
-    f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
-    "and confirm — the switch applies from the next task. "
+    f"If the human asks to change which model you run on: read {MODELS_FILE} "
+    f"for what's available (Claude and ChatGPT models both work, from whichever accounts are "
+    f"connected), write the chosen model id as the only line of {MODEL_REQUEST}, "
+    "and confirm — the switch applies from the next task. To use an account that isn't "
+    "connected yet (Claude or ChatGPT), they send /connect or pick Connect in the model menu. "
     "YOUR MEMORY SYSTEM, three layers — all of it already exists and is written for you, "
     "so never offer to build memory you already have; go read it. "
     "(1) SOUL.md — your essence: who you are, who they are, standing rules. The only layer "
@@ -460,7 +469,7 @@ def authorized(update: Update) -> bool:
 
 
 def md_to_html(text: str) -> str:
-    """Convert Claude's markdown to Telegram's HTML subset."""
+    """Convert the assistant's markdown to Telegram's HTML subset."""
     saved: list[str] = []
 
     def stash(rendered: str) -> str:
@@ -702,7 +711,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.effective_message.reply_text(
         "👋 Here. Text or voice — I'll get it done.\n"
-        "/stop kills the running task\n/new starts a fresh conversation\n/model switches models"
+        "/stop kills the running task\n/new starts a fresh conversation\n/model switches models\n"
+        "/connect adds a Claude or ChatGPT account"
     )
 
 
@@ -735,31 +745,6 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("🛑 Stopping the current task.")
     else:
         await update.effective_message.reply_text("Nothing is running.")
-
-
-def get_oauth_token() -> str:
-    """Claude Code's own credentials: env var, credentials file, or macOS Keychain."""
-    tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if tok:
-        return tok
-    creds = Path.home() / ".claude" / ".credentials.json"
-    if creds.exists():
-        try:
-            return json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
-        except Exception:
-            pass
-    try:
-        import subprocess
-
-        out = subprocess.run(
-            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0:
-            return json.loads(out.stdout)["claudeAiOauth"]["accessToken"]
-    except Exception:
-        pass
-    return ""
 
 
 async def send_outbound(bot, text: str) -> None:
@@ -893,9 +878,12 @@ def voice_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
-async def claude_connected() -> None:
-    """Sessions opened before sign-in had no credentials; the next message reopens them."""
+async def brain_connected() -> None:
+    """Sessions opened before sign-in had no credentials; the next message reopens them.
+    A chat mid-reply keeps going: it already has a brain that works."""
     for pid in list(ENGINE.chats):
+        if ENGINE.chat_busy(pid):
+            continue
         session = ENGINE.chats.pop(pid, None)
         if session is not None:
             await session.close()
@@ -914,10 +902,11 @@ async def start_engine() -> None:
     if old and not ENGINE.kv_get(f"session:{HOME}"):
         ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed
     ENGINE.start()
+    global SETUP
+    SETUP = Onboarding(KEN_HOME, BRAINS, brain_connected, voice_ready)
     if os.environ.get("KEN_WEB", "1") == "0":
         return
-    setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, SETUP, CONNECTIONS, (list_jobs, set_job), PHONE)
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
@@ -977,34 +966,31 @@ async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def refresh_models_file(app=None) -> None:
-    """Fetch the live model list with Claude Code's own auth; leave it on disk
-    for the assistant to read when asked about switching."""
+    """Fetch every connected brain's live model list; leave the ids on disk for
+    the assistant to read when asked about switching."""
+    await BRAINS.refresh()
+    if not BRAINS.catalog:
+        return
     try:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        token = "" if api_key else await asyncio.to_thread(get_oauth_token)
-        if not api_key and not token:
-            return
-        headers = {"anthropic-version": "2023-06-01"}
-        if api_key:
-            headers["x-api-key"] = api_key
-        else:
-            headers.update({
-                "Authorization": f"Bearer {token}",
-                "anthropic-beta": "oauth-2025-04-20",
-            })
-        async with httpx.AsyncClient() as h:
-            r = await h.get(
-                "https://api.anthropic.com/v1/models",
-                params={"limit": 1000},
-                headers=headers,
-                timeout=15,
-            )
-            r.raise_for_status()
-            models = [m["id"] for m in r.json()["data"]]
-        MODELS_FILE.write_text("\n".join(models) + "\n")
-        log.info("refreshed model list (%d models)", len(models))
+        MODELS_CACHE.write_text(json.dumps(BRAINS.catalog))
+        MODELS_FILE.write_text("\n".join(BRAINS.choices()) + "\n")
+        log.info("refreshed model list (%d models)", len(BRAINS.choices()))
     except Exception as e:
-        log.warning("model list refresh failed: %s", e)
+        log.warning("model list write failed: %s", e)
+
+
+def load_models_cache() -> None:
+    """The last lists, so a restart knows the models before it's back online."""
+    try:
+        BRAINS.catalog = json.loads(MODELS_CACHE.read_text())
+    except Exception:
+        try:  # before Ken had a second brain, the list was Claude's ids alone
+            BRAINS.catalog = {"claude": [[m, m] for m in MODELS_FILE.read_text().split() if m]}
+        except Exception:
+            pass
+
+
+load_models_cache()
 
 
 # Commands shared by Telegram and the desktop chat: plain functions that return
@@ -1073,32 +1059,57 @@ def set_model(name: str) -> None:
 
 
 def active_model() -> str:
-    """The chosen model, else the newest Opus the account offers (the list is newest first)."""
-    return current_model or next((m for m in available_models() if "opus" in m), "")
+    """The chosen model, else the default brain's: the newest Opus when Claude is connected."""
+    return current_model or BRAINS.default_model()
 
 
 def available_models() -> list[str]:
-    try:
-        return [m.strip() for m in MODELS_FILE.read_text().splitlines() if m.strip()]
-    except Exception:
-        return []
+    return BRAINS.choices()
+
+
+def model_groups() -> list[dict]:
+    """The picker: each brain with its models, or a way to connect it."""
+    return [
+        {"brain": b.name, "label": b.label, "connected": b.connected(),
+         "models": [{"id": m, "name": n} for m, n in BRAINS.catalog.get(b.name, [])] if b.connected() else []}
+        for b in BRAINS.all.values()
+    ]
 
 
 async def model(arg: str = "") -> dict:
     """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
-    # The list comes from the account's own /v1/models; refresh it daily as models change.
-    stale = not MODELS_FILE.exists() or time.time() - MODELS_FILE.stat().st_mtime > 86400
+    # The lists come from each account's own model list; refresh them daily as models change.
+    stale = not MODELS_CACHE.exists() or time.time() - MODELS_CACHE.stat().st_mtime > 86400
     if stale or not available_models():
         await refresh_models_file()
     models = available_models()
     want = arg.strip().lower()
     if not want:
-        return {"reply": f"Model — current: {active_model() or 'default'}", "choices": models, "current": active_model()}
-    match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
+        return {"reply": f"Model — current: {active_model() or 'default'}", "choices": models,
+                "groups": model_groups(), "current": active_model()}
+    names = {m: n.lower() for b in BRAINS.live() for m, n in BRAINS.catalog.get(b.name, [])}
+    match = (next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
+             or next((m for m in models if want in names.get(m, "")), None))
     if not match:
         return {"reply": f"No model matching “{want}”."}
     set_model(match)
     return {"reply": f"✓ {match} — from the next task."}
+
+
+BRAIN_NAMES = {"claude": "claude", "anthropic": "claude", "codex": "codex", "chatgpt": "codex", "openai": "codex", "gpt": "codex"}
+
+
+def connect_status() -> str:
+    return "\n".join(f"{'✓' if b.connected() else '·'} {b.label}" + ("" if b.connected() else f" — /connect {b.label.lower()}")
+                     for b in BRAINS.all.values())
+
+
+async def connect(arg: str = "") -> dict:
+    """/connect chatgpt in the app opens that sign-in (the app shows it)."""
+    name = BRAIN_NAMES.get(arg.strip().lower().split(" ")[0]) if arg.strip() else None
+    if not name:
+        return {"reply": connect_status()}
+    return {"connect": name}
 
 
 async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1116,13 +1127,51 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     result = await model(" ".join(context.args or []))
+    labelled = len([g for g in result.get("groups", []) if g["models"]]) > 1  # say whose model it is
     keyboard = [
-        [InlineKeyboardButton(("👉 " if m == active_model() else "") + m, callback_data=f"model:{m}")]
-        for m in result.get("choices", [])
+        [InlineKeyboardButton(("👉 " if m["id"] == active_model() else "") + m["name"] + (f" · {g['label']}" if labelled else ""),
+                              callback_data=f"model:{m['id']}")]
+        for g in result.get("groups", []) for m in g["models"]
     ]
     await update.effective_message.reply_text(
         result["reply"], reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
     )
+
+
+async def cmd_connect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sign in from the phone: device sign-in for ChatGPT, URL + pasted code for Claude."""
+    if not authorized(update) or SETUP is None:
+        return
+    words = list(context.args or [])
+    name = BRAIN_NAMES.get(words[0].lower()) if words else None
+    if not name:
+        await update.effective_message.reply_text(connect_status())
+        return
+    brain = BRAINS.all[name]
+    try:
+        if len(words) > 1:  # /connect claude <the code from the sign-in page>
+            await SETUP.submit(words[1])
+            await update.effective_message.reply_text(f"✓ {brain.label} connected." if brain.connected() else "That didn’t work. Send /connect claude to start over.")
+            return
+        info = await SETUP.start(name, device=True)
+    except RuntimeError as e:
+        await update.effective_message.reply_text(str(e))
+        return
+    if info["paste"]:
+        await update.effective_message.reply_text(
+            f"Open {info['url']} and approve, then send me the code it shows: /connect {words[0].lower()} <code>")
+        return
+    await update.effective_message.reply_text(
+        f"Open {info['url']} and enter this code: {info['code']}\nI’ll tell you when it’s connected.")
+
+    async def report() -> None:
+        while SETUP.pending:  # done once its models are in
+            await asyncio.sleep(2)
+        await update.effective_message.reply_text(
+            f"✓ {brain.label} connected. /model to pick one of its models." if brain.connected()
+            else f"{brain.label} sign-in didn’t finish. Send /connect {words[0].lower()} to try again.")
+
+    asyncio.create_task(report())
 
 
 async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1139,6 +1188,7 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 COMMANDS = {
     "model": model,
+    "connect": connect,
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
     "awake": lambda arg="": {"awake": is_awake()},
@@ -1246,7 +1296,7 @@ class Phone:
     async def start(self, token: str) -> None:
         app = Application.builder().token(token).concurrent_updates(True).build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
+                         ("connect", cmd_connect), ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
@@ -1265,6 +1315,7 @@ class Phone:
                 ("stop", "Kill the current task"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
+                ("connect", "Connect Claude or ChatGPT"),
             ])
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)

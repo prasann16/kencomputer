@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-import onboarding
+from brains import Brains, ClaudeBrain
 from onboarding import Onboarding
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the sign-in helper is for the Mac app")
@@ -18,8 +18,13 @@ def fake_cli(tmp_path, monkeypatch, script: str):
     cli = tmp_path / "claude"
     cli.write_text("#!/bin/sh\n" + script)
     cli.chmod(0o755)
-    monkeypatch.setattr(onboarding, "claude_cli", lambda: str(cli))
+    monkeypatch.setattr(ClaudeBrain, "cli", staticmethod(lambda: str(cli)))
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+
+class Claude(ClaudeBrain):
+    def connected(self):  # only the token this test saves, not this machine's own sign-in
+        return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
 
 
 def make(tmp_path):
@@ -28,24 +33,29 @@ def make(tmp_path):
     async def on_connected():
         calls.append(1)
 
-    setup = Onboarding(tmp_path, lambda: bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")), on_connected, lambda: True)
+    setup = Onboarding(tmp_path, Brains([Claude()]), on_connected, lambda: True)
     return setup, calls
+
+
+def claude(status) -> bool:
+    return next(b["connected"] for b in status["brains"] if b["name"] == "claude")
 
 
 async def test_browser_finishes_sign_in_without_a_code(tmp_path, monkeypatch):
     # Approving in the browser hands the sign-in back to the CLI, which prints the token and exits.
     fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 0.5\necho "Your token: {TOKEN}"\n')
     setup, calls = make(tmp_path)
-    assert (await setup.start()) == {"url": URL}
+    started = await setup.start("claude")
+    assert started["url"] == URL and started["paste"]
     for _ in range(50):
-        if setup.status()["claude"]:
+        if claude(setup.status()):
             break
         await asyncio.sleep(0.1)
-    assert setup.status()["claude"]
+    assert claude(setup.status())
     assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in (tmp_path / ".env").read_text()
     assert calls == [1]
     # A paste arriving afterwards changes nothing.
-    assert (await setup.submit("late-code"))["claude"]
+    assert claude(await setup.submit("late-code"))
     assert calls == [1]
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
 
@@ -53,8 +63,8 @@ async def test_browser_finishes_sign_in_without_a_code(tmp_path, monkeypatch):
 async def test_pasted_code_still_works(tmp_path, monkeypatch):
     fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "Your token: {TOKEN}"\n')
     setup, calls = make(tmp_path)
-    await setup.start()
-    assert (await setup.submit("the-code"))["claude"]
+    await setup.start("claude")
+    assert claude(await setup.submit("the-code"))
     assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in (tmp_path / ".env").read_text()
     assert calls == [1]
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
