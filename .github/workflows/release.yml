@@ -102,15 +102,18 @@ jobs:
           [ "$fresh" = 1 ] || { echo "::error::a fresh install never answered"; exit 1; }
           [ "$updated" = 1 ] || { echo "::error::the app did not come back after updating itself"; exit 1; }
       # An update the installer can't finish must end with Ken back on screen asking for a
-      # download, never with Ken gone. Ken.app is locked in place so the installer can't
-      # replace it (the engine-inside-the-app failure of 0.1.14 is covered by the step above:
-      # the engine is running there, and without the fix the installer gives up).
+      # download, never with Ken gone. The failure is the real one from 0.1.14: an engine
+      # still running from inside Ken.app (here a spare one, with its own home and port)
+      # makes the installer refuse to replace the app.
       - run: |
           set +e
           pkill -x Ken; for i in $(seq 1 20); do pgrep -x Ken >/dev/null || break; sleep 1; done; pkill -9 -x Ken; sleep 2
           rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
+          mkdir -p "$RUNNER_TEMP/spare"
+          KEN_HOME="$RUNNER_TEMP/spare" KEN_WEB_PORT=7798 TELEGRAM_BOT_TOKEN= nohup /Applications/Ken.app/Contents/Resources/engine/ken-engine > ~/spare-engine.log 2>&1 &
+          for i in $(seq 1 30); do lsappinfo list | grep -q ken-engine && break; sleep 1; done
+          lsappinfo list | grep -q ken-engine && echo "spare engine is registered as a running app" || echo "::warning::the spare engine never registered as an app; the installer may not refuse"
           cp latest-mac.yml feed/  # the same valid build as 99.0.0 again
-          chflags uchg /Applications/Ken.app
           touch ~/.ken/desktop-data/updated
           KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app2.log 2>&1 &
           second=$!; gone=0; back=0
@@ -122,7 +125,6 @@ jobs:
             [ "$gone" = 1 ] && [ -n "$ken" ] && [ -f ~/.ken/desktop-data/update-failed ] && back=1 && echo "came back and asked for a download" && break
             sleep 10
           done
-          chflags nouchg /Applications/Ken.app
           [ "$gone" = 1 ] || { echo "::error::Ken never quit to install the update"; exit 1; }
           [ "$back" = 1 ] || { echo "::error::after a failed install, Ken did not come back and ask for a download"; exit 1; }
       - if: always()
