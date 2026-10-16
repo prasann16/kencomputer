@@ -19,3 +19,53 @@ jobs:
           uv venv -q --seed --managed-python --python 3.13 .venv
           uv pip install -q --python .venv/bin/python -r requirements.txt pytest pytest-asyncio pytest-aiohttp
           tests/check.sh
+
+  # Windows: the installer's scripts parse in the PowerShell Windows ships with, the
+  # locked versions install, the tests pass, and Ken starts in the background the way
+  # install.ps1 sets it up, answers, and stops with `ken stop`.
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"  # as winrun.py runs Ken
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Scripts parse
+        run: |
+          foreach ($f in "install.ps1", "ken.ps1") {
+            $errs = $null
+            [System.Management.Automation.PSParser]::Tokenize((Get-Content $f -Raw), [ref]$errs) | Out-Null
+            if ($errs) { $errs; exit 1 }
+          }
+      - name: Tests
+        run: |
+          uv venv -q --seed --managed-python --python 3.13 .venv
+          uv pip install -q --python .venv\Scripts\python.exe -r requirements.txt pytest pytest-asyncio pytest-aiohttp
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .venv\Scripts\python.exe -m pytest tests -q --asyncio-mode=auto
+      - name: Ken runs in the background
+        run: |
+          $env:KEN_HOME = Join-Path $env:RUNNER_TEMP "ken"
+          $app = Join-Path $env:KEN_HOME "app"
+          New-Item -ItemType Directory -Force -Path $app, "$env:KEN_HOME\work" | Out-Null
+          Get-ChildItem -Exclude .venv | Copy-Item -Recurse -Destination $app
+          uv venv -q --seed --managed-python --python 3.13 "$env:KEN_HOME\venv"
+          uv pip install -q --python "$env:KEN_HOME\venv\Scripts\python.exe" -r requirements.txt
+          Copy-Item requirements.txt "$env:KEN_HOME\requirements.installed"
+          Set-Content "$env:KEN_HOME\.env" "WORKSPACE=$env:KEN_HOME\work"
+          & "$app\ken.ps1" start
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            Start-Sleep 2
+            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7777/login -TimeoutSec 5 | Out-Null; $up = $true }
+            catch { if ($_.Exception.Response) { $up = $true } }
+          }
+          Get-Content "$env:KEN_HOME\logs\ken.log" -ErrorAction SilentlyContinue
+          if (-not $up) { "Ken never answered on 7777"; exit 1 }
+          $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*running*") { exit 1 }
+          & "$app\ken.ps1" stop
+          Start-Sleep 3
+          $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*stopped*") { exit 1 }

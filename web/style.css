@@ -230,6 +230,8 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .field textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
 .field small { font-weight: 400; color: var(--faint); font-size: 12px; }
 .mono-area { min-height: 320px !important; font-family: var(--mono) !important; font-size: 13px !important; }
+.update-failed { background: var(--ask-soft); color: var(--ask-ink); padding: 10px 16px; font-size: 14px; }
+.update-failed a { color: inherit; font-weight: 600; }
 .toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: var(--primary); color: var(--primary-ink); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 40; box-shadow: var(--shadow); }
 .offline { background: var(--ask-soft); color: var(--ask-ink); font-size: 13px; padding: 6px 16px; text-align: center; }
 

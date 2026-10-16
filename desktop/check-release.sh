@@ -24,6 +24,10 @@ VERSION="${TAG#v}"
 [ "$(uname -m)" = arm64 ] && DMG="Ken-arm64.dmg" || DMG="Ken-x64.dmg"
 echo "Checking $TAG ($DMG)"
 
+# 0. The build's own checks passed (they install it on an Apple Silicon Mac and make it update itself).
+BUILD="$(gh run list -R "$REPO" --workflow release.yml --branch "$TAG" -L 1 --json conclusion -q '.[0].conclusion')"
+[ "$BUILD" = success ] && pass "release build and its Apple Silicon update check" || { fail "release build for $TAG: $BUILD (see gh run list --workflow release.yml --branch $TAG)"; exit 1; }
+
 # 1. Download it like a browser would (quarantined), and let macOS judge it.
 gh release download "$TAG" -R "$REPO" -p "$DMG" -D "$WORK" || { fail "download $DMG"; exit 1; }
 xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$WORK/$DMG"
@@ -39,7 +43,7 @@ case "$GATEKEEPER" in *accepted*"Notarized Developer ID"*) pass "macOS accepts i
 HOME_DIR="$WORK/home"; mkdir -p "$HOME_DIR"
 # `exec` so $! is the engine itself and cleanup really stops it.
 (cd /tmp && KEN_HOME="$HOME_DIR" KEN_APP_VERSION="$VERSION" TELEGRAM_BOT_TOKEN= KEN_WEB_PORT=$PORT \
-  KEN_NODE="$APP/Contents/MacOS/Ken" \
+  KEN_NODE="$APP/Contents/Frameworks/Ken Helper.app/Contents/MacOS/Ken Helper" \
   KEN_BROWSER_MCP="$APP/Contents/Resources/browser/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js" \
   exec "$APP/Contents/Resources/engine/ken-engine" > "$WORK/engine.log" 2>&1) &
 ENGINE=$!

@@ -71,8 +71,9 @@ ken status     is it running?
 ken logs       recent activity
 ken update     pull the latest version and restart
 ken memory     edit what Ken knows about you
+ken setup      connect Telegram and Claude again
 ken config     edit settings
-ken uninstall  remove the service (keeps your data)
+ken uninstall  remove Ken (keeps your memory & settings)
 ```
 
 ## Requirements

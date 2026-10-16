@@ -1,9 +1,14 @@
 """Connect Claude: the token is saved whether the browser finishes the sign-in or the user pastes a code."""
 import asyncio
 import os
+import sys
+
+import pytest
 
 from brains import Brains, ClaudeBrain
 from onboarding import Onboarding
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the sign-in helper is for the Mac app")
 
 URL = "https://claude.com/cai/oauth/authorize?code=true&client_id=x"
 TOKEN = "sk-ant-oat01-abc_DEF-123"

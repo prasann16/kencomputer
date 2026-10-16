@@ -31,11 +31,11 @@ from brains import Brains, ClaudeBrain, CodexBrain
 from engine import HOME, Engine
 from web import WebApp
 from connections import Connections
-from onboarding import Onboarding
+from onboarding import Onboarding, drop_env, save_env
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, InvalidToken
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -48,7 +48,6 @@ from telegram.ext import (
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")  # optional: the app works without Telegram
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", str(KEN_HOME / "work")))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
@@ -121,7 +120,7 @@ INBOX_DIR = KEN_HOME / "inbox"
 MEMORY_DIR = KEN_HOME / "memory"
 SETUP_FILE = KEN_HOME / "setup.json"
 HOSTING_FILE = KEN_HOME / "hosting.md"
-SETUP_ITEMS = ("brief-time", "city", "calendar", "email")
+SETUP_ITEMS = ("brief-time", "city", "calendar", "email", "phone")
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -210,12 +209,23 @@ SYSTEM_PROMPT = (
     "included below; edit the file itself to change who you are or what you know. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
-    f"Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
+    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
+    "shows your Home chat, project chats, and Settings: Connections (Chrome, Email, Calendar), "
+    "Phone (Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
+    "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
+    "Home conversation, memory and connections as the app, not a separate assistant. The "
+    "header line of each message says where they wrote from. On their phone, keep it short "
+    "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new, "
+    "/model and /connect; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
+    "they ask how to connect something or how to use you on their phone, point them to the "
+    "exact place in Settings in one line. If SOUL.md describes your body differently (older "
+    "installs say you are only a Telegram bot), this paragraph is the truth: quietly fix SOUL.md. "
+    "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
     f"If the human asks to change which model you run on: read {MODELS_FILE} "
     f"for what's available (Claude and ChatGPT models both work, from whichever accounts are "
     f"connected), write the chosen model id as the only line of {MODEL_REQUEST}, "
     "and confirm — the switch applies from the next task. To use an account that isn't "
-    "connected yet (Claude or ChatGPT), they send /connect. "
+    "connected yet (Claude or ChatGPT), they send /connect or pick Connect in the model menu. "
     "YOUR MEMORY SYSTEM, three layers — all of it already exists and is written for you, "
     "so never offer to build memory you already have; go read it. "
     "(1) SOUL.md — your essence: who you are, who they are, standing rules. The only layer "
@@ -252,9 +262,10 @@ SYSTEM_PROMPT = (
     "and look at the file itself before answering. "
     f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
     f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their Telegram automatically and removed from the outbox; images arrive "
-    "as photos, everything else as documents. Copy, don't move, if the original matters. "
-    "Say what you're sending in your reply — the file arrives right after it. "
+    "delivered to their phone automatically when Ken on your phone is connected, and removed "
+    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
+    "move, if the original matters. Say what you're sending in your reply — the file arrives "
+    "right after it. When they wrote from the app, also say where the file is saved. "
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
@@ -280,7 +291,7 @@ SYSTEM_PROMPT = (
     "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
     "will be sent. "
     f"SETUP CHECKLIST: {SETUP_FILE} tracks the few first-run things that make you actually "
-    "useful — brief-time, city, calendar, email — each \"unset\", \"done\", or \"declined\". "
+    "useful — brief-time, city, calendar, email, phone (Ken on your phone) — each \"unset\", \"done\", or \"declined\". "
     "When one gets configured, set it to done. The first time they say no, not now, or "
     "later, set it to declined and never raise it again unless they bring it up. Unresolved "
     "items are listed below when there are any. You raise them in exactly three places: "
@@ -370,7 +381,18 @@ def load_setup() -> dict:
 
 def unresolved_setup() -> list[str]:
     data = load_setup()
+    if ALLOWED_USER_ID and os.environ.get("TELEGRAM_BOT_TOKEN"):
+        data["phone"] = "done"  # set up before this item existed, e.g. by the terminal installer
     return [k for k in SETUP_ITEMS if data.get(k, "unset") == "unset"]
+
+
+def mark_setup(item: str, value: str) -> None:
+    data = load_setup()
+    data[item] = value
+    try:
+        SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
+    except Exception as e:
+        log.warning("could not write %s: %s", SETUP_FILE, e)
 
 
 def home_city() -> str:
@@ -550,7 +572,7 @@ async def sync_identity(update: Update) -> None:
         log.warning("telegram rename failed: %s", e)
 
 
-async def self_update(app) -> None:
+async def self_update() -> None:
     """Pull-based updates: check the repo hourly, restart into the new version.
 
     requirements.txt pins exact versions, so new parts (a newer Claude Code) arrive
@@ -578,7 +600,7 @@ async def self_update(app) -> None:
                     log.info("update available but a task is running — waiting")
                 else:
                     log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
-                    pip = KEN_HOME / "venv" / "bin" / "pip"
+                    pip = KEN_HOME / "venv" / "bin" / "pip"  # on Windows, winrun.py installs them
                     if pip.exists():
                         p = await asyncio.create_subprocess_exec(
                             str(pip), "install", "-q", "-r", str(app_dir / "requirements.txt"),
@@ -669,11 +691,19 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    uid = update.effective_user.id
+    if update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or ""):
+        await update.effective_message.reply_text(
+            "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
+            "Text me or send a voice note anytime."
+        )
+        if not BORN_FLAG.exists():
+            await handle_prompt(update, "(The human just connected their phone — your very first contact. Begin.)")
+        return
     if not authorized(update):
         await update.effective_message.reply_text(
-            f"Not authorized. (Your Telegram user id is {uid} — put it in "
-            f"{KEN_HOME / '.env'} as ALLOWED_USER_ID if this is your bot.)"
+            "This Ken belongs to someone else." if ALLOWED_USER_ID else
+            "Almost there. On the computer Ken runs on, open Ken → Settings → Phone, "
+            "then tap Start here again."
         )
         return
     if not BORN_FLAG.exists():
@@ -718,7 +748,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def send_outbound(bot, text: str) -> None:
-    if bot is None:
+    if bot is None or not ALLOWED_USER_ID:
         return
     for chunk in split_chunks(text.strip() or "…"):
         try:
@@ -727,12 +757,12 @@ async def send_outbound(bot, text: str) -> None:
             await bot.send_message(ALLOWED_USER_ID, chunk)
 
 
-async def run_outbound(app, job: dict) -> None:
+async def run_outbound(job: dict) -> None:
     """The initiative: a scheduled job hands the assistant the pen."""
     async def deliver(text: str) -> None:
-        if app:
-            await send_outbound(app.bot, text)
-            await flush_outbox(app.bot, ALLOWED_USER_ID)
+        if PHONE.bot and ALLOWED_USER_ID:
+            await send_outbound(PHONE.bot, text)
+            await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
 
     nudge = ""
     if job.get("name") == "morning-brief":
@@ -807,7 +837,7 @@ def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[di
     return list_jobs()
 
 
-async def scheduler(app) -> None:
+async def scheduler() -> None:
     while True:
         try:
             jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
@@ -836,7 +866,7 @@ async def scheduler(app) -> None:
                             prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})",
                         ))
                     else:
-                        asyncio.create_task(run_outbound(app, job))
+                        asyncio.create_task(run_outbound(job))
         except Exception as e:
             log.warning("scheduler error: %s", e)
         await asyncio.sleep(20)
@@ -876,7 +906,7 @@ async def start_engine() -> None:
     SETUP = Onboarding(KEN_HOME, BRAINS, brain_connected, voice_ready)
     if os.environ.get("KEN_WEB", "1") == "0":
         return
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, SETUP, CONNECTIONS, (list_jobs, set_job))
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, SETUP, CONNECTIONS, (list_jobs, set_job), PHONE)
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
@@ -895,6 +925,8 @@ async def notify_telegram(app) -> None:
     q = ENGINE.subscribe()
     while True:
         ev = await q.get()
+        if not ALLOWED_USER_ID:
+            continue
         try:
             if ev["type"] == "approval.created":
                 a = ev["approval"]
@@ -931,26 +963,6 @@ async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await q.message.reply_text("✓ Approved — on it." if a["status"] == "approved" else "Skipped.")
     except Exception:
         pass
-
-
-async def startup(app) -> None:
-    await start_engine()
-    asyncio.create_task(notify_telegram(app))
-    asyncio.create_task(scheduler(app))
-    asyncio.create_task(self_update(app))
-    asyncio.create_task(warmup_voice())
-    try:
-        await app.bot.set_my_commands([
-            ("coffee", "Keep this computer awake"),
-            ("decaf", "Stop keeping it awake"),
-            ("stop", "Kill the current task"),
-            ("new", "Fresh conversation (memory stays)"),
-            ("model", "See or switch the AI model"),
-            ("connect", "Connect Claude or ChatGPT"),
-        ])
-    except Exception as e:
-        log.warning("set_my_commands failed: %s", e)
-    await refresh_models_file()
 
 
 async def refresh_models_file(app=None) -> None:
@@ -1011,6 +1023,8 @@ def coffee() -> str:
     import subprocess
 
     global _coffee
+    if sys.platform != "darwin":
+        return "Keeping the computer awake only works on a Mac for now."
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     _coffee = subprocess.Popen(
@@ -1181,17 +1195,6 @@ COMMANDS = {
 }
 
 
-async def headless() -> None:
-    """No Telegram configured: run the engine, the app and the schedule on their own."""
-    await start_engine()
-    asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
-    asyncio.create_task(scheduler(None))
-    asyncio.create_task(self_update(None))
-    await refresh_models_file()
-    log.info("ken is running without Telegram — open the app with `ken open`")
-    await asyncio.Event().wait()
-
-
 def ensure_home() -> None:
     """First run without the installer (the Mac app): the same files install.sh creates."""
     import shutil
@@ -1207,33 +1210,202 @@ def ensure_home() -> None:
         shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
 
 
+ENGINE_LOCK = KEN_HOME / "engine.lock"
+
+
+def one_engine():
+    """One engine per Ken home. Two would fight over Telegram and the app's port, so a
+    second one waits here until the first stops, then takes over."""
+    lock = open(ENGINE_LOCK, "a+")
+    if os.name == "nt":
+        _lock_windows(lock)
+    else:
+        import fcntl
+
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.seek(0)
+            log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
+            fcntl.flock(lock, fcntl.LOCK_EX)
+    lock.seek(0)
+    lock.truncate()
+    lock.write(str(os.getpid()))
+    lock.flush()
+    return lock  # held open (and so locked) for the life of the engine
+
+
+def _lock_windows(lock) -> None:
+    """Windows has no flock: lock one byte well past the pid, so the pid stays readable."""
+    import msvcrt
+
+    warned = False
+    while True:
+        lock.seek(1 << 20)
+        try:
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError:
+            if not warned:
+                lock.seek(0)
+                log.warning("another Ken engine is running (pid %s); waiting for it to stop", lock.read().strip() or "?")
+                warned = True
+            time.sleep(2)
+
+
+PAIR_MINUTES = 10
+
+
+class Phone:
+    """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
+    Connected, paired and disconnected while Ken runs (Settings → Phone).
+    Pairing, like the terminal installer: the first person to tap Start on a just-connected
+    bot becomes its owner. Nobody else knows the bot exists yet."""
+
+    def __init__(self) -> None:
+        self.app: Application | None = None
+        self.username = ""
+        self.pair_until = 0.0
+        self.notify: asyncio.Task | None = None
+        self.retry: asyncio.Task | None = None
+
+    @property
+    def bot(self):
+        return self.app.bot if self.app else None
+
+    def status(self) -> dict:
+        s = {"connected": self.app is not None, "bot": self.username, "paired": bool(self.app and ALLOWED_USER_ID),
+             "owner": os.environ.get("TELEGRAM_OWNER", "")}
+        if self.app and not ALLOWED_USER_ID:
+            self.pair_until = time.time() + PAIR_MINUTES * 60  # Settings is waiting for the tap
+            s["link"] = f"https://t.me/{self.username}"
+        return s
+
+    def pair(self, user_id: int, name: str) -> bool:
+        global ALLOWED_USER_ID
+        if ALLOWED_USER_ID or time.time() > self.pair_until:
+            return False
+        ALLOWED_USER_ID = user_id
+        save_env(KEN_HOME / ".env", "ALLOWED_USER_ID", str(user_id))
+        save_env(KEN_HOME / ".env", "TELEGRAM_OWNER", name.replace("\n", " ")[:60])
+        self.pair_until = 0.0
+        mark_setup("phone", "done")
+        log.info("phone paired")
+        return True
+
+    async def start(self, token: str) -> None:
+        app = Application.builder().token(token).concurrent_updates(True).build()
+        for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
+                         ("connect", cmd_connect), ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
+            app.add_handler(CommandHandler(name, fn))
+        app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
+        app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
+        app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(allowed_updates=["message", "callback_query"])
+        self.app, self.username = app, app.bot.username
+        self.notify = asyncio.create_task(notify_telegram(app))
+        try:
+            await app.bot.set_my_commands([
+                ("coffee", "Keep this computer awake"),
+                ("decaf", "Stop keeping it awake"),
+                ("stop", "Kill the current task"),
+                ("new", "Fresh conversation (memory stays)"),
+                ("model", "See or switch the AI model"),
+                ("connect", "Connect Claude or ChatGPT"),
+            ])
+        except Exception as e:
+            log.warning("set_my_commands failed: %s", e)
+        log.info("ken is on Telegram as @%s", self.username)
+
+    def keep_starting(self, token: str) -> None:
+        """At boot the network may not be up yet: keep trying until Telegram answers."""
+        async def loop() -> None:
+            delay = 5
+            while self.app is None and os.environ.get("TELEGRAM_BOT_TOKEN") == token:
+                try:
+                    await self.start(token)
+                except InvalidToken:
+                    log.warning("Telegram rejected the bot token; reconnect it in Settings")
+                    return
+                except Exception as e:
+                    log.warning("Telegram didn't start (%s); retrying in %ds", e, delay)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 300)
+        self.retry = asyncio.create_task(loop())
+
+    async def stop(self) -> None:
+        app, self.app = self.app, None
+        for task in (self.notify, self.retry):
+            if task and task is not asyncio.current_task():
+                task.cancel()
+        self.notify = self.retry = None
+        if app:
+            try:
+                await app.updater.stop()
+                await app.stop()
+                await app.shutdown()
+            except Exception:
+                log.exception("stopping Telegram failed")
+
+    async def connect(self, token: str) -> dict:
+        """A bot token from BotFather: check it, then switch Telegram over to it."""
+        global ALLOWED_USER_ID
+        token = token.strip()
+        if not re.fullmatch(r"\d+:[A-Za-z0-9_-]{30,}", token):
+            raise ValueError("That doesn't look like the code from BotFather. It looks like 1234567890:AAH… — copy the whole thing.")
+        try:
+            async with Bot(token) as probe:
+                await probe.get_me()
+        except InvalidToken:
+            raise ValueError("Telegram didn't accept that code. Copy it again from BotFather and paste the whole thing.")
+        except Exception:
+            raise ValueError("Couldn't reach Telegram. Check your internet and try again.")
+        if token != os.environ.get("TELEGRAM_BOT_TOKEN"):
+            ALLOWED_USER_ID = 0  # a new bot: whoever pairs it next owns it
+            drop_env(KEN_HOME / ".env", "ALLOWED_USER_ID")
+            drop_env(KEN_HOME / ".env", "TELEGRAM_OWNER")
+        await self.stop()
+        save_env(KEN_HOME / ".env", "TELEGRAM_BOT_TOKEN", token)
+        await self.start(token)
+        return self.status()
+
+    async def disconnect(self) -> dict:
+        global ALLOWED_USER_ID
+        await self.stop()
+        ALLOWED_USER_ID = 0
+        self.username = ""
+        for key in ("TELEGRAM_BOT_TOKEN", "ALLOWED_USER_ID", "TELEGRAM_OWNER"):
+            drop_env(KEN_HOME / ".env", key)
+        return self.status()
+
+
+PHONE = Phone()
+
+
+async def run() -> None:
+    """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
+    await start_engine()
+    asyncio.create_task(scheduler())
+    asyncio.create_task(self_update())
+    asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
+    await refresh_models_file()
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if token:
+        PHONE.keep_starting(token)
+    else:
+        log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+    await asyncio.Event().wait()
+
+
 def main() -> None:
+    lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    if not BOT_TOKEN:
-        asyncio.run(headless())
-        return
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .concurrent_updates(True)
-        .post_init(startup)
-        .build()
-    )
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("new", cmd_new))
-    app.add_handler(CommandHandler("stop", cmd_stop))
-    app.add_handler(CommandHandler("model", cmd_model))
-    app.add_handler(CommandHandler("connect", cmd_connect))
-    app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
-    app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
-    app.add_handler(CommandHandler("coffee", cmd_coffee))
-    app.add_handler(CommandHandler("decaf", cmd_decaf))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
-    log.info("ken is polling")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

@@ -64,3 +64,66 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The draft on a real M-series Mac: a fresh install must start, and the installed app must
+  # update itself (fed a local copy of its own build as a "newer" version) and come back with
+  # its engine. A build that fails here stays a draft: check-release.sh refuses to publish it.
+  m1:
+    needs: app
+    runs-on: macos-15
+    permissions:
+      contents: write  # drafts are only visible with write access
+    steps:
+      - run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p Ken-arm64.dmg -p Ken-arm64.zip
+          hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
+          cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
+          mkdir -p feed && mv Ken-arm64.zip feed/
+          printf 'version: 99.0.0\nfiles:\n  - url: Ken-arm64.zip\n    sha512: %s\n    size: %s\npath: Ken-arm64.zip\nsha512: %s\n' \
+            "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" "$(stat -f %z feed/Ken-arm64.zip)" "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" > feed/latest-mac.yml
+          (cd feed && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          mkdir -p ~/.ken/desktop-data && touch ~/.ken/desktop-data/updated   # start hidden, as after an update: a downloaded update then installs at once
+          KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app.log 2>&1 &
+          echo "first=$!" >> "$GITHUB_ENV"
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - run: |
+          set +e; mkdir -p shots; fresh=0; updated=0
+          for i in $(seq 1 36); do
+            ken="$(pgrep -f 'MacOS/Ken$' | tr '\n' ' ')"; engine="$(pgrep -f 'engine/ken-engine$' | tr '\n' ' ')"
+            answers="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7777/)"
+            echo "== $((i*10))s ken: $ken engine: $engine installer: $(pgrep -x ShipIt | tr '\n' ' ') engine answers: $answers"
+            screencapture -x shots/$i.png
+            [ "$fresh" = 0 ] && [ "$answers" != 000 ] && fresh=1 && echo "fresh install runs"
+            pgrep -x ShipIt >/dev/null && rm -f feed/latest-mac.yml   # one update is enough
+            [ "$fresh" = 1 ] && [ -n "$ken" ] && [ "$ken" != "$first " ] && [ "$answers" != 000 ] && updated=1 && echo "updated and came back" && break
+            sleep 10
+          done
+          [ "$fresh" = 1 ] || { echo "::error::a fresh install never answered"; exit 1; }
+          [ "$updated" = 1 ] || { echo "::error::the app did not come back after updating itself"; exit 1; }
+      # A broken update (a copy whose signature no longer matches) must end with Ken back on
+      # screen asking for a download, never with Ken gone.
+      - run: |
+          set +e
+          pkill -x Ken; sleep 3
+          ditto -x -k feed/Ken-arm64.zip broken && echo tampered >> broken/Ken.app/Contents/Resources/app-update.yml
+          rm -f feed/Ken-arm64.zip && ditto -c -k --keepParent broken/Ken.app feed/Ken-arm64.zip
+          printf 'version: 99.0.0\nfiles:\n  - url: Ken-arm64.zip\n    sha512: %s\n    size: %s\npath: Ken-arm64.zip\nsha512: %s\n' \
+            "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" "$(stat -f %z feed/Ken-arm64.zip)" "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" > feed/latest-mac.yml
+          touch ~/.ken/desktop-data/updated
+          KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app2.log 2>&1 &
+          for i in $(seq 1 30); do
+            echo "== $((i*10))s ken: $(pgrep -x Ken | tr '\n' ' ') installer: $(pgrep -x ShipIt | tr '\n' ' ') note: $(cat ~/.ken/desktop-data/installing 2>/dev/null) failed: $(cat ~/.ken/desktop-data/update-failed 2>/dev/null)"
+            screencapture -x shots/broken-$i.png
+            [ -f ~/.ken/desktop-data/update-failed ] && pgrep -x Ken >/dev/null && echo "came back and asked for a download" && break
+            sleep 10
+          done
+          [ -f ~/.ken/desktop-data/update-failed ] && pgrep -x Ken >/dev/null || { echo "::error::after a broken update, Ken did not come back and ask for a download"; exit 1; }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: m1-shots, path: shots }
+      - if: always()
+        run: |
+          set +e
+          echo "===== app log"; cat ~/app.log; echo "===== app log, broken update"; cat ~/app2.log
+          for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
+          echo "===== installer logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done

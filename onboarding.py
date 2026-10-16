@@ -9,13 +9,10 @@ instead, the user pastes it.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
-import pty
 import re
 import struct
-import termios
 import time
 from pathlib import Path
 from typing import Callable
@@ -36,6 +33,13 @@ def save_env(env_file: Path, key: str, value: str) -> None:
     env_file.write_text("\n".join(lines) + "\n")
     env_file.chmod(0o600)
     os.environ[key] = value
+
+
+def drop_env(env_file: Path, key: str) -> None:
+    """Remove KEY from the .env file (and this process)."""
+    if env_file.exists():
+        env_file.write_text("".join(l + "\n" for l in env_file.read_text().splitlines() if not l.startswith(key + "=")))
+    os.environ.pop(key, None)
 
 
 class Onboarding:
@@ -87,6 +91,10 @@ class Onboarding:
         """Start a brain's sign-in CLI; it opens the browser. Returns the sign-in URL
         as a fallback, the code to type there (device sign-in), and whether the user
         pastes a code back (Claude) or it finishes by itself (Codex)."""
+        import fcntl  # Mac and Linux only, like the app that uses this
+        import pty
+        import termios
+
         brain = self.brains.all.get(name)
         login = brain.login() if brain else None
         if login is None:

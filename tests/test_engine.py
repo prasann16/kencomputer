@@ -249,3 +249,13 @@ async def test_remove_project_keeps_its_folder(engine, tmp_path):
     assert [p["id"] for p in engine.list_projects()] == []
     assert (repo / "keep.txt").read_text() == "mine"
     assert any((tmp_path / "projects/.removed").iterdir())
+
+
+async def test_ken_knows_where_a_message_came_from(engine):
+    await engine.send_message(HOME, "hi", via="telegram")
+    await engine.send_message(HOME, "hi again", via="app")
+    await engine.send_message(HOME, "", prompt="(Scheduled job)")
+    first, second, job = (a["prompt"].splitlines()[0] for a in engine.brain.asks)
+    assert "on their phone (Telegram)" in first
+    assert "in the Ken app" in second
+    assert "phone" not in job and "app" not in job

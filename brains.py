@@ -298,9 +298,10 @@ class ClaudeBrain(Brain):
         try:
             import claude_agent_sdk
 
-            bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
-            if bundled.exists():
-                return str(bundled)
+            for name in ("claude", "claude.exe"):
+                bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / name
+                if bundled.exists():
+                    return str(bundled)
         except ImportError:
             pass
         return shutil.which("claude") or "claude"

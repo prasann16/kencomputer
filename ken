@@ -47,15 +47,25 @@ case "${1:-help}" in
       echo "Ken's app is at: $URL"
       echo "From your laptop, tunnel first:  ssh -L ${PORT:-7777}:127.0.0.1:${PORT:-7777} $(whoami)@$(hostname)"
     fi ;;
+  setup)
+    # Telegram and Claude again, from the installer that's already here; it restarts Ken after.
+    [ -f "$KEN_HOME/app/install.sh" ] || { echo "Ken's installer isn't here. Run:  curl -fsSL https://kencomputer.dev/install | bash"; exit 1; }
+    [ -d "$KEN_HOME/app/.git" ] || export KEN_SOURCE_DIR="$KEN_HOME/app"
+    grep -q '^KEN_NO_AUTOUPDATE=1' "$KEN_HOME/.env" 2>/dev/null && export KEN_HOSTED=1
+    grep -q '^ANTHROPIC_API_KEY=.' "$KEN_HOME/.env" 2>/dev/null && export KEN_AUTH_MODE=api
+    KEN_SETUP=1 bash "$KEN_HOME/app/install.sh" ;;
   config) "${EDITOR:-nano}" "$KEN_HOME/.env" ;;
   memory) "${EDITOR:-nano}" "$KEN_HOME/work/SOUL.md" ;;
   uninstall)
-    read -r -p "Remove the ken service? Your memory & config in ~/.ken stay. [y/N] " a
+    read -r -p "Remove Ken from this computer? Your memory & settings in ~/.ken stay. [y/N] " a
     [ "$a" = "y" ] || exit 0
     svc stop 2>/dev/null || true
     if [ "$OS" = "Linux" ]; then systemctl --user disable ken 2>/dev/null || true; rm -f "$HOME/.config/systemd/user/ken.service"
     else rm -f "$PLIST"; fi
-    echo "✓ service removed. (rm -rf ~/.ken to delete everything)" ;;
+    rm -rf "$KEN_HOME/app" "$KEN_HOME/venv"
+    rm -f "$HOME/.local/bin/ken"
+    echo "✓ Ken removed. Your memory & settings stay in ~/.ken (rm -rf ~/.ken deletes those too)."
+    echo "  To put it back:  curl -fsSL https://kencomputer.dev/install | bash" ;;
   help|*)
     cat <<'EOF'
 ken — your AI's computer
@@ -66,9 +76,10 @@ ken — your AI's computer
   ken update     pull the latest version and restart
   ken restart    restart the service
   ken start/stop
+  ken setup      connect Telegram and Claude again
   ken config     edit settings (.env)
   ken memory     edit your assistant's soul file (identity + memory)
-  ken uninstall  remove the service (keeps your data)
+  ken uninstall  remove Ken (keeps your memory & settings)
 EOF
     ;;
 esac

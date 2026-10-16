@@ -48,7 +48,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -57,6 +57,7 @@ class WebApp:
         self.setup = setup
         self.connections = connections
         self.jobs = jobs  # (list, set): the engine's standing jobs
+        self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -192,6 +193,20 @@ class WebApp:
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
+    async def phone_status(self, request):
+        return _json(self.phone.status() if self.phone else {})
+
+    async def phone_change(self, request):
+        """Connect Ken on your phone with a BotFather token {token}, or disconnect it."""
+        if not self.phone:
+            return _json({"error": "Ken on your phone isn't available here."}, 400)
+        if request.method == "DELETE":
+            return _json(await self.phone.disconnect())
+        try:
+            return _json(await self.phone.connect(str((await self._body(request)).get("token", ""))))
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+
     async def command(self, request):
         """Run a slash command owned by the host (e.g. bot.py's /model, /coffee)."""
         b = await self._body(request)
@@ -281,7 +296,7 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app"))
         return _json({"ok": True, "message": message})
 
     async def stop(self, request):
@@ -489,6 +504,9 @@ class WebApp:
         r.add_get("/api/connections", self.connections_status)
         r.add_get("/api/jobs", self.jobs_list)
         r.add_patch("/api/jobs/{name}", self.jobs_change)
+        r.add_get("/api/phone", self.phone_status)
+        r.add_post("/api/phone", self.phone_change)
+        r.add_delete("/api/phone", self.phone_change)
         r.add_post("/api/connections/{kind}", self.connections_change)
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)

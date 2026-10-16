@@ -1,0 +1,41 @@
+# Runs a Ken for Mac release on a real M-series Mac: install it, start it hidden (as it is
+# after an update), and watch it for six minutes. Give it an older release to watch that
+# release update itself to the newest one. Actions → M1 check → Run workflow.
+name: M1 check
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release tag to install (empty = the newest)"
+        default: ""
+jobs:
+  m1:
+    runs-on: macos-15
+    permissions: { contents: write }  # also lets it install a draft release
+    steps:
+      - run: |
+          gh release download ${{ inputs.release }} --repo ${{ github.repository }} -p Ken-arm64.dmg
+          hdiutil attach -nobrowse -quiet Ken-arm64.dmg -mountpoint /tmp/kendmg
+          cp -R /tmp/kendmg/Ken.app /Applications/ && hdiutil detach -quiet /tmp/kendmg
+          xattr -d com.apple.quarantine /Applications/Ken.app 2>/dev/null || true
+          mkdir -p ~/.ken/desktop-data && touch ~/.ken/desktop-data/updated   # start hidden: an update then installs at once
+          nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app.log 2>&1 &
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - run: |
+          set +e; mkdir -p shots
+          for i in $(seq 1 36); do
+            v=$(defaults read /Applications/Ken.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null)
+            echo "== $((i*10))s app=$v ken: $(pgrep -f 'MacOS/Ken$' | tr '\n' ' ') engine: $(pgrep -f 'engine/ken-engine$' | tr '\n' ' ') installer: $(pgrep -x ShipIt | tr '\n' ' ')"
+            screencapture -x shots/$i.png; sleep 10
+          done
+          curl -s -o /dev/null -w "engine answers: HTTP %{http_code}\n" http://127.0.0.1:7777/
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: shots, path: shots }
+      - if: always()
+        run: |
+          set +e
+          echo "===== app log"; cat ~/app.log
+          for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
+          echo "===== installer logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
+          echo "===== crash reports"; ls -t ~/Library/Logs/DiagnosticReports | head
