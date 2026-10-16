@@ -81,6 +81,7 @@ jobs:
           mkdir -p feed && mv Ken-arm64.zip feed/
           printf 'version: 99.0.0\nfiles:\n  - url: Ken-arm64.zip\n    sha512: %s\n    size: %s\npath: Ken-arm64.zip\nsha512: %s\n' \
             "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" "$(stat -f %z feed/Ken-arm64.zip)" "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" > feed/latest-mac.yml
+          cp feed/latest-mac.yml .  # kept for the failed-install check below
           (cd feed && python3 -m http.server 8765 >/dev/null 2>&1 &)
           mkdir -p ~/.ken/desktop-data && touch ~/.ken/desktop-data/updated   # start hidden, as after an update: a downloaded update then installs at once
           KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app.log 2>&1 &
@@ -95,29 +96,32 @@ jobs:
             screencapture -x shots/$i.png
             [ "$fresh" = 0 ] && [ "$answers" != 000 ] && fresh=1 && echo "fresh install runs"
             pgrep -x ShipIt >/dev/null && rm -f feed/latest-mac.yml   # one update is enough
-            [ "$fresh" = 1 ] && [ -n "$ken" ] && [ "$ken" != "$first " ] && [ "$answers" != 000 ] && updated=1 && echo "updated and came back" && break
+            [ "$fresh" = 1 ] && [ -n "$ken" ] && [ "$ken" != "$first " ] && [ "$answers" != 000 ] && [ ! -f ~/.ken/desktop-data/update-failed ] && updated=1 && echo "updated and came back" && break
             sleep 10
           done
           [ "$fresh" = 1 ] || { echo "::error::a fresh install never answered"; exit 1; }
           [ "$updated" = 1 ] || { echo "::error::the app did not come back after updating itself"; exit 1; }
-      # A broken update (a copy whose signature no longer matches) must end with Ken back on
-      # screen asking for a download, never with Ken gone.
+      # An update the installer can't finish must end with Ken back on screen asking for a
+      # download, never with Ken gone. The failure here is the real one from 0.1.14: something
+      # still running from inside Ken.app while the installer tries to replace it.
       - run: |
           set +e
-          pkill -x Ken; sleep 3
-          ditto -x -k feed/Ken-arm64.zip broken && echo tampered >> broken/Ken.app/Contents/Resources/app-update.yml
-          rm -f feed/Ken-arm64.zip && ditto -c -k --keepParent broken/Ken.app feed/Ken-arm64.zip
-          printf 'version: 99.0.0\nfiles:\n  - url: Ken-arm64.zip\n    sha512: %s\n    size: %s\npath: Ken-arm64.zip\nsha512: %s\n' \
-            "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" "$(stat -f %z feed/Ken-arm64.zip)" "$(openssl dgst -sha512 -binary feed/Ken-arm64.zip | base64)" > feed/latest-mac.yml
+          pkill -x Ken; sleep 3; rm -f ~/.ken/desktop-data/installing ~/.ken/desktop-data/update-failed
+          ELECTRON_RUN_AS_NODE=1 nohup "/Applications/Ken.app/Contents/Frameworks/Ken Helper.app/Contents/MacOS/Ken Helper" -e 'setInterval(()=>{},1e6)' >/dev/null 2>&1 &
+          cp latest-mac.yml feed/  # the same valid build as 99.0.0 again
           touch ~/.ken/desktop-data/updated
           KEN_UPDATE_URL=http://127.0.0.1:8765 nohup /Applications/Ken.app/Contents/MacOS/Ken > ~/app2.log 2>&1 &
-          for i in $(seq 1 30); do
-            echo "== $((i*10))s ken: $(pgrep -x Ken | tr '\n' ' ') installer: $(pgrep -x ShipIt | tr '\n' ' ') note: $(cat ~/.ken/desktop-data/installing 2>/dev/null) failed: $(cat ~/.ken/desktop-data/update-failed 2>/dev/null)"
-            screencapture -x shots/broken-$i.png
-            [ -f ~/.ken/desktop-data/update-failed ] && pgrep -x Ken >/dev/null && echo "came back and asked for a download" && break
+          second=$!; gone=0; back=0
+          for i in $(seq 1 36); do
+            ken="$(pgrep -x Ken | tr '\n' ' ')"
+            echo "== $((i*10))s ken: $ken installer: $(pgrep -x ShipIt | tr '\n' ' ') failed: $(cat ~/.ken/desktop-data/update-failed 2>/dev/null)"
+            screencapture -x shots/failed-$i.png
+            [ "$gone" = 0 ] && [ -z "$ken" ] && gone=1 && echo "quit to install, installer could not finish"
+            [ "$gone" = 1 ] && [ -n "$ken" ] && [ -f ~/.ken/desktop-data/update-failed ] && back=1 && echo "came back and asked for a download" && break
             sleep 10
           done
-          [ -f ~/.ken/desktop-data/update-failed ] && pgrep -x Ken >/dev/null || { echo "::error::after a broken update, Ken did not come back and ask for a download"; exit 1; }
+          [ "$gone" = 1 ] || { echo "::error::Ken never quit to install the update"; exit 1; }
+          [ "$back" = 1 ] || { echo "::error::after a failed install, Ken did not come back and ask for a download"; exit 1; }
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: m1-shots, path: shots }
