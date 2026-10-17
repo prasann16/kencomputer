@@ -2,7 +2,7 @@
 // the engine, Telegram, voice and schedules; this app only shows its chat.
 const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences } = require('electron');
 const { execFile } = require('node:child_process');
-const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync } = require('node:fs');
+const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
@@ -141,10 +141,14 @@ function watchEngine() {
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
 let updateReady = false, updateVersion = '', manualCheck = false;
 // If an update doesn't install, Ken must come back and say so rather than vanish and retry
-// forever: a note names the version being installed, a timer reopens Ken if the installer
-// didn't, and the next start sees the old version still running and tells the user to
-// download the new one (nothing can fix an app whose updater is broken but a fresh download).
+// forever: a note records the version being installed and which Ken.app was on disk, a
+// timer reopens Ken if the installer didn't, and the next start that finds the note with
+// the same Ken.app still on disk tells the user to download the new version (nothing can
+// fix an app whose updater is broken but a fresh download).
 const installingNote = path.join(home, 'desktop-data', 'installing');
+const bundlePath = path.resolve(process.execPath, '..', '..', '..');
+// Which Ken.app is on disk: a replaced bundle is a different directory (or a rewritten Info.plist).
+const bundleStamp = () => { try { const b = statSync(bundlePath), p = statSync(path.join(bundlePath, 'Contents', 'Info.plist')); return `${b.ino}:${p.ino}:${p.mtimeMs}`; } catch { return ''; } };
 let updateFailed = '';
 const downloadUrl = `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
 const failedState = () => updateFailed ? { state: 'failed', version: updateFailed, url: downloadUrl } : null;
@@ -166,9 +170,8 @@ async function stopService() {
 async function restartIntoUpdate(quiet) {
   if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
-  writeFileSync(installingNote, updateVersion);
-  const bundle = path.resolve(process.execPath, '..', '..', '..');
-  require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 120; pgrep -x Ken >/dev/null || open "$0"', bundle], { detached: true, stdio: 'ignore' }).unref();
+  writeFileSync(installingNote, `${updateVersion}\n${bundleStamp()}`);
+  require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 120; pgrep -x Ken >/dev/null || open "$0"', bundlePath], { detached: true, stdio: 'ignore' }).unref();
   await stopService();
   require('electron-updater').autoUpdater.quitAndInstall(true, true);
 }
@@ -218,8 +221,10 @@ async function start() {
   win.on('hide', installIfIdle);
   const updated = existsSync(quietRelaunch);
   if (updated) rmSync(quietRelaunch);
-  try { updateFailed = readFileSync(installingNote, 'utf8').trim(); rmSync(installingNote); } catch {}
-  if (updateFailed === app.getVersion()) updateFailed = '';  // it installed
+  try {
+    const [version, stamp] = readFileSync(installingNote, 'utf8').split('\n'); rmSync(installingNote);
+    if (stamp === bundleStamp()) updateFailed = version;  // Ken.app wasn't replaced: the install failed
+  } catch {}
   // A marker for the release check (and anyone debugging): this start follows a failed update.
   const failedMarker = path.join(home, 'desktop-data', 'update-failed');
   if (updateFailed) writeFileSync(failedMarker, updateFailed); else rmSync(failedMarker, { force: true });
@@ -310,6 +315,9 @@ function buildMenus() {
   if (tray) tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
 }
 
+// Closing the window only hides Ken, but a quit asked for by macOS (log out, shut down),
+// a signal or the Quit menu must go through, not be cancelled by that.
+app.on('before-quit', () => { quitting = true; });
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', show);
