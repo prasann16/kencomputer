@@ -414,6 +414,10 @@ class Engine:
             "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "
             f"from the next message). Now: {', '.join(tools['use']) or 'no built-ins'}; extra servers: {extra}.\n"
             f"- files/: what they drop into this chat.\n"
+            f"- Keys: {self._keys_line(pid)} They add keys in this agent's Keys (the ⋯ menu next to its name). When you "
+            "need a login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole "
+            "file like a service-account JSON. Never ask for a secret in this chat, never print one, never copy one "
+            "anywhere else.\n"
             f"You work in {p['workdir']}.\n"
             f"Fine to do on your own: {'; '.join(auto['alone']) or 'nothing'}. Ask first: {'; '.join(auto['ask']) or 'nothing'} "
             f"(rules in {d / 'autonomy.json'}). To ask, or to hand long work to the background, write JSON into {r}/: "
@@ -422,6 +426,19 @@ class Engine:
             + (f"\n{self.tools_prompt(set(tools['use']))}\n" if self.tools_prompt(set(tools["use"])) else "")
             + f"\n=== CONTEXT.md ===\n{self.get_context(pid).strip()}"
         )
+
+    def _keys_line(self, pid: str) -> str:
+        keys = self.list_keys(pid)
+        values = [k["name"] for k in keys if k["kind"] == "value"]
+        files = [k["name"] for k in keys if k["kind"] == "file"]
+        if not keys:
+            return "none yet."
+        line = ""
+        if values:
+            line += "environment variables " + ", ".join(f"${v}" for v in values) + " (use them in commands; the value is never shown to you here). "
+        if files:
+            line += "files " + ", ".join(str(self.keys_dir(pid) / "files" / f) for f in files) + ". "
+        return line
 
     def chief_brief(self) -> str:
         """What Ken, as chief of staff, knows about every agent."""
@@ -475,11 +492,98 @@ class Engine:
         cfg = self.tools_config(pid)
         return {**self.tools(set(cfg["use"])), **cfg["mcp"]}
 
-    def _tools_stamp(self, pid: str) -> float:
+    def _tools_stamp(self, pid: str) -> tuple:
+        """Changes when its tools or keys do, so an open chat reopens with them."""
+        out = []
+        for f in (self._adir(pid) / "tools.json", self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
+            try:
+                out.append(f.stat().st_mtime)
+            except OSError:
+                out.append(0.0)
+        return tuple(out)
+
+    # --------------------------------------------------------------------- keys
+    # An agent's secrets live outside its folder, in ~/.ken/credentials/agents/<id>/ (only you
+    # can read them): values in keys.json, whole files in files/. The agent gets the values as
+    # environment variables and the files as paths; it never sees a value in its prompt, and
+    # any value it writes is masked before it reaches a screen.
+
+    def keys_dir(self, pid: str) -> Path:
+        self._adir(pid)
+        return self.home / "credentials" / "agents" / pid
+
+    def _key_values(self, pid: str) -> dict:
         try:
-            return (self._adir(pid) / "tools.json").stat().st_mtime
-        except (OSError, KeyError):
-            return 0.0
+            data = json.loads((self.keys_dir(pid) / "keys.json").read_text())
+            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except (OSError, ValueError, KeyError):
+            return {}
+
+    def _private_dir(self, d: Path) -> Path:
+        d.mkdir(parents=True, exist_ok=True)
+        for p in (self.home / "credentials", self.home / "credentials" / "agents", d.parent, d):
+            if p.is_relative_to(self.home / "credentials"):
+                os.chmod(p, 0o700)
+        return d
+
+    def _write_private(self, path: Path, data: bytes) -> None:
+        tmp = path.with_name(path.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        tmp.replace(path)
+
+    def list_keys(self, pid: str) -> list[dict]:
+        files = self.keys_dir(pid) / "files"
+        out = [{"name": k, "kind": "value"} for k in sorted(self._key_values(pid))]
+        if files.is_dir():
+            out += [{"name": f.name, "kind": "file"} for f in sorted(files.iterdir()) if f.is_file() and not f.name.endswith(".tmp")]
+        return out
+
+    def set_key(self, pid: str, name: str, value: str) -> list[dict]:
+        name = re.sub(r"[^A-Z0-9_]", "_", name.strip().upper())
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", name):
+            raise ValueError("Give it a name like STRIPE_KEY.")
+        if not value.strip():
+            raise ValueError("Paste the key's value.")
+        values = {**self._key_values(pid), name: value.strip()}
+        d = self._private_dir(self.keys_dir(pid))
+        self._write_private(d / "keys.json", json.dumps(values, indent=1).encode())
+        self.emit("project.updated", project=pid)
+        return self.list_keys(pid)
+
+    def set_key_file(self, pid: str, filename: str, data: bytes) -> list[dict]:
+        name = safe_filename(filename)
+        if not name:
+            raise ValueError("That file needs a name.")
+        d = self._private_dir(self.keys_dir(pid) / "files")
+        self._write_private(d / name, data)
+        os.utime(d)  # the folder's time is how an open chat notices
+        self.emit("project.updated", project=pid)
+        return self.list_keys(pid)
+
+    def remove_key(self, pid: str, name: str) -> list[dict]:
+        values = self._key_values(pid)
+        if name in values:
+            values.pop(name)
+            self._write_private(self.keys_dir(pid) / "keys.json", json.dumps(values, indent=1).encode())
+        else:
+            f = self.keys_dir(pid) / "files" / safe_filename(name)
+            if not safe_filename(name) or not f.is_file():
+                raise KeyError(name)
+            f.unlink()
+            os.utime(f.parent)
+        self.emit("project.updated", project=pid)
+        return self.list_keys(pid)
+
+    def mask(self, pid: str, text: str) -> str:
+        """Hide any of the agent's key values it wrote, before the text is shown or stored."""
+        if pid == HOME or not text:
+            return text
+        for v in self._key_values(pid).values():
+            if len(v) >= 6:
+                text = text.replace(v, "••••••")
+        return text
 
     async def _git(self, workdir: Path) -> str:
         if not (workdir / ".git").exists():
@@ -532,6 +636,7 @@ class Engine:
                     resume=self.kv_get(f"session:{pid}"),
                     model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
                     mcp_fn=lambda: self.agent_tools(pid),
+                    env_fn=lambda: self._key_values(pid),
                 )
             self.chats[pid] = s
         return s
@@ -584,17 +689,18 @@ class Engine:
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
                     return
+                t = self.mask(pid, t)
                 if not quiet:
                     self.log_message(pid, "ken", t)
                 if listener is not None:
                     await listener(t)
 
             async def on_tool(line: str) -> None:
-                self.broadcast("chat.tool", pid, text=line)
+                self.broadcast("chat.tool", pid, text=self.mask(pid, line))
 
             async def on_delta(t: str) -> None:
                 if not quiet:
-                    self.broadcast("chat.delta", pid, text=t)
+                    self.broadcast("chat.delta", pid, text=self.mask(pid, t))
 
             try:
                 await asyncio.wait_for(session.ask(body, on_text, on_tool, on_delta), timeout=1800)
@@ -633,7 +739,7 @@ class Engine:
             "into a clear brief of your job, goal and rules. If the job has a rhythm, put jobs in jobs.json. Write "
             "tools.json with only the built-in tools you need, plus any MCP server that would help. Then tell them in "
             "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
-            "key, a link), one thing at a time. Never ask them to paste secrets into this chat; say where to put them.)"
+            "key, a link), one thing at a time. Keys go in this agent's Keys (the ⋯ menu next to its name), never in this chat.)"
         ))
 
     async def files_dropped(self, pid: str, names: list[str]) -> None:
@@ -775,24 +881,27 @@ class Engine:
                 "don't ask questions. End with 1-3 lines on what happened, with links.",
                 model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
                 mcp_fn=lambda: self.agent_tools(pid),
+                env_fn=lambda: self._key_values(pid),
             )
             self.run_sessions[rid] = session
             last = ""
 
             async def on_text(text: str) -> None:
                 nonlocal last
+                text = self.mask(pid, text)
                 last = text
                 self._set_run(rid, activity=text.strip().splitlines()[0][:140])
                 self.emit("run.text", project=pid, run=rid, text=text)
 
             async def on_tool(line: str) -> None:
+                line = self.mask(pid, line)
                 self._set_run(rid, activity=line)
                 self.emit("run.tool", project=pid, run=rid, text=line)
 
             status, summary = "failed", ""
             try:
                 final = await asyncio.wait_for(session.ask(run["prompt"], on_text, on_tool), timeout=3600)
-                status, summary = "done", (final or last or "Finished.").strip()
+                status, summary = "done", self.mask(pid, (final or last or "Finished.").strip())
             except asyncio.CancelledError:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:

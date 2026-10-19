@@ -387,6 +387,26 @@ class WebApp:
         self.engine.set_context(pid, str((await self._body(request)).get("text", "")))
         return _json({"ok": True})
 
+    async def keys(self, request):
+        return _json(self.engine.list_keys(self._agent(request)))
+
+    async def put_key(self, request):
+        """A named value ({value}), or a whole file sent as the raw body (?file=1)."""
+        pid = self._agent(request)
+        try:
+            if request.query.get("file") == "1":
+                data = await request.content.read(1 << 20)
+                return _json(self.engine.set_key_file(pid, request.match_info["name"], data))
+            return _json(self.engine.set_key(pid, request.match_info["name"], str((await self._body(request)).get("value", ""))))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+
+    async def remove_key(self, request):
+        try:
+            return _json(self.engine.remove_key(self._agent(request), request.match_info["name"]))
+        except KeyError:
+            raise web.HTTPNotFound()
+
     async def put_autonomy(self, request):
         pid = self._agent(request)
         b = await self._body(request)
@@ -495,6 +515,9 @@ class WebApp:
         r.add_delete("/api/agents/{pid}", self.remove_agent)
         r.add_put("/api/agents/{pid}/context", self.put_context)
         r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
+        r.add_get("/api/agents/{pid}/keys", self.keys)
+        r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
+        r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
         r.add_get("/api/runs/{rid}", self.get_run)
         r.add_post("/api/runs/{rid}/stop", self.stop_run)

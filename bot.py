@@ -208,9 +208,6 @@ WORK_RULES = (
     "well', 'please don't hesitate to reach out'). Don't soften every sentence with "
     "'just' or 'I was wondering if' — say the thing. Don't turn two sentences into a "
     "bulleted list. Match the length and tone of what they're replying to. "
-    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
-    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
-    "chat: Telegram history and your own transcripts are plaintext. "
     f"IMAGES FROM THE HUMAN arrive in {INBOX_DIR} and you are told the path — always open "
     "and look at the file itself before answering. "
     f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
@@ -219,6 +216,13 @@ WORK_RULES = (
     "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
     "move, if the original matters. Say what you're sending in your reply — the file arrives "
     "right after it. When they wrote from the app, also say where the file is saved. "
+)
+SECRETS_RULE = (
+    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
+    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
+    "chat: Telegram history and your own transcripts are plaintext. "
+    "An agent's keys are different: they belong in that agent's Keys (the ⋯ menu next to its name in the "
+    "app), so point them there. "
 )
 
 SYSTEM_PROMPT = (
@@ -261,7 +265,7 @@ SYSTEM_PROMPT = (
     "again the same afternoon. "
     f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
     "harness. The receipts; open the file for a date when exact wording matters. "
-    + WORK_RULES +
+    + WORK_RULES + SECRETS_RULE +
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "

@@ -17,9 +17,10 @@ from engine import GREET_AFTER, HOME, Engine  # noqa: E402
 
 
 class FakeSession(Session):
-    def __init__(self, brain, cwd, system, resume, model_fn=None, mcp_fn=None):
+    def __init__(self, brain, cwd, system, resume, model_fn=None, mcp_fn=None, env_fn=None):
         self.brain, self.cwd, self.system, self.session_id = brain, cwd, system, resume
         self.model_fn = model_fn or (lambda: "")
+        self.env_fn = env_fn or (lambda: {})
         self.busy = False
         self.warmed = False
 
@@ -51,8 +52,8 @@ class FakeBrain(Brain):
     def __init__(self):
         self.asks = []
 
-    def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None):
-        return FakeSession(self, cwd, system, resume, model_fn, mcp_fn)
+    def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None, env_fn=None):
+        return FakeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
 
 
 @pytest.fixture
@@ -327,3 +328,24 @@ async def test_ken_creates_an_agent_that_sets_itself_up(engine):
     assert engine.get_agent("brand")
     ask = engine.brain.asks[0]
     assert "You were just created" in ask["prompt"] and "Grow my X following." in ask["system"]
+
+
+async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path):
+    engine.create_agent("Reader")
+    engine.create_agent("Brand")
+    first = engine._chat_session("reader")
+    engine.set_key("reader", "stripe key", "rk_live_supersecret123")
+    engine.set_key_file("reader", "firebase.json", b'{"private_key": "x"}')
+    assert engine.list_keys("reader") == [{"name": "STRIPE_KEY", "kind": "value"}, {"name": "firebase.json", "kind": "file"}]
+    store = tmp_path / "credentials/agents/reader"
+    assert oct((store / "keys.json").stat().st_mode & 0o777) == "0o600" and oct(store.stat().st_mode & 0o777) == "0o700"
+    session = engine._chat_session("reader")
+    assert session is not first and session.env_fn() == {"STRIPE_KEY": "rk_live_supersecret123"}
+    assert engine._chat_session("brand").env_fn() == {}
+    prompt = engine.system("reader")
+    assert "$STRIPE_KEY" in prompt and "firebase.json" in prompt and "supersecret" not in prompt
+    assert "$STRIPE_KEY" not in engine.system("brand")
+    assert engine.mask("reader", "key is rk_live_supersecret123.") == "key is ••••••."
+    with pytest.raises(ValueError):
+        engine.set_key("reader", "1BAD", "x")
+    assert engine.remove_key("reader", "STRIPE_KEY") == [{"name": "firebase.json", "kind": "file"}]

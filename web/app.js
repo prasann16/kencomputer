@@ -644,6 +644,29 @@ function RenameProject({ project, onClose, onDone }) {
   <//>`;
 }
 
+// An agent's keys: named values it gets as environment variables, and whole files (a service-account
+// JSON). Stored outside its folder where only you can read them; values are never shown again.
+function AgentKeys({ project, onClose }) {
+  const [keys, setKeys] = useState(null), [name, setName] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const base = `/api/agents/${project.id}/keys`;
+  useEffect(() => { api(base).then(setKeys).catch((e) => setError(e.message)); }, []);
+  const act = async (fn) => { setBusy(true); setError(''); try { setKeys(await fn()); return true; } catch (e) { setError(e.message); return false; } finally { setBusy(false); } };
+  const add = async () => { if (await act(() => api(`${base}/${encodeURIComponent(name.trim())}`, { method: 'PUT', json: { value } }))) { setName(''); setValue(''); } };
+  const addFile = (file) => file && act(() => api(`${base}/${encodeURIComponent(file.name)}?file=1`, { method: 'PUT', body: file }));
+  const remove = (k) => act(() => api(`${base}/${encodeURIComponent(k.name)}`, { method: 'DELETE' }));
+  return html`<${Modal} title=${`${project.name}’s keys`} onClose=${onClose}>
+    <p class="np-help">Logins and API keys this agent can use. Only this agent gets them, they’re saved where only you can read them, and Ken hides them if they ever show up in a chat.</p>
+    ${keys && keys.map((k) => html`<div class="key-row"><code>${k.kind === 'file' ? k.name : '$' + k.name}</code><span>${k.kind === 'file' ? 'file' : '••••••'}</span><button class="text-action" disabled=${busy} onClick=${() => remove(k)}>Remove</button></div>`)}
+    ${keys && !keys.length && html`<p class="np-note">No keys yet.</p>`}
+    <div class="key-add"><input class="np-input" placeholder="STRIPE_KEY" value=${name} onInput=${(e) => setName(e.target.value.toUpperCase())}/>
+      <input class="np-input" type="password" autocomplete="off" placeholder="Paste the value" value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && name.trim() && value && !busy && add()}/>
+      <button class="btn primary" disabled=${busy || !name.trim() || !value} onClick=${add}>Add</button></div>
+    <label class="text-action key-file">Add a file (like a service-account JSON)…<input type="file" hidden onChange=${(e) => { addFile(e.target.files[0]); e.target.value = ''; }}/></label>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Done</button></div>
+  <//>`;
+}
+
 function RemoveProject({ project, onClose, onDone }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const remove = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'DELETE' }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
@@ -706,8 +729,9 @@ function App() {
   const projectMenu=async(e,id)=>{
     const native=window.kenDesktop; if(!native?.popupMenu)return;
     const project=chats.find((c)=>c.id===id); if(!project)return;
-    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'rename',label:'Rename…'},{id:'folder',label:'Change folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'keys',label:'Keys…'},{id:'rename',label:'Rename…'},{id:'folder',label:'Change folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
     if(choice==='open'){ const v=await api(`/api/agents/${id}`); native.openFolder(v.agent.workdir); }
+    if(choice==='keys')setProjectDialog({kind:'keys',project});
     if(choice==='rename')setProjectDialog({kind:'rename',project});
     if(choice==='remove')setProjectDialog({kind:'remove',project});
     if(choice==='folder'){ const path=await native.pickFolder(); if(!path)return;
@@ -919,6 +943,7 @@ function App() {
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${connections && html`<${Connections} toast=${toast} onClose=${()=>setConnections(false)}/>`}
+    ${projectDialog?.kind==='keys' && html`<${AgentKeys} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
     ${newProject && html`<${NewAgent} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/>`}
