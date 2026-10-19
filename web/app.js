@@ -469,6 +469,7 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   ].sort((a, b) => a.t - b.t);
   // Opening a chat shows the latest messages. After you send, your question moves to the
   // top and Ken's answer grows below it; the view never chases the end of a long answer.
+  // When the thread still has room at the bottom, nothing moves at all.
   const pin = useRef(null), spacer = useRef(null);
   const lastMine = () => [...timeline].reverse().find((item) => item.mine)?.key;
   const pinNext = () => { pin.current = { after: lastMine() }; };
@@ -478,6 +479,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
     if (pin.current && !pin.current.key && lastMine() !== pin.current.after) pin.current = { key: lastMine() };
     const el = pin.current?.key && box.querySelector(`[data-key="${CSS.escape(pin.current.key)}"]`);
     if (!el) { if (following.current) box.scrollTop = box.scrollHeight; return; }
+    if (!pin.current.placed) pin.current.still = box.scrollHeight - spacer.current.offsetHeight <= box.clientHeight;
+    if (pin.current.still) { pin.current.placed = true; spacer.current.style.height = '0px'; return; }
     const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16;
     const below = spacer.current.getBoundingClientRect().top - el.getBoundingClientRect().top;
     spacer.current.style.height = Math.max(0, box.clientHeight - below - 56) + 'px';
