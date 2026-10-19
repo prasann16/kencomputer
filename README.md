@@ -57,10 +57,23 @@ Install the Python desktop dependencies first as described in the desktop guide.
 
 ## The app
 
-`ken open` opens Ken as an app: a chat with Ken, plus one chat per project. Same Ken, same
-memory, the same conversation you have on Telegram. A project is a folder in
-`~/.ken/projects/<id>/` with its context (`CONTEXT.md`) and whatever files you drop into
-its chat; Ken reads the context with every message and keeps it current. Drop files in and
+`ken open` opens Ken as an app: a chat with Ken, plus one chat per agent. Same Ken, same
+memory, the same conversation you have on Telegram.
+
+An agent does one job for you ("run Myreader", "grow my X following"). Click **New agent**,
+say what it should do, and it sets itself up. Each agent is a folder in `~/.ken/agents/<id>/`:
+
+```
+CONTEXT.md     who it is, its goal, its rules — read with every message
+jobs.json      its schedule (same format as ~/.ken/jobs.json)
+tools.json     what it may use: {"use": ["browser", "email", "calendar"], "mcp": {...any MCP server}}
+autonomy.json  what it does alone, what it asks you first
+memory/        its own notes
+files/         what you drop into its chat
+```
+
+An agent sees only its own folder. Ken itself is the chief of staff: it sees every agent,
+checks how they're doing, and can hand them work or create new ones. Drop files in and
 Ken looks at them straight away. It updates when Ken does, and on a phone you can add it
 to your home screen. Telegram is optional.
 

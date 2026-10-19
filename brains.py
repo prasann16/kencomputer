@@ -55,6 +55,7 @@ class Brain:
         system: str | Callable[[], str],
         resume: str | None = None,
         model_fn: Callable[[], str] | None = None,
+        mcp_fn: Callable[[], dict] | None = None,
     ) -> Session:
         raise NotImplementedError
 
@@ -76,9 +77,10 @@ def describe_tool(name: str, args: dict) -> str:
 class ClaudeSession(Session):
     """A persistent Claude Code session (Agent SDK): no per-message cold start."""
 
-    def __init__(self, brain: "ClaudeBrain", cwd: str, system, resume: str | None, model_fn=None) -> None:
+    def __init__(self, brain: "ClaudeBrain", cwd: str, system, resume: str | None, model_fn=None, mcp_fn=None) -> None:
         self.brain = brain
-        self.model_fn = model_fn or brain.model_fn  # a project may choose its own model
+        self.model_fn = model_fn or brain.model_fn  # an agent may choose its own model
+        self.mcp_fn = mcp_fn or brain.mcp_factory  # and its own tools
         self.cwd = cwd
         self.system = system
         self.session_id = resume
@@ -96,7 +98,7 @@ class ClaudeSession(Session):
             system_prompt={"type": "preset", "preset": "claude_code", "append": system},
             permission_mode=self.brain.permission_mode,
             can_use_tool=self.brain.can_use_tool,
-            mcp_servers=self.brain.mcp_factory() if self.brain.mcp_factory else {},
+            mcp_servers=self.mcp_fn() if self.mcp_fn else {},
             include_partial_messages=True,
             cwd=self.cwd,
             model=model or None,
@@ -214,5 +216,5 @@ class ClaudeBrain(Brain):
         self.can_use_tool = can_use_tool
         self.mcp_factory = mcp_factory
 
-    def session(self, *, cwd, system, resume=None, model_fn=None) -> Session:
-        return ClaudeSession(self, cwd, system, resume, model_fn)
+    def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None) -> Session:
+        return ClaudeSession(self, cwd, system, resume, model_fn, mcp_fn)

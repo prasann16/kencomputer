@@ -113,7 +113,7 @@ class WebApp:
         pid = request.match_info["pid"]
         if pid != HOME:
             try:
-                self.engine.get_project(pid)
+                self.engine.get_agent(pid)
             except KeyError:
                 raise web.HTTPNotFound(text="no such chat")
         return pid
@@ -183,12 +183,12 @@ class WebApp:
         return _json(self.jobs[0]() if self.jobs else [])
 
     async def jobs_change(self, request):
-        """Switch a standing job on or off, or move its time: {on?, time?}."""
+        """Switch a standing job on or off, or move its time: {on?, time?, agent?}."""
         if not self.jobs:
             return _json({"error": "Jobs aren't available here."}, 400)
         b = await self._body(request)
         try:
-            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time")))
+            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time"), str(b.get("agent") or "")))
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
@@ -223,7 +223,7 @@ class WebApp:
 
     async def library(self, request):
         items = []
-        for pid, name in [(HOME, "Ken"), *[(p["id"], p["name"]) for p in self.engine.list_projects()]]:
+        for pid, name in [(HOME, "Ken"), *[(p["id"], p["name"]) for p in self.engine.list_agents()]]:
             items.extend({**f, "project": pid, "project_name": name} for f in self.engine.list_files(pid))
         return _json(sorted(items, key=lambda f: -f["mtime"])[:100])
 
@@ -241,11 +241,13 @@ class WebApp:
     async def new_chat(self, request):
         b = await self._body(request)
         try:
-            p = self.engine.create_project(
+            p = self.engine.create_agent(
                 str(b.get("name", "")), str(b.get("path", "")), str(b.get("context", "")), str(b.get("blurb", ""))
             )
         except ValueError as e:
             return _json({"error": str(e)}, 400)
+        if b.get("setup"):
+            self._spawn(self.engine.setup_agent(p["id"]))  # it reads what it's for and sets itself up
         return _json(p)
 
     async def chat(self, request):
@@ -352,51 +354,51 @@ class WebApp:
             return _json({"error": str(exc)}, 409)
         return _json(self.engine.chat_view(pid))
 
-    def _project(self, request) -> str:
+    def _agent(self, request) -> str:
         pid = request.match_info["pid"]
         try:
-            self.engine.get_project(pid)
+            self.engine.get_agent(pid)
         except KeyError:
-            raise web.HTTPNotFound(text="no such project")
+            raise web.HTTPNotFound(text="no such agent")
         return pid
 
     async def today(self, request):
         return _json(self.engine.today())
 
-    async def project(self, request):
-        return _json(self.engine.project_view(self._project(request)))
+    async def agent(self, request):
+        return _json(self.engine.agent_view(self._agent(request)))
 
-    async def update_project(self, request):
+    async def update_agent(self, request):
         b = await self._body(request)
         try:
-            return _json(self.engine.update_project(self._project(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
+            return _json(self.engine.update_agent(self._agent(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
         except ValueError as e:
             return _json({"error": str(e)}, 400)
 
-    async def remove_project(self, request):
+    async def remove_agent(self, request):
         try:
-            await self.engine.remove_project(self._project(request))
+            await self.engine.remove_agent(self._agent(request))
         except ValueError as e:
             return _json({"error": str(e)}, 400)
         return _json({"ok": True})
 
     async def put_context(self, request):
-        pid = self._project(request)
+        pid = self._agent(request)
         self.engine.set_context(pid, str((await self._body(request)).get("text", "")))
         return _json({"ok": True})
 
     async def put_autonomy(self, request):
-        pid = self._project(request)
+        pid = self._agent(request)
         b = await self._body(request)
         self.engine.set_autonomy(pid, b.get("alone", []), b.get("ask", []))
         return _json(self.engine.get_autonomy(pid))
 
     async def start_run(self, request):
         b = await self._body(request)
-        pid = self.engine.find_project(str(b.get("project", "")))
+        pid = self.engine.find_agent(str(b.get("agent") or b.get("project", "")))
         prompt = str(b.get("prompt", "")).strip()
         if not pid or not prompt:
-            return _json({"error": "need a project and what to do"}, 400)
+            return _json({"error": "need an agent and what to do"}, 400)
         return _json(self.engine.start_run(pid, str(b.get("title") or prompt.splitlines()[0])[:80], prompt))
 
     async def get_run(self, request):
@@ -488,11 +490,11 @@ class WebApp:
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_get("/api/today", self.today)
-        r.add_get("/api/projects/{pid}", self.project)
-        r.add_patch("/api/projects/{pid}", self.update_project)
-        r.add_delete("/api/projects/{pid}", self.remove_project)
-        r.add_put("/api/projects/{pid}/context", self.put_context)
-        r.add_put("/api/projects/{pid}/autonomy", self.put_autonomy)
+        r.add_get("/api/agents/{pid}", self.agent)
+        r.add_patch("/api/agents/{pid}", self.update_agent)
+        r.add_delete("/api/agents/{pid}", self.remove_agent)
+        r.add_put("/api/agents/{pid}/context", self.put_context)
+        r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
         r.add_post("/api/runs", self.start_run)
         r.add_get("/api/runs/{rid}", self.get_run)
         r.add_post("/api/runs/{rid}/stop", self.stop_run)

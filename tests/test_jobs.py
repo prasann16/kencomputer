@@ -59,7 +59,7 @@ def test_settings_switch_and_move_a_job():
     import json
     import pytest
     bot.JOBS_FILE.write_text(json.dumps([{**BRIEF, "prompt": "brief"}]))
-    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True}]
+    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True, "agent": "", "agent_name": ""}]
     assert bot.set_job("morning-brief", on=False)[0]["on"] is False
     assert bot.set_job("morning-brief", at="06:30")[0]["time"] == "06:30"
     assert json.loads(bot.JOBS_FILE.read_text())[0]["prompt"] == "brief"  # the rest of the job is kept
@@ -67,3 +67,27 @@ def test_settings_switch_and_move_a_job():
         bot.set_job("morning-brief", at="7am")
     with pytest.raises(ValueError):
         bot.set_job("nope", on=True)
+
+
+def test_agent_jobs_live_with_their_agent():
+    import json
+    bot.ENGINE.create_agent("Reader Jobs")
+    bot.JOBS_FILE.write_text(json.dumps([
+        {**BRIEF, "prompt": "brief"},
+        {"name": "money", "time": "08:00", "project": "reader-jobs", "prompt": "Stripe report"},
+        {"name": "orphan", "time": "08:00", "project": "gone", "prompt": "x"},
+    ]))
+    bot.JOB_STATE_FILE.write_text(json.dumps({"money": "2026-10-05 08:00"}))
+    bot.migrate_jobs()
+    bot.migrate_jobs()  # safe to repeat
+    home = json.loads(bot.JOBS_FILE.read_text())
+    assert [j["name"] for j in home] == ["morning-brief", "orphan"]  # a job for a missing agent is kept
+    assert bot.ENGINE.agent_jobs("reader-jobs") == [{"name": "money", "time": "08:00", "prompt": "Stripe report"}]
+    money = next(j for j in bot.all_jobs() if j["name"] == "money")
+    assert bot.job_key(money) == "reader-jobs:money"
+    state = json.loads(bot.JOB_STATE_FILE.read_text())
+    assert not bot._job_due(money, at("09:00"), state)  # already ran today, before the move
+    listed = next(j for j in bot.list_jobs() if j["name"] == "money")
+    assert listed["agent_name"] == "Reader Jobs"
+    bot.set_job("money", on=False, agent="reader-jobs")
+    assert bot.ENGINE.agent_jobs("reader-jobs")[0]["on"] is False

@@ -330,9 +330,9 @@ class Connections:
 
     # --------------------------------------------------------------- tools
 
-    def prompt(self) -> str:
-        """What Ken should know about its connections, for the system prompt."""
-        data, lines = self.load(), []
+    def prompt(self, only: set | None = None) -> str:
+        """What Ken should know about its connections, for the system prompt. `only`: just these (an agent's)."""
+        data, lines = self._only(only), []
         if data.get("emails"):
             many = len(data["emails"]) > 1
             lines.append(
@@ -350,12 +350,19 @@ class Connections:
             )
         return "\n\n".join(lines)
 
-    def mcp(self) -> dict:
+    def _only(self, only: set | None) -> dict:
+        data = self.load()
+        if only is not None:
+            data = {**data, "emails": data.get("emails", []) if "email" in only else [],
+                    "calendars": data.get("calendars", []) if "calendar" in only else []}
+        return data
+
+    def mcp(self, only: set | None = None) -> dict:
         import asyncio
 
         from claude_agent_sdk import create_sdk_mcp_server, tool
 
-        data, tools = self.load(), []
+        data, tools = self._only(only), []
 
         def result(fn):
             async def run(args):

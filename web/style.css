@@ -263,3 +263,4 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
   .approval .btn { height: 44px; }
   .approval .btn.primary { flex: 1; }
 }
+.modal textarea.np-input{height:auto;padding:8px 12px;line-height:1.45;resize:vertical}

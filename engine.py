@@ -1,11 +1,12 @@
-"""The engine: Ken's conversations — one with Ken, one per project — in one
+"""The engine: Ken's conversations — one with Ken, one per agent — in one
 place that every screen (the app, Telegram) reads from.
 
-A project is a folder, ~/.ken/projects/<id>/: project.json (its name, and the
-code folder if it has one), CONTEXT.md (what the project is — Ken reads it
-with every message and keeps it current) and files/ (whatever you drop in).
-It's the same Ken with the same memory; a project chat just adds that
-project's context and works in its folder.
+An agent is a folder, ~/.ken/agents/<id>/, holding everything it knows:
+agent.json (its name, model, and code folder if it has one), CONTEXT.md (who
+it is and what it's for — read with every message), jobs.json (its schedule),
+tools.json (what it may use), autonomy.json, memory/ and files/. An agent sees
+only its own folder. Ken itself (Home) is the chief of staff: it sees every
+agent and can hand them work.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import time
 import uuid
@@ -56,6 +58,7 @@ DEFAULT_AUTONOMY = {
     "ask": ["Email customers", "Post publicly", "Merge & ship", "Spend money"],
 }
 APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
+BUILTIN_TOOLS = ("browser", "email", "calendar")
 
 
 def slugify(name: str) -> str:
@@ -69,11 +72,23 @@ def safe_filename(name: str) -> str:
     return name[:180]
 
 
+def memory_listing(folder: Path) -> str:
+    """Each note's filename and first line: enough to know what's there without opening it."""
+    lines = []
+    for p in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        try:
+            first = next((ln.strip().lstrip("#").strip() for ln in p.read_text(errors="replace").splitlines() if ln.strip()), "")
+        except OSError:
+            first = ""
+        lines.append(f"  {p.name} — {first[:120]}" if first else f"  {p.name}")
+    return "\n".join(lines) or "  (empty)"
+
+
 class Engine:
     def __init__(self, home: Path, brain: Brain) -> None:
         self.home = Path(home)
         self.brain = brain
-        self.projects_dir = self.home / "projects"
+        self.agents_dir = self.home / "agents"
         self.requests_dir = self.home / "requests"
         self.db = sqlite3.connect(self.home / "app.db", isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -82,9 +97,13 @@ class Engine:
         self.subscribers: set[asyncio.Queue] = set()
         self.chats: dict[str, object] = {}
         self.chat_locks: dict[str, asyncio.Lock] = {}
+        self.chat_tools: dict[str, float] = {}  # when each open agent chat last read its tools.json
         self.home_cwd = self.home / "work"
         self.home_system: Callable[[], str] = lambda: ""
-        self.project_base: Callable[[], str] = lambda: ""
+        self.agent_base: Callable[[], str] = lambda: ""
+        # The built-in tools ("browser", "email", "calendar") an agent may be given: MCP servers, and their prompt.
+        self.tools: Callable[[set], dict] = lambda only: {}
+        self.tools_prompt: Callable[[set], str] = lambda only: ""
         self.history_hook: Callable[[str, str], None] | None = None
         self._greeting: set[str] = set()
         self.run_tasks: dict[str, asyncio.Task] = {}
@@ -95,10 +114,14 @@ class Engine:
     def configure_home(self, cwd: Path, system: Callable[[], str], project_system: Callable[[], str] | None = None) -> None:
         self.home_cwd = Path(cwd)
         self.home_system = system
-        self.project_base = project_system or system
+        self.agent_base = project_system or system
 
     def start(self) -> None:
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.migrate()
+        except Exception as e:  # never keep Ken from starting; the next start tries again
+            log.warning("moving projects to agents failed: %s", e)
+        self.agents_dir.mkdir(parents=True, exist_ok=True)
         self.requests_dir.mkdir(parents=True, exist_ok=True)
         now = time.time()  # a restart ends whatever was running; say so instead of leaving ghosts
         self.db.execute(
@@ -106,6 +129,57 @@ class Engine:
             "WHERE status IN ('running','queued')", (now,),
         )
         self._bg.append(asyncio.create_task(self._watch_requests()))
+
+    def migrate(self) -> None:
+        """Agents used to be called projects and live in ~/.ken/projects. Move them over once,
+        safe to repeat: never overwrites, and leaves `projects` as a link so old paths still work."""
+        old = self.home / "projects"
+        moved: list[str] = []
+        if old.is_dir() and not old.is_symlink():
+            if not self.agents_dir.exists():
+                moved = [d.name for d in old.iterdir() if d.is_dir()]
+                old.rename(self.agents_dir)
+            else:
+                for d in old.iterdir():
+                    if not (self.agents_dir / d.name).exists():
+                        d.rename(self.agents_dir / d.name)
+                        moved.append(d.name)
+                try:
+                    old.rmdir()
+                except OSError:
+                    pass  # a name was taken in both; leave the rest where it is
+        if not os.path.lexists(old) and self.agents_dir.is_dir():
+            try:
+                old.symlink_to(self.agents_dir.name)
+            except OSError:
+                pass
+        if not self.agents_dir.is_dir():
+            return
+        for d in self.agents_dir.iterdir():
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            if (d / "project.json").exists() and not (d / "agent.json").exists():
+                (d / "project.json").rename(d / "agent.json")
+            (d / "memory").mkdir(exist_ok=True)
+        for name in moved:
+            self._carry_claude_sessions(os.path.realpath(self.home) + f"/projects/{name}", self.agents_dir / name)
+
+    def _carry_claude_sessions(self, old_cwd: str, new_dir: Path) -> None:
+        """Claude Code files a folder's past conversations under its path; a moved folder
+        would start over with no memory of them. Copy them to where the new path looks."""
+        try:
+            if json.loads((new_dir / "agent.json").read_text()).get("path"):
+                return  # it works in its own code folder, which didn't move
+        except (OSError, ValueError):
+            return
+        store = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+        enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))  # noqa: E731 — how Claude Code names them
+        src, dst = store / enc(old_cwd), store / enc(os.path.realpath(new_dir))
+        if src.is_dir() and not dst.exists():
+            try:
+                shutil.copytree(src, dst)
+            except OSError as e:
+                log.warning("couldn't carry Claude's history for %s: %s", new_dir.name, e)
 
     def busy(self) -> bool:
         if any(not t.done() for t in self.run_tasks.values()):
@@ -163,29 +237,35 @@ class Engine:
             self.history_hook(role, text)  # the daily transcript that nightly memory reads
         return self.emit("message", project=pid, role=role, text=text, **extra)
 
-    # ----------------------------------------------------------------- projects
+    # ------------------------------------------------------------------- agents
 
-    def _pdir(self, pid: str) -> Path:
+    def _adir(self, pid: str) -> Path:
         if pid == HOME or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", pid or ""):
             raise KeyError(pid)
-        return self.projects_dir / pid
+        return self.agents_dir / pid
 
-    def get_project(self, pid: str) -> dict:
+    def get_agent(self, pid: str) -> dict:
+        d = self._adir(pid)
         try:
-            meta = json.loads((self._pdir(pid) / "project.json").read_text())
-        except (OSError, ValueError):
+            meta = json.loads((d / "agent.json").read_text())
+        except OSError:
+            try:  # not moved over yet (see migrate)
+                meta = json.loads((d / "project.json").read_text())
+            except (OSError, ValueError):
+                raise KeyError(pid)
+        except ValueError:
             raise KeyError(pid)
         meta["id"] = pid
         meta["workdir"] = str(self.workdir(meta))
         return meta
 
-    def list_projects(self) -> list[dict]:
-        if not self.projects_dir.exists():
+    def list_agents(self) -> list[dict]:
+        if not self.agents_dir.exists():
             return []
         out = []
-        for d in self.projects_dir.iterdir():
+        for d in self.agents_dir.iterdir():
             try:
-                out.append(self.get_project(d.name))
+                out.append(self.get_agent(d.name))
             except KeyError:
                 continue
         return sorted(out, key=lambda p: p.get("created", 0))
@@ -193,47 +273,48 @@ class Engine:
     def workdir(self, meta: dict) -> Path:
         if meta.get("path"):
             return Path(os.path.expanduser(meta["path"]))
-        return self.projects_dir / meta["id"]
+        return self.agents_dir / meta["id"]
 
-    def create_project(self, name: str, path: str = "", context: str = "", blurb: str = "") -> dict:
+    def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "") -> dict:
         name = name.strip()[:60]
         if not name:
-            raise ValueError("a project needs a name")
+            raise ValueError("an agent needs a name")
         path = path.strip()
         if path and not Path(os.path.expanduser(path)).is_dir():
             raise ValueError(f"folder not found: {path}")
         base = slugify(name)
         if base == HOME:
-            base = "home-project"
+            base = "home-agent"
         pid, n = base, 2
-        while (self.projects_dir / pid).exists():
+        while (self.agents_dir / pid).exists():
             pid, n = f"{base}-{n}", n + 1
-        d = self.projects_dir / pid
+        d = self.agents_dir / pid
         (d / "files").mkdir(parents=True)
-        meta = {"name": name, "path": path, "blurb": blurb.strip()[:200], "connected": [],
-                "color": COLORS[len(self.list_projects()) % len(COLORS)], "created": time.time()}
-        (d / "project.json").write_text(json.dumps(meta, indent=1) + "\n")
+        (d / "memory").mkdir()
+        meta = {"name": name, "path": path, "blurb": blurb.strip()[:200],
+                "color": COLORS[len(self.list_agents()) % len(COLORS)], "created": time.time()}
+        (d / "agent.json").write_text(json.dumps(meta, indent=1) + "\n")
         (d / "CONTEXT.md").write_text(f"# {name}\n\n{context.strip()}\n")
         self.emit("project.created", project=pid, name=name)
-        return self.get_project(pid)
+        return self.get_agent(pid)
 
     def get_context(self, pid: str) -> str:
         try:
-            return (self._pdir(pid) / "CONTEXT.md").read_text()
+            return (self._adir(pid) / "CONTEXT.md").read_text()
         except OSError:
             return ""
 
     def set_context(self, pid: str, text: str) -> None:
-        (self._pdir(pid) / "CONTEXT.md").write_text(text.rstrip() + "\n")
+        (self._adir(pid) / "CONTEXT.md").write_text(text.rstrip() + "\n")
         self.emit("project.updated", project=pid)
 
-    def update_project(self, pid: str, **fields) -> dict:
-        meta = self.get_project(pid)
+    def update_agent(self, pid: str, **fields) -> dict:
+        meta = self.get_agent(pid)
         path = fields.get("path")
         if path and not Path(os.path.expanduser(str(path).strip())).is_dir():
             raise ValueError(f"folder not found: {path}")
         if fields.get("name") is not None and not str(fields["name"]).strip():
-            raise ValueError("a project needs a name")
+            raise ValueError("an agent needs a name")
         for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
                 meta[k] = str(fields[k]).strip()[:60 if k == "name" else 500]
@@ -241,41 +322,41 @@ class Engine:
             self.chats.pop(pid, None)  # the next message opens Claude in the new folder
         meta.pop("id", None)
         meta.pop("workdir", None)
-        (self._pdir(pid) / "project.json").write_text(json.dumps(meta, indent=1) + "\n")
+        (self._adir(pid) / "agent.json").write_text(json.dumps(meta, indent=1) + "\n")
         self.emit("project.updated", project=pid)
-        return self.get_project(pid)
+        return self.get_agent(pid)
 
-    async def remove_project(self, pid: str) -> None:
-        """Take a project off the list. Its chat and notes move to projects/.removed (recoverable);
+    async def remove_agent(self, pid: str) -> None:
+        """Take an agent off the list. Its chat and notes move to agents/.removed (recoverable);
         the folder it worked in is never touched."""
-        self.get_project(pid)
+        self.get_agent(pid)
         if self.chat_busy(pid):
-            raise ValueError("Ken is working in this project. Stop it first.")
+            raise ValueError("This agent is working. Stop it first.")
         s = self.chats.pop(pid, None)
         if s is not None:
             await s.close()
-        trash = self.projects_dir / ".removed"
+        trash = self.agents_dir / ".removed"
         trash.mkdir(exist_ok=True)
-        self._pdir(pid).rename(trash / f"{pid}-{int(time.time())}")
+        self._adir(pid).rename(trash / f"{pid}-{int(time.time())}")
         self.emit("project.removed", project=pid)
 
     def get_autonomy(self, pid: str) -> dict:
         try:
-            data = json.loads((self._pdir(pid) / "autonomy.json").read_text())
+            data = json.loads((self._adir(pid) / "autonomy.json").read_text())
             return {"alone": list(data.get("alone", [])), "ask": list(data.get("ask", []))}
         except (OSError, ValueError):
             return {k: list(v) for k, v in DEFAULT_AUTONOMY.items()}
 
     def set_autonomy(self, pid: str, alone: list, ask: list) -> None:
-        self.get_project(pid)
+        self.get_agent(pid)
         clean = lambda xs: [str(x).strip()[:60] for x in xs if str(x).strip()][:30]  # noqa: E731
-        (self._pdir(pid) / "autonomy.json").write_text(json.dumps({"alone": clean(alone), "ask": clean(ask)}, indent=1) + "\n")
+        (self._adir(pid) / "autonomy.json").write_text(json.dumps({"alone": clean(alone), "ask": clean(ask)}, indent=1) + "\n")
         self.emit("project.updated", project=pid)
 
     # -------------------------------------------------------------------- files
 
     def files_dir(self, pid: str) -> Path:
-        return self.home / "inbox" if pid == HOME else self._pdir(pid) / "files"
+        return self.home / "inbox" if pid == HOME else self._adir(pid) / "files"
 
     def list_files(self, pid: str) -> list[dict]:
         d = self.files_dir(pid)
@@ -297,7 +378,7 @@ class Engine:
     def new_file_path(self, pid: str, name: str) -> Path:
         """Where an upload lands; never overwrites, never escapes the folder."""
         if pid != HOME:
-            self.get_project(pid)
+            self.get_agent(pid)
         clean = safe_filename(name) or f"file-{time.strftime('%Y%m%d-%H%M%S')}"
         d = self.files_dir(pid)
         d.mkdir(parents=True, exist_ok=True)
@@ -310,33 +391,95 @@ class Engine:
     # ------------------------------------------------------------------ prompts
 
     def system(self, pid: str) -> str:
-        """Ken's own system prompt; a project chat adds that project's context."""
+        """Ken's own system prompt (the chief of staff); an agent gets a work prompt and only its own folder."""
         if pid == HOME:
             return self.home_system()
-        base = self.project_base()
-        p = self.get_project(pid)
-        d = self._pdir(pid)
+        p = self.get_agent(pid)
+        d = self._adir(pid)
         auto = self.get_autonomy(pid)
+        tools = self.tools_config(pid)
         r = self.requests_dir
+        extra = ", ".join(tools["mcp"]) or "none yet"
         return (
-            f"{base}\n\n=== This conversation is about the project {p['name']} ===\n"
-            f"You're working in {p['workdir']}. Its context is {d / 'CONTEXT.md'} (below) — keep it "
-            f"current as you learn things. Files dropped into this chat are in {d / 'files'}. "
-            f"List services connected for this project in the \"connected\" array of {d / 'project.json'}.\n"
+            f"{self.agent_base()}\n\n=== You are {p['name']}, one of their agents ===\n"
+            "They set you up in Ken for one job, described in CONTEXT.md below. Ken, their main assistant, "
+            "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents "
+            f"or Ken's memory: everything you know lives in your folder, {d}.\n"
+            f"- CONTEXT.md: who you are, your goal, your rules (below). Read with every message; keep it current.\n"
+            f"- memory/: your notes, one topic per file, its first line saying what it holds. Now:\n{memory_listing(d / 'memory')}\n"
+            f"- jobs.json: your schedule, a JSON array like {{\"name\": \"daily-report\", \"time\": \"08:00\", \"days\": \"daily\", \"prompt\": \"...\"}} "
+            '("days": daily, weekdays or e.g. "mon,thu"; "on": false pauses one). Each job runs here, in this chat, at '
+            "this computer's local time. Add, change or remove jobs when they ask.\n"
+            f"- tools.json: what you may use. \"use\" picks Ken's built-in tools ({', '.join(BUILTIN_TOOLS)}); "
+            "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "
+            f"from the next message). Now: {', '.join(tools['use']) or 'no built-ins'}; extra servers: {extra}.\n"
+            f"- files/: what they drop into this chat.\n"
+            f"You work in {p['workdir']}.\n"
             f"Fine to do on your own: {'; '.join(auto['alone']) or 'nothing'}. Ask first: {'; '.join(auto['ask']) or 'nothing'} "
             f"(rules in {d / 'autonomy.json'}). To ask, or to hand long work to the background, write JSON into {r}/: "
-            f'{{"type": "approval", "project": "{pid}", "kind": "email|post|merge|spend|other", "title": "...", "body": "exactly what they\'ll see", "next": "what you do once approved"}} or '
-            f'{{"type": "run", "project": "{pid}", "title": "...", "prompt": "full instructions"}}.\n\n'
-            f"{self.get_context(pid).strip()}"
+            f'{{"type": "approval", "agent": "{pid}", "kind": "email|post|merge|spend|other", "title": "...", "body": "exactly what they\'ll see", "next": "what you do once approved"}} or '
+            f'{{"type": "run", "agent": "{pid}", "title": "...", "prompt": "full instructions"}}.\n'
+            + (f"\n{self.tools_prompt(set(tools['use']))}\n" if self.tools_prompt(set(tools["use"])) else "")
+            + f"\n=== CONTEXT.md ===\n{self.get_context(pid).strip()}"
         )
 
-    def projects_line(self) -> str:
-        ps = self.list_projects()
-        if not ps:
-            return ""
-        return "Their projects (each has its own chat and context in " + str(self.projects_dir) + "): " + ", ".join(
-            f"{p['name']} ({p['workdir']})" for p in ps
-        )
+    def chief_brief(self) -> str:
+        """What Ken, as chief of staff, knows about every agent."""
+        r = self.requests_dir
+        lines = [
+            "=== Their agents: you are their chief of staff ===",
+            f"Each agent is a chat with one job and its own folder, {self.agents_dir}/<id>/ (CONTEXT.md, memory/, "
+            "jobs.json, tools.json, files/). An agent sees only its own folder; you see all of them, so open an "
+            "agent's files whenever you need the detail, and keep an eye on whether they're getting their jobs done. "
+            f'To hand an agent work in the background, write {{"type": "run", "agent": "<id>", "title": "...", "prompt": "..."}} into {r}/. '
+            'When they want a new agent, write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
+            '"path": "a code folder, if it works on one"}; it opens its own chat and sets itself up there.',
+        ]
+        running = self.list_runs(active=True)
+        for a in self.list_agents():
+            pid = a["id"]
+            about = next((ln.strip() for ln in self.get_context(pid).splitlines() if ln.strip() and not ln.startswith("#")), "")
+            jobs = [j.get("name", "?") for j in self.agent_jobs(pid)]
+            last = self._last_message_ts(pid)
+            busy = sum(1 for x in running if x["project"] == pid) + (1 if self.chat_busy(pid) else 0)
+            lines.append(
+                f"- {a['name']} ({pid}): {about[:200] or 'no context yet'}"
+                + (f" · last active {time.strftime('%a %d %b %H:%M', time.localtime(last))}" if last else " · not used yet")
+                + (f" · {busy} working now" if busy else "")
+                + (f" · jobs: {', '.join(jobs)}" if jobs else "")
+            )
+        if len(lines) == 2:
+            lines.append("They have no agents yet.")
+        return "\n".join(lines)
+
+    # -------------------------------------------------------------- jobs, tools
+
+    def agent_jobs(self, pid: str) -> list[dict]:
+        try:
+            jobs = json.loads((self._adir(pid) / "jobs.json").read_text())
+        except (OSError, ValueError, KeyError):
+            return []
+        return [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
+
+    def tools_config(self, pid: str) -> dict:
+        """An agent's tools.json. Without one it gets every built-in tool, as before agents had their own."""
+        try:
+            data = json.loads((self._adir(pid) / "tools.json").read_text())
+        except (OSError, ValueError):
+            data = {}
+        use = data.get("use", list(BUILTIN_TOOLS)) if isinstance(data, dict) else list(BUILTIN_TOOLS)
+        mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
+        return {"use": [t for t in use if t in BUILTIN_TOOLS], "mcp": mcp if isinstance(mcp, dict) else {}}
+
+    def agent_tools(self, pid: str) -> dict:
+        cfg = self.tools_config(pid)
+        return {**self.tools(set(cfg["use"])), **cfg["mcp"]}
+
+    def _tools_stamp(self, pid: str) -> float:
+        try:
+            return (self._adir(pid) / "tools.json").stat().st_mtime
+        except (OSError, KeyError):
+            return 0.0
 
     async def _git(self, workdir: Path) -> str:
         if not (workdir / ".git").exists():
@@ -366,7 +509,7 @@ class Engine:
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
             if new:
                 parts.append("new files: " + ", ".join(new[:10]))
-            git = await self._git(self.workdir(self.get_project(pid)))
+            git = await self._git(self.workdir(self.get_agent(pid)))
             if git:
                 parts.append(git)
         return "[" + " · ".join(parts) + "]"
@@ -375,10 +518,21 @@ class Engine:
 
     def _chat_session(self, pid: str):
         s = self.chats.get(pid)
+        if s is not None and pid != HOME and self.chat_tools.get(pid) != self._tools_stamp(pid) and not s.busy:
+            self.chats.pop(pid)  # its tools.json changed: reopen with the new tools
+            self._bg.append(asyncio.create_task(s.close()))
+            s = None
         if s is None:
-            cwd = self.home_cwd if pid == HOME else self.workdir(self.get_project(pid))
-            model = (lambda: self.get_project(pid).get("model") or self.brain.model_fn()) if pid != HOME else None
-            s = self.brain.session(cwd=str(cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"), model_fn=model)
+            if pid == HOME:
+                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"))
+            else:
+                self.chat_tools[pid] = self._tools_stamp(pid)
+                s = self.brain.session(
+                    cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
+                    resume=self.kv_get(f"session:{pid}"),
+                    model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
+                    mcp_fn=lambda: self.agent_tools(pid),
+                )
             self.chats[pid] = s
         return s
 
@@ -414,7 +568,7 @@ class Engine:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it)."""
         if pid != HOME:
-            self.get_project(pid)
+            self.get_agent(pid)
         files = [f for f in (files or []) if f]
         if log_user:
             self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))
@@ -462,7 +616,7 @@ class Engine:
     async def on_open(self, pid: str) -> None:
         """A chat was opened: warm up, and if it's been a while, speak first."""
         if pid != HOME:
-            self.get_project(pid)
+            self.get_agent(pid)
         await self.warm(pid)
         if self.chat_busy(pid) or pid in self._greeting or time.time() - self._last_message_ts(pid) < GREET_AFTER:
             return
@@ -471,6 +625,16 @@ class Engine:
             await self.send_message(pid, "", log_user=False, prompt="(They just opened this chat. You speak first.)")
         finally:
             self._greeting.discard(pid)
+
+    async def setup_agent(self, pid: str) -> None:
+        """A new agent's first turn: it reads what it's for and sets itself up, in its own chat."""
+        await self.send_message(pid, "", log_user=False, prompt=(
+            "(You were just created; CONTEXT.md holds what they asked for. Set yourself up now: rewrite CONTEXT.md "
+            "into a clear brief of your job, goal and rules. If the job has a rhythm, put jobs in jobs.json. Write "
+            "tools.json with only the built-in tools you need, plus any MCP server that would help. Then tell them in "
+            "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
+            "key, a link), one thing at a time. Never ask them to paste secrets into this chat; say where to put them.)"
+        ))
 
     async def files_dropped(self, pid: str, names: list[str]) -> None:
         self.log_message(pid, "you", "", files=names)
@@ -531,22 +695,23 @@ class Engine:
             f.rename(bad / f.name)
             (bad / (f.name + ".error.txt")).write_text(f"{e}\n")
 
-    def find_project(self, name: str) -> str | None:
+    def find_agent(self, name: str) -> str | None:
         want = str(name).strip().lower()
-        for p in self.list_projects():
+        for p in self.list_agents():
             if want in (p["id"], p["name"].lower(), slugify(p["name"])):
                 return p["id"]
         return None
 
     def handle_request(self, req: dict) -> None:
         kind = req.get("type")
-        if kind == "project":
-            self.create_project(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
+        if kind in ("agent", "project"):  # "project": what agents were called before
+            a = self.create_agent(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
+            self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))
             return
-        pid = str(req.get("project", ""))
+        pid = str(req.get("agent", req.get("project", "")))
         if pid != HOME:
-            pid = self.find_project(pid) or pid
-            self.get_project(pid)
+            pid = self.find_agent(pid) or pid
+            self.get_agent(pid)
         if kind == "run" and pid != HOME:
             self.start_run(pid, str(req.get("title") or "Task")[:120], str(req["prompt"]), source="agent")
         elif kind == "approval":
@@ -582,7 +747,7 @@ class Engine:
         return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
     def start_run(self, pid: str, title: str, prompt: str, source: str = "you") -> dict:
-        self.get_project(pid)
+        self.get_agent(pid)
         rid = uuid.uuid4().hex[:10]
         self.db.execute(
             "INSERT INTO runs (id, project, title, prompt, source, status, created, activity) VALUES (?,?,?,?,?,?,?,?)",
@@ -605,9 +770,11 @@ class Engine:
             self._set_run(rid, status="running", started=time.time(), activity="starting")
             self.emit("run.started", project=pid, run=rid)
             session = self.brain.session(
-                cwd=str(self.workdir(self.get_project(pid))),
+                cwd=str(self.workdir(self.get_agent(pid))),
                 system=lambda: self.system(pid) + f'\n\nBackground run: "{run["title"]}". Nobody is watching; '
                 "don't ask questions. End with 1-3 lines on what happened, with links.",
+                model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
+                mcp_fn=lambda: self.agent_tools(pid),
             )
             self.run_sessions[rid] = session
             last = ""
@@ -711,7 +878,7 @@ class Engine:
 
     def chats_list(self) -> list[dict]:
         """Ken first, then each project — like a chat app's list."""
-        rows = [(HOME, "Ken", "#1B1A17")] + [(p["id"], p["name"], p["color"]) for p in self.list_projects()]
+        rows = [(HOME, "Ken", "#1B1A17")] + [(p["id"], p["name"], p["color"]) for p in self.list_agents()]
         out = []
         for pid, name, color in rows:
             last = self.messages(pid, 1)
@@ -725,12 +892,12 @@ class Engine:
     def today(self) -> dict:
         running = self.list_runs(active=True)
         approvals = self.pending_approvals()
-        projects = self.list_projects()
+        projects = self.list_agents()
         for p in projects:
             p["running"] = sum(1 for r in running if r["project"] == p["id"]) + (1 if self.chat_busy(p["id"]) else 0)
             p["pending"] = sum(1 for a in approvals if a["project"] == p["id"])
         return {
-            "projects": projects,
+            "agents": projects,
             "approvals": approvals,
             "running": running,
             "done": self.list_runs(active=False, since=time.time() - 86400, limit=12),
@@ -738,10 +905,12 @@ class Engine:
             "home_busy": self.chat_busy(HOME),
         }
 
-    def project_view(self, pid: str) -> dict:
-        p = self.get_project(pid)
+    def agent_view(self, pid: str) -> dict:
+        p = self.get_agent(pid)
         return {
-            "project": p,
+            "agent": p,
+            "tools": self.tools_config(pid),
+            "jobs": self.agent_jobs(pid),
             "context": self.get_context(pid),
             "autonomy": self.get_autonomy(pid),
             "files": self.list_files(pid),
@@ -752,7 +921,7 @@ class Engine:
         }
 
     def chat_view(self, pid: str) -> dict:
-        name = "Ken" if pid == HOME else self.get_project(pid)["name"]
+        name = "Ken" if pid == HOME else self.get_agent(pid)["name"]
         boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}")
         messages = [m for m in self.messages(pid) if m["id"] > boundary.get("after", 0)]
         return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid),

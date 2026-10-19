@@ -1,6 +1,9 @@
 """Engine + app server tests with a fake brain (no model calls)."""
 
 import asyncio
+import json
+import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -14,7 +17,7 @@ from engine import GREET_AFTER, HOME, Engine  # noqa: E402
 
 
 class FakeSession(Session):
-    def __init__(self, brain, cwd, system, resume, model_fn=None):
+    def __init__(self, brain, cwd, system, resume, model_fn=None, mcp_fn=None):
         self.brain, self.cwd, self.system, self.session_id = brain, cwd, system, resume
         self.model_fn = model_fn or (lambda: "")
         self.busy = False
@@ -48,15 +51,15 @@ class FakeBrain(Brain):
     def __init__(self):
         self.asks = []
 
-    def session(self, *, cwd, system, resume=None, model_fn=None):
-        return FakeSession(self, cwd, system, resume, model_fn)
+    def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None):
+        return FakeSession(self, cwd, system, resume, model_fn, mcp_fn)
 
 
 @pytest.fixture
 def engine(tmp_path):
     e = Engine(tmp_path, FakeBrain())
     e.configure_home(tmp_path / "work", lambda: "KEN SOUL", lambda: "KEN AT WORK")
-    e.projects_dir.mkdir()
+    e.agents_dir.mkdir()
     e.requests_dir.mkdir()
     return e
 
@@ -69,29 +72,29 @@ async def settle(engine):
 
 
 def test_projects_are_folders(engine, tmp_path):
-    a = engine.create_project("My Reader", context="Read-it-later app.")
-    b = engine.create_project("My Reader")
+    a = engine.create_agent("My Reader", context="Read-it-later app.")
+    b = engine.create_agent("My Reader")
     assert a["id"] == "my-reader" and b["id"] == "my-reader-2"
-    assert "Read-it-later app." in (tmp_path / "projects/my-reader/CONTEXT.md").read_text()
-    assert (tmp_path / "projects/my-reader/files").is_dir()
-    assert [p["id"] for p in engine.list_projects()] == ["my-reader", "my-reader-2"]
-    assert engine.create_project("Home")["id"] == "home-project"
+    assert "Read-it-later app." in (tmp_path / "agents/my-reader/CONTEXT.md").read_text()
+    assert (tmp_path / "agents/my-reader/files").is_dir()
+    assert [p["id"] for p in engine.list_agents()] == ["my-reader", "my-reader-2"]
+    assert engine.create_agent("Home")["id"] == "home-agent"
     assert engine.get_autonomy("my-reader")["ask"]
 
 
 def test_project_folder_must_exist(engine, tmp_path):
     with pytest.raises(ValueError):
-        engine.create_project("X", path=str(tmp_path / "nope"))
+        engine.create_agent("X", path=str(tmp_path / "nope"))
     repo = tmp_path / "repo"
     repo.mkdir()
-    assert engine.create_project("Repo", path=str(repo))["workdir"] == str(repo)
+    assert engine.create_agent("Repo", path=str(repo))["workdir"] == str(repo)
 
 
 def test_bad_ids_and_paths_rejected(engine):
     for bad in ("../etc", "", "A", "a/b", HOME):
         with pytest.raises(KeyError):
-            engine.get_project(bad)
-    engine.create_project("P")
+            engine.get_agent(bad)
+    engine.create_agent("P")
     p = engine.new_file_path("p", "../../evil.txt")
     assert p.parent == engine.files_dir("p") and p.name == "evil.txt"
     p.write_text("x")
@@ -104,7 +107,7 @@ def test_bad_ids_and_paths_rejected(engine):
 async def test_project_chat_is_ken_plus_context(engine, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    engine.create_project("MyReader", path=str(repo), context="For heavy readers.")
+    engine.create_agent("MyReader", path=str(repo), context="For heavy readers.")
     events = []
     q = engine.subscribe()
     await engine.send_message("myreader", "hi")
@@ -141,7 +144,7 @@ async def test_hidden_prompts_and_quiet(engine):
 
 
 async def test_open_speaks_first_only_after_a_while(engine):
-    engine.create_project("P")
+    engine.create_agent("P")
     await engine.on_open("p")
     assert engine.chats["p"].warmed
     assert len(engine.brain.asks) == 1 and engine.messages("p")[-1]["role"] == "ken"
@@ -153,7 +156,7 @@ async def test_open_speaks_first_only_after_a_while(engine):
 
 
 async def test_dropped_files_are_the_instruction(engine):
-    engine.create_project("P")
+    engine.create_agent("P")
     f = engine.new_file_path("p", "bank.csv")
     f.write_text("a,b")
     await engine.files_dropped("p", ["bank.csv"])
@@ -164,7 +167,7 @@ async def test_dropped_files_are_the_instruction(engine):
 
 
 async def test_chat_list_and_reset(engine):
-    engine.create_project("P")
+    engine.create_agent("P")
     await engine.send_message("p", "yo")
     chats = engine.chats_list()
     assert [c["id"] for c in chats] == [HOME, "p"]
@@ -192,7 +195,7 @@ async def test_web_auth_and_chats(engine, tmp_path, aiohttp_client):
 
 
 async def test_approve_starts_work_and_result_lands_in_chat(engine):
-    engine.create_project("MyReader")
+    engine.create_agent("MyReader")
     a = engine.create_approval("myreader", "post", "Offline post", "Offline mode is here", "post to X")
     await engine.resolve_approval(a["id"], "approve", "Offline mode is HERE")
     await settle(engine)
@@ -208,7 +211,7 @@ async def test_approve_starts_work_and_result_lands_in_chat(engine):
 
 async def test_agent_requests(engine):
     import json, os
-    engine.create_project("MyReader")
+    engine.create_agent("MyReader")
     (engine.requests_dir / "a.json").write_text(json.dumps({"type": "approval", "project": "MyReader", "kind": "email", "title": "Reply", "body": "Hi"}))
     (engine.requests_dir / "b.json").write_text(json.dumps({"type": "run", "project": "myreader", "title": "Spec", "prompt": "write it"}))
     (engine.requests_dir / "c.json").write_text("{nope")
@@ -221,34 +224,34 @@ async def test_agent_requests(engine):
     assert engine.list_runs(project="myreader")[0]["title"] == "Spec"
     assert (engine.requests_dir / "rejected" / "c.json").exists()
     today = engine.today()
-    assert today["approvals"] and today["done"] and today["projects"][0]["pending"] == 1
+    assert today["approvals"] and today["done"] and today["agents"][0]["pending"] == 1
 
 
 def test_project_model_rename_and_folder(engine, tmp_path):
-    engine.create_project("Reader")
-    engine.update_project("reader", model="claude-haiku-4-5", name="My Reader")
-    p = engine.get_project("reader")
+    engine.create_agent("Reader")
+    engine.update_agent("reader", model="claude-haiku-4-5", name="My Reader")
+    p = engine.get_agent("reader")
     assert p["model"] == "claude-haiku-4-5" and p["name"] == "My Reader"
     session = engine._chat_session("reader")
     assert session.model_fn() == "claude-haiku-4-5"
     with pytest.raises(ValueError):
-        engine.update_project("reader", path=str(tmp_path / "nope"))
+        engine.update_agent("reader", path=str(tmp_path / "nope"))
     with pytest.raises(ValueError):
-        engine.update_project("reader", name="  ")
+        engine.update_agent("reader", name="  ")
     repo = tmp_path / "repo"
     repo.mkdir()
-    assert engine.update_project("reader", path=str(repo))["workdir"] == str(repo)
+    assert engine.update_agent("reader", path=str(repo))["workdir"] == str(repo)
 
 
 async def test_remove_project_keeps_its_folder(engine, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "keep.txt").write_text("mine")
-    engine.create_project("Repo", path=str(repo))
-    await engine.remove_project("repo")
-    assert [p["id"] for p in engine.list_projects()] == []
+    engine.create_agent("Repo", path=str(repo))
+    await engine.remove_agent("repo")
+    assert [p["id"] for p in engine.list_agents()] == []
     assert (repo / "keep.txt").read_text() == "mine"
-    assert any((tmp_path / "projects/.removed").iterdir())
+    assert any((tmp_path / "agents/.removed").iterdir())
 
 
 async def test_ken_knows_where_a_message_came_from(engine):
@@ -259,3 +262,68 @@ async def test_ken_knows_where_a_message_came_from(engine):
     assert "on their phone (Telegram)" in first
     assert "in the Ken app" in second
     assert "phone" not in job and "app" not in job
+
+
+def test_migrates_projects_to_agents(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    old = tmp_path / "projects" / "reader"
+    (old / "files").mkdir(parents=True)
+    (old / "project.json").write_text('{"name": "Reader", "path": ""}')
+    (old / "CONTEXT.md").write_text("# Reader")
+    enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(p))  # noqa: E731
+    history = tmp_path / "claude/projects" / enc(old)
+    history.mkdir(parents=True)
+    (history / "sess-1.jsonl").write_text("{}")
+    e = Engine(tmp_path, FakeBrain())
+    e.migrate()
+    e.migrate()  # safe to repeat
+    assert e.get_agent("reader")["name"] == "Reader"
+    assert (tmp_path / "agents/reader/agent.json").exists() and (tmp_path / "agents/reader/memory").is_dir()
+    assert (tmp_path / "projects").is_symlink() and (tmp_path / "projects/reader/CONTEXT.md").exists()
+    assert (tmp_path / "claude/projects" / enc(tmp_path / "agents/reader") / "sess-1.jsonl").exists()
+
+
+def test_migration_never_overwrites(tmp_path):
+    for where, name in (("projects/a", "Old A"), ("projects/b", "B"), ("agents/a", "New A")):
+        (tmp_path / where).mkdir(parents=True)
+        (tmp_path / where / "agent.json").write_text(json.dumps({"name": name}))
+    e = Engine(tmp_path, FakeBrain())
+    e.migrate()
+    assert e.get_agent("a")["name"] == "New A" and e.get_agent("b")["name"] == "B"
+    assert (tmp_path / "projects/a").is_dir()  # the clash stays where it was
+
+
+def test_agent_sees_only_its_folder_and_ken_sees_every_agent(engine):
+    engine.create_agent("Reader", context="Grow MyReader revenue.")
+    engine.create_agent("Brand", context="Grow my X following.")
+    (engine.agents_dir / "brand/jobs.json").write_text('[{"name": "daily-post", "time": "09:00"}]')
+    mine = engine.system("reader")
+    assert "Grow MyReader revenue." in mine and "KEN AT WORK" in mine
+    assert "Brand" not in mine and "X following" not in mine and "KEN SOUL" not in mine
+    brief = engine.chief_brief()
+    assert "Reader (reader): Grow MyReader revenue." in brief and "jobs: daily-post" in brief
+
+
+async def test_each_agent_gets_its_own_tools(engine):
+    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.create_agent("Reader")
+    assert engine.tools_config("reader")["use"] == ["browser", "email", "calendar"]  # no tools.json: everything
+    first = engine._chat_session("reader")
+    stripe = {"type": "http", "url": "https://mcp.stripe.com"}
+    (engine.agents_dir / "reader/tools.json").write_text(json.dumps({"use": ["email", "nope"], "mcp": {"stripe": stripe}}))
+    assert engine.agent_tools("reader") == {"email": {}, "stripe": stripe}
+    assert "stripe" in engine.system("reader")
+    assert engine._chat_session("reader") is not first  # reopened with the new tools
+
+
+async def test_ken_creates_an_agent_that_sets_itself_up(engine):
+    (engine.requests_dir / "a.json").write_text(json.dumps({"type": "agent", "name": "Brand", "context": "Grow my X following."}))
+    os.utime(engine.requests_dir / "a.json", (time.time() - 5,) * 2)  # finished writing
+    engine._ingest(engine.requests_dir / "a.json")
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if engine.brain.asks:
+            break
+    assert engine.get_agent("brand")
+    ask = engine.brain.asks[0]
+    assert "You were just created" in ask["prompt"] and "Grow my X following." in ask["system"]

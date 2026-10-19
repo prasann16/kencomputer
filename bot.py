@@ -195,6 +195,32 @@ def load_sessions() -> dict:
         return {}
 
 
+# How any Ken works for them, in the Home chat or as one of their agents.
+WORK_RULES = (
+    f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
+    "for connecting services (email, and more over time). When they ask to connect "
+    "something, read the matching recipe and follow it; if there is no recipe, work it out "
+    "yourself (if it has a CLI, an API, or an MCP server, you can use it) and offer to "
+    "write a new recipe afterwards so it's easy next time. "
+    "WRITING FOR THEM (email, messages, any drafted text): write like a person typed it "
+    "in two minutes, not like a template. No em dashes or spaced hyphens as punctuation — "
+    "use a period or comma. No stock openers or closers ('I hope this email finds you "
+    "well', 'please don't hesitate to reach out'). Don't soften every sentence with "
+    "'just' or 'I was wondering if' — say the thing. Don't turn two sentences into a "
+    "bulleted list. Match the length and tone of what they're replying to. "
+    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
+    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
+    "chat: Telegram history and your own transcripts are plaintext. "
+    f"IMAGES FROM THE HUMAN arrive in {INBOX_DIR} and you are told the path — always open "
+    "and look at the file itself before answering. "
+    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
+    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
+    "delivered to their phone automatically when Ken on your phone is connected, and removed "
+    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
+    "move, if the original matters. Say what you're sending in your reply — the file arrives "
+    "right after it. When they wrote from the app, also say where the file is saved. "
+)
+
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: it defines who you are "
     "(a personal assistant living on this computer), how your pipeline works, and "
@@ -203,7 +229,7 @@ SYSTEM_PROMPT = (
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
     "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
-    "shows your Home chat, project chats, and Settings: Connections (Chrome, Email, Calendar), "
+    "shows your Home chat, agent chats (one per agent they set up, each with one job), and Settings: Connections (Chrome, Email, Calendar), "
     "Phone (Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
     "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
     "Home conversation, memory and connections as the app, not a separate assistant. The "
@@ -235,28 +261,7 @@ SYSTEM_PROMPT = (
     "again the same afternoon. "
     f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
     "harness. The receipts; open the file for a date when exact wording matters. "
-    f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
-    "for connecting services (email, and more over time). When they ask to connect "
-    "something, read the matching recipe and follow it; if there is no recipe, work it out "
-    "yourself (if it has a CLI, an API, or an MCP server, you can use it) and offer to "
-    "write a new recipe afterwards so it's easy next time. "
-    "WRITING FOR THEM (email, messages, any drafted text): write like a person typed it "
-    "in two minutes, not like a template. No em dashes or spaced hyphens as punctuation — "
-    "use a period or comma. No stock openers or closers ('I hope this email finds you "
-    "well', 'please don't hesitate to reach out'). Don't soften every sentence with "
-    "'just' or 'I was wondering if' — say the thing. Don't turn two sentences into a "
-    "bulleted list. Match the length and tone of what they're replying to. "
-    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
-    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
-    "chat: Telegram history and your own transcripts are plaintext. "
-    f"IMAGES FROM THE HUMAN arrive in {INBOX_DIR} and you are told the path — always open "
-    "and look at the file itself before answering. "
-    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
-    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
-    "move, if the original matters. Say what you're sending in your reply — the file arrives "
-    "right after it. When they wrote from the app, also say where the file is saved. "
+    + WORK_RULES +
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
@@ -410,7 +415,15 @@ def ensure_setup_file() -> None:
         log.warning("could not write %s: %s", SETUP_FILE, e)
 
 
-def build_system(for_project: bool = False) -> str:
+AGENT_PROMPT = (
+    "You are one of their agents in Ken, their assistant on this computer: you do one job for them. "
+    "Your messages are delivered as you write them: before starting anything that takes a while, say one "
+    "short natural line about what you're about to do — then do it. They talk to you in the Ken app; keep "
+    "replies short and concrete, and every reply should do or advance the work. "
+) + WORK_RULES
+
+
+def build_system() -> str:
     """System prompt = harness rules + the soul file's current contents.
 
     Injected by the harness (not auto-loaded by the engine) so any future
@@ -430,18 +443,14 @@ def build_system(for_project: bool = False) -> str:
     except Exception:
         pass
     try:
-        projects = ENGINE.projects_line()
-        if projects:
-            system += "\n\n" + projects
+        system += "\n\n" + ENGINE.chief_brief()
     except Exception as e:
-        log.warning("project listing failed: %s", e)
+        log.warning("agent listing failed: %s", e)
     if browser_mcp():
         system += "\n\n" + BROWSER_PROMPT
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
-    if for_project:
-        return system  # a project chat is Ken at work: no first-run setup or awakening
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -822,25 +831,83 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
     late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
     if not 0 <= late <= CATCH_UP_HOURS * 60:
         return False
-    last = str(state.get(job.get("name", job.get("prompt", "")), ""))
+    last = str(state.get(job_key(job), ""))
     return not last.startswith(time.strftime("%Y-%m-%d", now))
 
 
-def list_jobs() -> list[dict]:
-    """The standing jobs, for the settings page: what runs on its own, and when."""
+def all_jobs() -> list[dict]:
+    """Ken's own jobs (jobs.json), then each agent's (agents/<id>/jobs.json), tagged with the agent."""
+    try:
+        jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
+    except Exception as e:
+        log.warning("couldn't read %s: %s", JOBS_FILE, e)
+        jobs = []
+    jobs = [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
+    for a in ENGINE.list_agents():
+        jobs += [{**j, "agent": a["id"]} for j in ENGINE.agent_jobs(a["id"])]
+    return jobs
+
+
+def job_key(job: dict) -> str:
+    """How the schedule remembers a job ran: an agent's job is filed under its agent too."""
+    name = job.get("name", job.get("prompt", ""))
+    return f"{job['agent']}:{name}" if job.get("agent") else name
+
+
+def migrate_jobs() -> None:
+    """Jobs for an agent used to sit in Ken's jobs.json with a "project" field; move each into
+    its agent's own jobs.json, keeping when it last ran. Safe to repeat; never drops a job."""
     try:
         jobs = json.loads(JOBS_FILE.read_text())
     except Exception:
-        return []
-    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True)}
-            for j in jobs if isinstance(j, dict) and j.get("name")]
+        return
+    if not isinstance(jobs, list):
+        return
+    keep, state = [], {}
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+    except Exception:
+        pass
+    for job in jobs:
+        pid = job.get("project") if isinstance(job, dict) else None
+        try:
+            dest = ENGINE._adir(str(pid)) / "jobs.json" if pid else None
+        except KeyError:
+            dest = None
+        if dest is None or not dest.parent.is_dir():
+            keep.append(job)
+            continue
+        theirs = ENGINE.agent_jobs(str(pid))
+        moved = {k: v for k, v in job.items() if k != "project"}
+        if not any(j.get("name") == moved.get("name") for j in theirs):
+            tmp = dest.with_suffix(".tmp")
+            tmp.write_text(json.dumps(theirs + [moved], indent=1) + "\n")
+            tmp.replace(dest)
+        old = job.get("name", job.get("prompt", ""))
+        if old in state:
+            state[f"{pid}:{old}"] = state.pop(old)
+    if len(keep) != len(jobs):
+        JOB_STATE_FILE.write_text(json.dumps(state))
+        JOBS_FILE.write_text(json.dumps(keep, indent=1) + "\n")
 
 
-def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[dict]:
-    """Switch a job on or off, or move its time (HH:MM, local)."""
+def list_jobs() -> list[dict]:
+    """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
+    names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
+             "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), "")}
+            for j in all_jobs() if j.get("name")]
+
+
+def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str = "") -> list[dict]:
+    """Switch a job on or off, or move its time (HH:MM, local). `agent`: whose job; Ken's own when empty."""
     if at is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
         raise ValueError("Use a time like 07:00.")
-    jobs = json.loads(JOBS_FILE.read_text())
+    try:
+        path = ENGINE._adir(agent) / "jobs.json" if agent else JOBS_FILE
+        jobs = json.loads(path.read_text())
+    except (KeyError, OSError, ValueError):
+        raise ValueError("No such job.") from None
     job = next((j for j in jobs if isinstance(j, dict) and j.get("name") == name), None)
     if job is None:
         raise ValueError("No such job.")
@@ -848,14 +915,14 @@ def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[di
         job["on"] = bool(on)
     if at is not None:
         job["time"] = at
-    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+    path.write_text(json.dumps(jobs, indent=1) + "\n")
     return list_jobs()
 
 
 async def scheduler() -> None:
     while True:
         try:
-            jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
+            jobs = all_jobs()
             now = time.localtime()
             state = {}
             try:
@@ -865,19 +932,20 @@ async def scheduler() -> None:
             # A job seen for the first time after today's slot (a new install at noon) starts
             # tomorrow; catching up is only for jobs Ken was already running.
             for job in jobs:
-                key = job.get("name", job.get("prompt", "")) if isinstance(job, dict) else ""
+                key = job_key(job)
                 if key and key not in state and _job_due(job, now, {}):
                     state[key] = time.strftime("%Y-%m-%d (first seen)", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
-                if isinstance(job, dict) and _job_due(job, now, state):
-                    state[job.get("name", job.get("prompt", ""))] = time.strftime("%Y-%m-%d %H:%M", now)
+                if _job_due(job, now, state):
+                    state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
-                    log.info("job due: %s", job.get("name"))
-                    if job.get("project"):
-                        # A project job runs in that project's own chat.
+                    log.info("job due: %s", job_key(job))
+                    agent = job.get("agent") or job.get("project")
+                    if agent:
+                        # An agent's job runs in that agent's own chat.
                         asyncio.create_task(ENGINE.send_message(
-                            str(job["project"]), "", log_user=False,
+                            str(agent), "", log_user=False,
                             prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})",
                         ))
                     else:
@@ -903,7 +971,10 @@ async def claude_connected() -> None:
 
 
 async def start_engine() -> None:
-    ENGINE.configure_home(WORKSPACE, build_system, lambda: build_system(for_project=True))
+    ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
+    ENGINE.tools = lambda only: {**(browser_mcp() if "browser" in only else {}), **CONNECTIONS.mcp(only)}
+    ENGINE.tools_prompt = lambda only: "\n\n".join(
+        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
@@ -914,6 +985,10 @@ async def start_engine() -> None:
     if old and not ENGINE.kv_get(f"session:{HOME}"):
         ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed
     ENGINE.start()
+    try:
+        migrate_jobs()
+    except Exception as e:
+        log.warning("moving agent jobs failed: %s", e)
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
@@ -941,7 +1016,7 @@ async def notify_telegram(app) -> None:
         try:
             if ev["type"] == "approval.created":
                 a = ev["approval"]
-                name = "Ken" if a["project"] == HOME else ENGINE.get_project(a["project"])["name"]
+                name = "Ken" if a["project"] == HOME else ENGINE.get_agent(a["project"])["name"]
                 text = f"<b>{html.escape(name)} wants your OK</b>\n{html.escape(a['title'])}"
                 if a["body"]:
                     text += f"\n\n{html.escape(a['body'][:3000])}"
@@ -951,7 +1026,7 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
-                name = ENGINE.get_project(ev["project"])["name"]
+                name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
         except Exception as e:
