@@ -11,7 +11,8 @@
     "test:desktop": "node --test tests/desktop.test.cjs",
     "pack": "electron-builder --dir -c.mac.identity=- -c.mac.notarize=false",
     "dist:mac": "electron-builder --mac",
-    "build:engine": ".venv/bin/python desktop/build_engine.py"
+    "build:engine": ".venv/bin/python desktop/build_engine.py",
+    "fetch:ffmpeg": "desktop/fetch_ffmpeg.sh"
   },
   "devDependencies": {
     "chrome-devtools-mcp": "1.10.1",
@@ -50,6 +51,10 @@
       {
         "from": "dist/engine-${arch}/ken-engine",
         "to": "engine"
+      },
+      {
+        "from": "dist/ffmpeg-${arch}",
+        "to": "ffmpeg"
       },
       {
         "from": "node_modules/chrome-devtools-mcp",

@@ -59,7 +59,7 @@ async function startService() {
     <key>KEN_APP_VERSION</key><string>${app.getVersion()}</string>
     <key>KEN_NODE</key><string>${esc(node)}</string>
     <key>KEN_BROWSER_MCP</key><string>${esc(path.join(process.resourcesPath, 'browser', 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js'))}</string>
-    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    <key>PATH</key><string>${esc(path.join(process.resourcesPath, 'ffmpeg'))}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
   </dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${esc(path.join(home, 'logs/ken.log'))}</string>

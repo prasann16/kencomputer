@@ -26,6 +26,7 @@ npm ci && npm run desktop
 
 ```sh
 npm run build:engine   # bundles bot.py, Python and the Claude CLI into dist/engine-<arch>
+npm run fetch:ffmpeg   # ffmpeg for each Mac into dist/ffmpeg-<arch>, so Ken can make clips
 npm run pack           # ad-hoc signed dist/desktop/mac*/Ken.app for local testing
 ```
 

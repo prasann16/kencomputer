@@ -35,7 +35,7 @@ from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, drop_env, save_env
-from voice import ready as voice_ready, transcribe, warmup as warmup_voice
+from voice import captions, ready as voice_ready, transcribe, warmup as warmup_voice
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, InvalidToken
@@ -88,6 +88,37 @@ def browser_mcp() -> dict:
     return {}
 
 
+def media_mcp() -> dict:
+    """`transcribe_media`: a timed transcript and subtitles for a video or podcast, on this computer."""
+    if not voice_available():
+        return {}
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    async def run(args):
+        try:
+            return {"content": [{"type": "text", "text": await asyncio.to_thread(captions, str(args["path"]))}]}
+        except Exception as exc:
+            return {"content": [{"type": "text", "text": f"Failed: {exc}"}], "is_error": True}
+    return {"media": create_sdk_mcp_server("media", tools=[tool(
+        "transcribe_media", "Transcribe a video or audio file on this computer: returns the transcript with "
+        "timestamps and saves subtitles (.srt) next to the file. Takes a few minutes per hour of audio.",
+        {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]})(run)])}
+
+
+def video_prompt() -> str:
+    import shutil
+
+    if not shutil.which("ffmpeg"):
+        return ""
+    return (
+        "VIDEO: `ffmpeg` is installed. To turn a video or podcast into clips: `transcribe_media` gives the "
+        "transcript with timestamps; pick the strongest moments; cut each one with ffmpeg. For Reels, TikTok "
+        "and Shorts crop to 9:16 at 1080x1920 and burn in captions with the subtitles filter, from an .srt "
+        "you write for that clip's own times. Never change the original; save clips next to it and say where. "
+        "Show them the clips before anything is posted."
+    )
+
+
 BROWSER_PROMPT = (
     "BROWSER: the `browser` tools drive the user's own Chrome, signed in to their accounts: open a "
     "new tab for your work (don't take over theirs), read pages, click, type, take screenshots. Use it "
@@ -100,7 +131,7 @@ BROWSER_PROMPT = (
 
 # Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.
 CONNECTIONS = Connections(KEN_HOME, on_change=lambda: claude_connected())
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=lambda: {**browser_mcp(), **CONNECTIONS.mcp()}))
+ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=lambda: {**browser_mcp(), **media_mcp(), **CONNECTIONS.mcp()}))
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
@@ -469,6 +500,8 @@ def build_system() -> str:
         pass
     if browser_mcp():
         system += "\n\n" + BROWSER_PROMPT
+    if video_prompt():
+        system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
@@ -1051,9 +1084,9 @@ async def claude_connected() -> None:
 
 async def start_engine() -> None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.tools = lambda only: {**(browser_mcp() if "browser" in only else {}), **CONNECTIONS.mcp(only)}
+    ENGINE.tools = lambda only: {**(browser_mcp() if "browser" in only else {}), **media_mcp(), **CONNECTIONS.mcp(only)}
     ENGINE.tools_prompt = lambda only: "\n\n".join(
-        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", CONNECTIONS.prompt(only)) if x)
+        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
