@@ -1,4 +1,6 @@
+import time
 import asyncio
+import time
 import logging
 from pathlib import Path
 
@@ -110,3 +112,16 @@ def test_usage_has_its_own_off_switch(sent, monkeypatch):
     assert sent == []
     crash.report(None, "crashes still report")
     assert len(sent) == 1
+
+
+def test_feedback_is_sent_as_written_even_with_usage_off(sent, monkeypatch):
+    monkeypatch.setenv("KEN_USAGE_STATS", "0")
+    assert crash.feedback("Love it, but the brief is long. My key sk-abcdefghijklmnopqrstuv", "me@example.com")
+    for _ in range(50):
+        if sent:
+            break
+        time.sleep(0.02)
+    event = sent[0]
+    assert event["event"] == "feedback" and event["properties"]["email"] == "me@example.com"
+    assert event["properties"]["text"].startswith("Love it, but the brief is long.") and "sk-abc" not in event["properties"]["text"]
+    assert not crash.feedback("   ")

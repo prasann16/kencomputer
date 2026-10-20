@@ -446,6 +446,10 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         return (
+            f"FEEDBACK FOR THE PEOPLE WHO MAKE KEN: when they want to tell the Ken team something (a bug, an idea, a "
+            f"complaint), write it up in their words, show them exactly what will be sent, and only after they say yes "
+            f'write {{"type": "feedback", "text": "...", "email": "their email, only if they want a reply"}} into '
+            f"{self.requests_dir}/. Say it was sent. They can also use Settings → Send feedback.\n"
             f"=== Your tools and keys ===\nExtra tools: {extra}. To add one, put an MCP server in \"mcp\" of "
             f"{self._tools_file(pid)} (Claude Code's mcpServers format); it's ready from the next message. A CLI "
             "installed on this computer works as is. "
@@ -953,6 +957,9 @@ class Engine:
 
     def handle_request(self, req: dict) -> None:
         kind = req.get("type")
+        if kind == "feedback":  # they asked Ken to pass something on to the people who make it
+            crash.feedback(str(req.get("text", "")), str(req.get("email", "")))
+            return
         if kind in ("agent", "project"):  # "project": what agents were called before
             a = self.create_agent(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
             self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))

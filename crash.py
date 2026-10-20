@@ -212,3 +212,21 @@ def track(name: str, **props) -> None:
         },
     }
     threading.Thread(target=_post, args=(payload,), daemon=True, name="ken-crash-report").start()
+
+
+def feedback(text: str, email: str = "") -> bool:
+    """Feedback someone chose to send to the people who make Ken: their words, sent as they wrote them
+    (keys and home paths still masked). Sent even when usage stats are off, because they asked."""
+    text = scrub(str(text)).strip()[:4000]
+    email = str(email).strip()[:200]
+    if not key() or not text:
+        return False
+    payload = {
+        "event": "feedback",
+        "distinct_id": _state["id"] or "unknown",
+        "properties": {"text": text, "email": email, "ken_version": _state["version"],
+                       "os": f"{platform.system()} {platform.release()}", "$process_person_profile": False},
+    }
+    threading.Thread(target=_post, args=(payload,), daemon=True, name="ken-feedback").start()
+    return True
+

@@ -195,6 +195,17 @@ class WebApp:
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
+    async def send_feedback(self, request):
+        """Settings → Send feedback: {text, email?} to the people who make Ken."""
+        import crash
+
+        b = await self._body(request)
+        if not str(b.get("text", "")).strip():
+            return _json({"error": "Write something first."}, 400)
+        if not crash.feedback(str(b.get("text", "")), str(b.get("email", ""))):
+            return _json({"error": "Couldn't send it from this Ken. Try again later."}, 400)
+        return _json({"ok": True})
+
     async def privacy_settings(self, request):
         """Share anonymous crash reports and usage counts: read it, or {share: bool} to change it."""
         if not self.privacy:
@@ -602,6 +613,7 @@ class WebApp:
         r.add_get("/api/connections", self.connections_status)
         r.add_get("/api/jobs", self.jobs_list)
         r.add_patch("/api/jobs/{name}", self.jobs_change)
+        r.add_post("/api/feedback", self.send_feedback)
         r.add_get("/api/privacy", self.privacy_settings)
         r.add_put("/api/privacy", self.privacy_settings)
         r.add_get("/api/phone", self.phone_status)
