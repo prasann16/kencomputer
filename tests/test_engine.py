@@ -341,7 +341,8 @@ async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path
     engine.set_key_file("reader", "firebase.json", b'{"private_key": "x"}')
     assert engine.list_keys("reader") == [{"name": "STRIPE_KEY", "kind": "value"}, {"name": "firebase.json", "kind": "file"}]
     store = tmp_path / "credentials/agents/reader"
-    assert oct((store / "keys.json").stat().st_mode & 0o777) == "0o600" and oct(store.stat().st_mode & 0o777) == "0o700"
+    if os.name != "nt":  # Windows has no owner-only file modes; the user's own folder keeps them private there
+        assert oct((store / "keys.json").stat().st_mode & 0o777) == "0o600" and oct(store.stat().st_mode & 0o777) == "0o700"
     session = engine._chat_session("reader")
     assert session is not first and session.env_fn() == {"STRIPE_KEY": "rk_live_supersecret123"}
     assert engine._chat_session("brand").env_fn() == {}
