@@ -267,7 +267,10 @@ class WebApp:
 
     async def chat(self, request):
         pid = self._pid(request)
-        if pid == HOME and self.engine.new_install():
+        # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
+        # greets on Start), here when the phone step was skipped. Quiet during setup.
+        phone_skipped = not self.setup or self.setup.phone_step() == "declined"
+        if pid == HOME and self.engine.new_install() and phone_skipped:
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         return _json(self.engine.chat_view(pid))
 

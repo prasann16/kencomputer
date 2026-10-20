@@ -710,12 +710,13 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or ""):
-        await update.effective_message.reply_text(
-            "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
-            "Text me or send a voice note anytime."
-        )
-        if not BORN_FLAG.exists():
+        if not BORN_FLAG.exists():  # a brand-new Ken: its own first words, here and in the app
             await handle_prompt(update, first_contact_prompt("connected their phone"))
+        else:
+            await update.effective_message.reply_text(
+                "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
+                "Text me or send a voice note anytime."
+            )
         return
     if not authorized(update):
         await update.effective_message.reply_text(
