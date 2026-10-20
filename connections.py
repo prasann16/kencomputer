@@ -220,6 +220,31 @@ class Calendars:
         return "\n".join(r for _, r in sorted(rows))
 
 
+def chrome_profile() -> Path:
+    """Chrome's user data folder, where it writes DevToolsActivePort once remote debugging is on."""
+    import os
+    import sys
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/Google/Chrome"
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Google/Chrome/User Data"
+    return Path.home() / ".config/google-chrome"
+
+
+def chrome_connected() -> bool:
+    """Chrome is listening for Ken right now. The port file outlives Chrome turning the setting
+    off (a restart does), so knock on the port rather than trust the file."""
+    import socket
+
+    try:
+        port = int((chrome_profile() / "DevToolsActivePort").read_text().split()[0])
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except (OSError, ValueError, IndexError):
+        return False
+
+
 class Connections:
     def __init__(self, home: Path, on_change=None) -> None:
         self.file = home / "connections.json"
@@ -256,7 +281,7 @@ class Connections:
 
     def status(self) -> dict:
         data = self.load()
-        chrome = (Path.home() / "Library/Application Support/Google/Chrome/DevToolsActivePort").exists()
+        chrome = chrome_connected()
         return {
             "emails": [{"address": e["address"]} for e in data.get("emails", [])],
             "calendars": [{"name": c["name"]} for c in data.get("calendars", [])],

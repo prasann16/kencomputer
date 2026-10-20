@@ -65,3 +65,91 @@ async def test_model_too_new_for_claude_code_falls_back_to_the_default():
     # The next message goes straight to the default instead of failing first.
     assert await session.ask('again', on_text) == 'hi'
     assert models == ['claude-new', None, None]
+
+
+async def test_a_dead_claude_code_is_started_again_once_before_it_did_anything():
+    from claude_agent_sdk import CLIConnectionError, ResultMessage
+
+    connects, shown = [], []
+
+    class Dead:
+        async def query(self, prompt):
+            raise CLIConnectionError("Cannot write to terminated process (exit code: 143)")
+
+        async def disconnect(self):
+            pass
+
+    class Alive(Dead):
+        async def query(self, prompt):
+            pass
+
+        async def receive_response(self):
+            yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=False,
+                                num_turns=1, session_id='s', result='posted')
+
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    session.client = Dead()
+
+    async def connect(resume):
+        connects.append(resume)
+        session.client = Alive()
+    session._connect = connect
+
+    async def on_text(text):
+        shown.append(text)
+
+    assert await session.ask('post it', on_text) == 'posted' and shown == ['posted'] and connects == [None]
+
+
+async def test_no_second_try_once_claude_code_started_working():
+    import pytest
+    from claude_agent_sdk import AssistantMessage, ProcessError, TextBlock
+
+    class DiesMidway:
+        async def query(self, prompt):
+            pass
+
+        async def receive_response(self):
+            yield AssistantMessage(content=[TextBlock(text='Posting now')], model='m')
+            raise ProcessError("Command failed", exit_code=143)
+
+        async def disconnect(self):
+            pass
+
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    session.client = DiesMidway()
+    session.stderr.append("fatal: killed")
+
+    async def connect(resume):
+        raise AssertionError("must not start again: the post may already be out")
+    session._connect = connect
+
+    async def on_text(text):
+        pass
+
+    with pytest.raises(ProcessError):
+        await session.ask('post it', on_text)
+
+
+def test_ken_ignores_this_computers_own_claude_code_setup():
+    import claude_agent_sdk
+
+    seen = {}
+
+    class Client:
+        def __init__(self, options):
+            seen['options'] = options
+
+        async def connect(self):
+            pass
+
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    real = claude_agent_sdk.ClaudeSDKClient
+    claude_agent_sdk.ClaudeSDKClient = Client
+    try:
+        asyncio.run(session._connect(None))
+    finally:
+        claude_agent_sdk.ClaudeSDKClient = real
+    o = seen['options']
+    assert o.setting_sources == [] and o.strict_mcp_config and o.max_buffer_size >= 32 * 1024 * 1024
+    assert o.stderr is not None

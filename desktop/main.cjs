@@ -59,7 +59,7 @@ async function startService() {
     <key>KEN_APP_VERSION</key><string>${app.getVersion()}</string>
     <key>KEN_NODE</key><string>${esc(node)}</string>
     <key>KEN_BROWSER_MCP</key><string>${esc(path.join(process.resourcesPath, 'browser', 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js'))}</string>
-    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    <key>PATH</key><string>${esc(path.join(process.resourcesPath, 'ffmpeg'))}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
   </dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${esc(path.join(home, 'logs/ken.log'))}</string>
@@ -270,9 +270,9 @@ async function start() {
   });
   // Ken on your phone: a BotFather code copied on the phone (iPhone's clipboard reaches the Mac).
   // Only something shaped like a bot token is passed to the page, never the rest of the clipboard.
-  ipcMain.handle('clipboard:bot-token', (event) => {
+  ipcMain.handle('clipboard:bot-token', async (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
-    const found = clipboard.readText().match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
+    const found = String(await clipboard.readText()).match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
     return found ? found[0] : null;
   });
   ipcMain.handle('microphone:permission', (event) => {
@@ -321,10 +321,22 @@ function updateItem() {
     ? { label: `Restart to update to ${updateVersion}`, click: () => installNow() }
     : { label: 'Check for Updates…', click: () => { show(); checkNow(true); } };
 }
-// Ken uses the user's own Chrome; Chrome needs remote debugging switched on once.
+// Ken uses the user's own Chrome; Chrome needs remote debugging switched on (again after it
+// restarts). Chrome ignores chrome:// links handed to it by `open`, so ask Chrome to open the tab;
+// if that's refused, bring Chrome forward with the address on the clipboard to paste.
+const CHROME_PAGE = 'chrome://inspect/#remote-debugging';
 function connectChrome() {
-  execFile('open', ['-a', 'Google Chrome', 'chrome://inspect/#remote-debugging'], (error) => {
-    if (error) dialog.showMessageBox({ message: 'Ken uses Google Chrome to work on websites.', detail: 'Install Chrome, then choose Connect Chrome… again.' });
+  const script = `tell application "Google Chrome"
+    activate
+    if (count of windows) is 0 then make new window
+    tell front window to make new tab with properties {URL:"${CHROME_PAGE}"}
+  end tell`;
+  execFile('/usr/bin/osascript', ['-e', script], (error) => {
+    if (!error) return;
+    clipboard.writeText(CHROME_PAGE);
+    execFile('open', ['-a', 'Google Chrome'], (missing) => {
+      if (missing) dialog.showMessageBox({ message: 'Ken uses Google Chrome to work on websites.', detail: 'Install Chrome, then choose Connect Chrome… again.' });
+    });
   });
 }
 function buildMenus() {

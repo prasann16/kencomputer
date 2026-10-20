@@ -112,3 +112,18 @@ def test_several_email_accounts(tmp_path, monkeypatch):
         assert c.status()["emails"] == [] and c.mcp() == {}
     import asyncio
     asyncio.run(run())
+
+
+def test_chrome_counts_as_connected_only_while_it_listens(tmp_path, monkeypatch):
+    import socket
+
+    monkeypatch.setattr(connections, "chrome_profile", lambda: tmp_path)
+    assert not connections.chrome_connected()  # no port file
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+    (tmp_path / "DevToolsActivePort").write_text(f"{port}\n/devtools/browser/abc\n")
+    assert connections.chrome_connected() and Connections(tmp_path).status()["chrome"]
+    server.close()  # Chrome restarted with the setting off: the file stays behind
+    assert not connections.chrome_connected()

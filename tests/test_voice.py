@@ -1,5 +1,6 @@
 """Shared Telegram/desktop transcription without network or model downloads."""
 from types import SimpleNamespace
+import pytest
 import sys
 
 import voice
@@ -71,3 +72,20 @@ def test_a_confident_other_language_is_kept(monkeypatch):
     assert voice.transcribe('note.oga') == 'olá'
     assert calls == [None]
 
+
+
+def test_captions_write_subtitles_next_to_the_file(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    import voice
+
+    video = tmp_path / "podcast.mp4"
+    video.write_bytes(b"")
+    segs = [NS(start=0.0, end=3.58, text=" This week we chased every late invoice."), NS(start=3725.5, end=3727.0, text=" Bye.")]
+    monkeypatch.setattr(voice, "_segments", lambda path: (segs, NS(duration=3727.0)))
+    out = voice.captions(str(video))
+    assert (tmp_path / "podcast.srt").read_text().startswith("1\n00:00:00,000 --> 00:00:03,580\nThis week we chased every late invoice.\n")
+    assert "01:02:05,500 --> 01:02:07,000" in (tmp_path / "podcast.srt").read_text()
+    assert "62.1 minutes" in out and "[01:02:05–01:02:07] Bye." in out
+    with pytest.raises(ValueError, match="No file"):
+        voice.captions(str(tmp_path / "missing.mp4"))
