@@ -423,7 +423,7 @@ function RunDrawer({ rid, projects, tick, onClose, toast }) {
 
 // -------------------------------------------------------------------- modals
 
-function Modal({ title, children, onClose, wide }) {
+function Modal({ title, children, onClose, wide, className, closeX }) {
   const box = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -443,7 +443,7 @@ function Modal({ title, children, onClose, wide }) {
     return () => { removeEventListener('keydown', onKey); if (previous && previous.isConnected) previous.focus(); };
   }, []);
   return html`<div class="scrim center" onClick=${(e) => e.target === e.currentTarget && onClose()}>
-    <div ref=${box} tabindex="-1" class=${'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
+    <div ref=${box} tabindex="-1" class=${'modal' + (wide ? ' wide' : '') + (className ? ' ' + className : '')} role="dialog" aria-modal="true" aria-label=${title}>${closeX && html`<button class="modal-x" aria-label="Close" onClick=${onClose}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`}<h2>${title}</h2>${children}</div>
   </div>`;
 }
 
@@ -773,7 +773,7 @@ function Settings({ onClose, toast }) {
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
-  return html`<${Modal} title="Settings" onClose=${onClose}>
+  return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="set-tabs" role="tablist">${[['claude', 'Claude'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Ken runs on your Claude subscription.</p>
     ${reconnect ? html`<${Connect} onDone=${() => { setReconnect(false); toast('Claude is connected.'); }}/>`
