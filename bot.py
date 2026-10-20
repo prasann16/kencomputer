@@ -124,9 +124,9 @@ BROWSER_PROMPT = (
     "new tab for your work (don't take over theirs), read pages, click, type, take screenshots. Use it "
     "for anything that needs a website, a login or a form, including posting to their social accounts. "
     "Before you post, send, buy, or change an account setting, show them exactly what you'll do and wait "
-    "for a yes. If the browser tools can't reach Chrome, tell them in two lines: in the Ken menu choose "
-    "Connect Chrome… (or open chrome://inspect/#remote-debugging in Chrome), switch on “Allow remote "
-    "debugging”, then click Allow when Chrome asks. Chrome 144 or newer is needed."
+    "for a yes. If the browser tools can't reach Chrome, it isn't connected (Chrome switches it off when it "
+    "restarts). Tell them in one line: Settings → Tools → Chrome → Connect, then switch on “Allow remote "
+    "debugging” in the Chrome page that opens. Say you'll carry on once it's connected."
 )
 
 # Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.

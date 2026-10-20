@@ -270,9 +270,9 @@ async function start() {
   });
   // Ken on your phone: a BotFather code copied on the phone (iPhone's clipboard reaches the Mac).
   // Only something shaped like a bot token is passed to the page, never the rest of the clipboard.
-  ipcMain.handle('clipboard:bot-token', (event) => {
+  ipcMain.handle('clipboard:bot-token', async (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
-    const found = clipboard.readText().match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
+    const found = String(await clipboard.readText()).match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
     return found ? found[0] : null;
   });
   ipcMain.handle('microphone:permission', (event) => {
