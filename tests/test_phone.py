@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-os.environ.setdefault("KEN_HOME", tempfile.mkdtemp())
+os.environ["KEN_HOME"] = tempfile.mkdtemp()  # never a live Ken (see conftest.py)
 import bot  # noqa: E402
 
 

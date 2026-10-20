@@ -3,7 +3,7 @@ import os
 import tempfile
 import time
 
-os.environ.setdefault("KEN_HOME", tempfile.mkdtemp())
+os.environ["KEN_HOME"] = tempfile.mkdtemp()  # never a live Ken (see conftest.py)
 import bot  # noqa: E402
 
 BRIEF = {"name": "morning-brief", "time": "07:00", "days": "daily"}
