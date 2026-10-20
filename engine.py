@@ -31,7 +31,6 @@ HOME = "home"  # the conversation with Ken itself
 WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
-WELCOME = "Hey, I’m Ken. Your assistant.\n\nTell me what you do for work and what you’d like off your plate. A voice note is perfect."
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -225,13 +224,6 @@ class Engine:
         ).fetchall()
         return [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
 
-    def welcome(self, pid: str) -> None:
-        """Ken's first words in a brand-new home chat, as a real message that stays in the
-        thread. Not passed to history_hook: the harness counts Ken's first real reply as its birth."""
-        if pid != HOME or self.db.execute("SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (pid,)).fetchone():
-            return
-        self.emit("message", project=pid, role="ken", text=WELCOME, via="welcome")
-
     def log_message(self, pid: str, role: str, text: str, **extra) -> dict:
         if pid == HOME and self.history_hook is not None and text:
             self.history_hook(role, text)  # the daily transcript that nightly memory reads
@@ -271,9 +263,12 @@ class Engine:
         return sorted(out, key=lambda p: p.get("created", 0))
 
     def workdir(self, meta: dict) -> Path:
-        if meta.get("path"):
-            return Path(os.path.expanduser(meta["path"]))
+        """An agent always lives and works in its own folder under Ken. A code or info folder
+        ("path") is a place it goes to for the job, named in its prompt, never its home."""
         return self.agents_dir / meta["id"]
+
+    def code_dir(self, meta: dict) -> Path | None:
+        return Path(os.path.expanduser(meta["path"])) if meta.get("path") else None
 
     def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "") -> dict:
         name = name.strip()[:60]
@@ -319,7 +314,7 @@ class Engine:
             if fields.get(k) is not None:
                 meta[k] = str(fields[k]).strip()[:60 if k == "name" else 500]
         if path is not None:
-            self.chats.pop(pid, None)  # the next message opens Claude in the new folder
+            self.chats.pop(pid, None)  # the next message gets the new folder in its prompt
         meta.pop("id", None)
         meta.pop("workdir", None)
         (self._adir(pid) / "agent.json").write_text(json.dumps(meta, indent=1) + "\n")
@@ -393,13 +388,15 @@ class Engine:
     def system(self, pid: str) -> str:
         """Ken's own system prompt (the chief of staff); an agent gets a work prompt and only its own folder."""
         if pid == HOME:
-            return self.home_system()
+            return f"{self.home_system()}\n\n{self.kit(pid)}"
         p = self.get_agent(pid)
         d = self._adir(pid)
         auto = self.get_autonomy(pid)
         tools = self.tools_config(pid)
         r = self.requests_dir
         extra = ", ".join(tools["mcp"]) or "none yet"
+        where = (f" The code and files for your job are in {p['path']}: go there when a task needs them, and leave "
+                 "anything there you didn't make for this job as it is.") if p.get("path") else ""
         return (
             f"{self.agent_base()}\n\n=== You are {p['name']}, one of their agents ===\n"
             "They set you up in Ken for one job, described in CONTEXT.md below. Ken, their main assistant, "
@@ -418,13 +415,25 @@ class Engine:
             "need a login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole "
             "file like a service-account JSON. Never ask for a secret in this chat, never print one, never copy one "
             "anywhere else.\n"
-            f"You work in {p['workdir']}.\n"
+            f"Your home and working folder is {p['workdir']}.{where}\n"
             f"Fine to do on your own: {'; '.join(auto['alone']) or 'nothing'}. Ask first: {'; '.join(auto['ask']) or 'nothing'} "
             f"(rules in {d / 'autonomy.json'}). To ask, or to hand long work to the background, write JSON into {r}/: "
             f'{{"type": "approval", "agent": "{pid}", "kind": "email|post|merge|spend|other", "title": "...", "body": "exactly what they\'ll see", "next": "what you do once approved"}} or '
             f'{{"type": "run", "agent": "{pid}", "title": "...", "prompt": "full instructions"}}.\n'
             + (f"\n{self.tools_prompt(set(tools['use']))}\n" if self.tools_prompt(set(tools["use"])) else "")
             + f"\n=== CONTEXT.md ===\n{self.get_context(pid).strip()}"
+        )
+
+    def kit(self, pid: str) -> str:
+        """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
+        extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
+        return (
+            f"=== Your tools and keys ===\nExtra tools: {extra}. To add one, put an MCP server in \"mcp\" of "
+            f"{self._tools_file(pid)} (Claude Code's mcpServers format); it's ready from the next message. A CLI "
+            "installed on this computer works as is. "
+            f"Keys: {self._keys_line(pid)} They add keys in the app (click Ken at the top, then Keys). When you need a "
+            "login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole file "
+            "like a service-account JSON. Never ask for a secret in chat, never print one, never copy one anywhere else."
         )
 
     def _keys_line(self, pid: str) -> str:
@@ -450,7 +459,7 @@ class Engine:
             "agent's files whenever you need the detail, and keep an eye on whether they're getting their jobs done. "
             f'To hand an agent work in the background, write {{"type": "run", "agent": "<id>", "title": "...", "prompt": "..."}} into {r}/. '
             'When they want a new agent, write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
-            '"path": "a code folder, if it works on one"}; it opens its own chat and sets itself up there.',
+            '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there.',
         ]
         running = self.list_runs(active=True)
         for a in self.list_agents():
@@ -478,10 +487,13 @@ class Engine:
             return []
         return [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
 
+    def _tools_file(self, pid: str) -> Path:
+        return self.home / "tools.json" if pid == HOME else self._adir(pid) / "tools.json"
+
     def tools_config(self, pid: str) -> dict:
-        """An agent's tools.json. Without one it gets every built-in tool, as before agents had their own."""
+        """Its tools.json (Ken's is ~/.ken/tools.json). Without one it gets every built-in tool."""
         try:
-            data = json.loads((self._adir(pid) / "tools.json").read_text())
+            data = json.loads(self._tools_file(pid).read_text())
         except (OSError, ValueError):
             data = {}
         use = data.get("use", list(BUILTIN_TOOLS)) if isinstance(data, dict) else list(BUILTIN_TOOLS)
@@ -495,12 +507,113 @@ class Engine:
     def _tools_stamp(self, pid: str) -> tuple:
         """Changes when its tools or keys do, so an open chat reopens with them."""
         out = []
-        for f in (self._adir(pid) / "tools.json", self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
+        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
             try:
                 out.append(f.stat().st_mtime)
             except OSError:
                 out.append(0.0)
         return tuple(out)
+
+    # -------------------------------------------------------------------- about
+    # Everything a chat knows, to see, edit and share: who it is (Ken's SOUL.md, an agent's
+    # CONTEXT.md), its memory notes, its tools, keys (names only) and files.
+
+    def context_file(self, pid: str) -> Path:
+        return self.home_cwd / "SOUL.md" if pid == HOME else self._adir(pid) / "CONTEXT.md"
+
+    def memory_dir(self, pid: str) -> Path:
+        return self.home / "memory" if pid == HOME else self._adir(pid) / "memory"
+
+    def about(self, pid: str) -> dict:
+        try:
+            context = self.context_file(pid).read_text()
+        except OSError:
+            context = ""
+        notes = []
+        d = self.memory_dir(pid)
+        for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+            first = next((ln.strip().lstrip("#").strip() for ln in f.read_text(errors="replace").splitlines() if ln.strip()), "")
+            notes.append({"name": f.name, "about": first[:140]})
+        out = {"id": pid, "name": "Ken" if pid == HOME else self.get_agent(pid)["name"], "context": context,
+               "memory": notes, "files": self.list_files(pid)}
+        out.update(tools=self.tools_config(pid), builtin=list(BUILTIN_TOOLS), keys=self.list_keys(pid),
+                   path="" if pid == HOME else self.get_agent(pid).get("path", ""))
+        return out
+
+    def set_about_context(self, pid: str, text: str) -> None:
+        f = self.context_file(pid)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text.rstrip() + "\n")
+        self.emit("project.updated", project=pid)
+
+    def _note(self, pid: str, name: str) -> Path:
+        clean = safe_filename(name)
+        if not clean or clean != name or not clean.endswith(".md"):
+            raise KeyError(name)
+        return self.memory_dir(pid) / clean
+
+    def read_note(self, pid: str, name: str) -> str:
+        try:
+            return self._note(pid, name).read_text()
+        except OSError:
+            raise KeyError(name) from None
+
+    def write_note(self, pid: str, name: str, text: str) -> None:
+        f = self._note(pid, name)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text.rstrip() + "\n")
+
+    def remove_note(self, pid: str, name: str) -> None:
+        self._note(pid, name).unlink(missing_ok=True)
+
+    def set_tools_use(self, pid: str, use: list) -> dict:
+        cfg = self.tools_config(pid)
+        cfg["use"] = [t for t in BUILTIN_TOOLS if t in use]
+        self._tools_file(pid).write_text(json.dumps(cfg, indent=1) + "\n")
+        self.emit("project.updated", project=pid)
+        return cfg
+
+    def export_agent(self, pid: str) -> bytes:
+        """The agent as one file to share: who it is, memory, jobs, tools and rules. Never its keys,
+        its files, or anything only meaningful on this computer (its code folder)."""
+        import io
+        import zipfile
+
+        p, d = self.get_agent(pid), self._adir(pid)
+        meta = {k: p[k] for k in ("name", "blurb", "color", "model") if p.get(k)}
+        tools = self.tools_config(pid)
+        tools["mcp"] = {k: {f: v for f, v in (c.items() if isinstance(c, dict) else []) if f not in ("env", "headers")}
+                        for k, c in tools["mcp"].items()}  # a server's env and headers usually hold secrets
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("agent.json", json.dumps(meta, indent=1))
+            z.writestr("tools.json", json.dumps(tools, indent=1))
+            for name in ("CONTEXT.md", "jobs.json", "autonomy.json"):
+                if (d / name).is_file():
+                    z.writestr(name, (d / name).read_text())
+            for f in sorted((d / "memory").glob("*.md")) if (d / "memory").is_dir() else []:
+                z.writestr(f"memory/{f.name}", f.read_text())
+        return buf.getvalue()
+
+    def import_agent(self, data: bytes) -> dict:
+        import io
+        import zipfile
+
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+            meta = json.loads(z.read("agent.json"))
+        except (zipfile.BadZipFile, KeyError, ValueError):
+            raise ValueError("That isn't a Ken agent file.") from None
+        a = self.create_agent(str(meta.get("name") or "Agent"), blurb=str(meta.get("blurb", "")))
+        d = self._adir(a["id"])
+        for name in z.namelist():
+            folder, _, base = name.rpartition("/")
+            if (folder, base) in (("", "CONTEXT.md"), ("", "jobs.json"), ("", "autonomy.json"), ("", "tools.json")) or (
+                    folder == "memory" and base == safe_filename(base) and base.endswith(".md")):
+                (d / name).write_bytes(z.read(name)[:1_000_000])
+        if meta.get("model"):
+            self.update_agent(a["id"], model=meta["model"])
+        return self.get_agent(a["id"])
 
     # --------------------------------------------------------------------- keys
     # An agent's secrets live outside its folder, in ~/.ken/credentials/agents/<id>/ (only you
@@ -509,6 +622,8 @@ class Engine:
     # any value it writes is masked before it reaches a screen.
 
     def keys_dir(self, pid: str) -> Path:
+        if pid == HOME:
+            return self.home / "credentials" / "ken"
         self._adir(pid)
         return self.home / "credentials" / "agents" / pid
 
@@ -521,8 +636,8 @@ class Engine:
 
     def _private_dir(self, d: Path) -> Path:
         d.mkdir(parents=True, exist_ok=True)
-        for p in (self.home / "credentials", self.home / "credentials" / "agents", d.parent, d):
-            if p.is_relative_to(self.home / "credentials"):
+        for p in (self.home / "credentials", d.parent, d):
+            if p.is_relative_to(self.home / "credentials") and p.is_dir():
                 os.chmod(p, 0o700)
         return d
 
@@ -578,7 +693,7 @@ class Engine:
 
     def mask(self, pid: str, text: str) -> str:
         """Hide any of the agent's key values it wrote, before the text is shown or stored."""
-        if pid == HOME or not text:
+        if not text:
             return text
         for v in self._key_values(pid).values():
             if len(v) >= 6:
@@ -613,7 +728,8 @@ class Engine:
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
             if new:
                 parts.append("new files: " + ", ".join(new[:10]))
-            git = await self._git(self.workdir(self.get_agent(pid)))
+            code = self.code_dir(self.get_agent(pid))
+            git = await self._git(code) if code else ""
             if git:
                 parts.append(git)
         return "[" + " · ".join(parts) + "]"
@@ -622,15 +738,16 @@ class Engine:
 
     def _chat_session(self, pid: str):
         s = self.chats.get(pid)
-        if s is not None and pid != HOME and self.chat_tools.get(pid) != self._tools_stamp(pid) and not s.busy:
-            self.chats.pop(pid)  # its tools.json changed: reopen with the new tools
+        if s is not None and self.chat_tools.get(pid) != self._tools_stamp(pid) and not s.busy:
+            self.chats.pop(pid)  # its tools or keys changed: reopen with the new ones
             self._bg.append(asyncio.create_task(s.close()))
             s = None
         if s is None:
+            self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
-                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"))
+                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"),
+                                       mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
             else:
-                self.chat_tools[pid] = self._tools_stamp(pid)
                 s = self.brain.session(
                     cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
                     resume=self.kv_get(f"session:{pid}"),
@@ -669,6 +786,7 @@ class Engine:
         via: str | None = None,
         listener: Callable[[str], Awaitable[None]] | None = None,
         quiet: bool = False,
+        job: dict | None = None,
     ) -> None:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it)."""
@@ -691,7 +809,7 @@ class Engine:
                     return
                 t = self.mask(pid, t)
                 if not quiet:
-                    self.log_message(pid, "ken", t)
+                    self.log_message(pid, "ken", t, **({"job": job} if job else {}))  # a scheduled job's report says so
                 if listener is not None:
                     await listener(t)
 

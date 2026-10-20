@@ -91,3 +91,22 @@ def test_agent_jobs_live_with_their_agent():
     assert listed["agent_name"] == "Reader Jobs"
     bot.set_job("money", on=False, agent="reader-jobs")
     assert bot.ENGINE.agent_jobs("reader-jobs")[0]["on"] is False
+
+
+def test_old_soul_files_lose_the_app_manual_but_keep_whats_personal(tmp_path):
+    soul = tmp_path / "SOUL.md"
+    soul.write_text(
+        "# You are Ken\n\nYou are Ken, my human's personal assistant. Not a coding session — an assistant. Be direct.\n\n"
+        "## Your body — how you physically work\n- You run on my human's own computer.\n\n"
+        "## About my human\n- Lives in Porto.\n\n## Memory\n"
+        "This file is read at the start of every task; it IS your long-term memory. Keep it rich:\n"
+        "- Otherwise don't scatter notes as you go. A nightly review job reads the day's transcript.\n\n"
+        "- Prefers voice notes\n"
+    )
+    bot.tidy_soul(soul)
+    text = soul.read_text()
+    assert "Your body" not in text and "Not a coding session" not in text and "long-term memory" not in text
+    assert "Lives in Porto." in text and "## Remembered\n\n- Prefers voice notes" in text
+    assert (tmp_path / f"SOUL.before-{time.strftime('%Y%m%d')}.md").exists()
+    bot.tidy_soul(soul)  # nothing left to tidy: untouched
+    assert soul.read_text() == text

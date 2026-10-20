@@ -218,18 +218,24 @@ WORK_RULES = (
     "right after it. When they wrote from the app, also say where the file is saved. "
 )
 SECRETS_RULE = (
-    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
-    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
-    "chat: Telegram history and your own transcripts are plaintext. "
-    "An agent's keys are different: they belong in that agent's Keys (the ⋯ menu next to its name in the "
-    "app), so point them there. "
+    "SECRETS: when you need a login or API key, ask them to add it in the app's Keys (click Ken at the "
+    "top, then Keys), never as a text file and never in chat. Keys added there reach you as environment "
+    "variables (listed below). Never repeat a secret back into the chat: Telegram history and your own "
+    f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
 )
 
 SYSTEM_PROMPT = (
-    "SOUL.md in your working directory is your soul file: it defines who you are "
-    "(a personal assistant living on this computer), how your pipeline works, and "
-    "what you remember — it is authoritative; follow it. Its current contents are "
-    "included below; edit the file itself to change who you are or what you know. "
+    "SOUL.md in your working directory is your soul file: who you are to them (your name and "
+    "personality), what you know about them, their rules and their style. It is theirs as much "
+    "as yours, and they read it in the app under What Ken knows, so keep it personal and short: "
+    "how you and the app work lives in these instructions, never in SOUL.md. Its current contents "
+    "are included below; edit the file itself to change who you are or what you know. "
+    "You are their assistant, not a coding session. Voice notes are transcribed automatically, so "
+    "expect typos and read for intent. The model you run on is named in these instructions; trust "
+    "that over your own guess. Never break the Ken service or ~/.ken/.env, your own lifeline. "
+    "When your picture of them is thin and the moment invites it, ask ONE natural question and save "
+    "the answer. With their OK you can look around this computer (projects, git config, installed "
+    "tools) to learn their world; show them what you wrote down. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
     "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
@@ -242,7 +248,8 @@ SYSTEM_PROMPT = (
     "/model; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
     "they ask how to connect something or how to use you on their phone, point them to the "
     "exact place in Settings in one line. If SOUL.md describes your body differently (older "
-    "installs say you are only a Telegram bot), this paragraph is the truth: quietly fix SOUL.md. "
+    "installs say you are only a Telegram bot, or carry a 'Your body' section), these instructions are the "
+    "truth; leave app mechanics out of SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
     f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
@@ -270,7 +277,7 @@ SYSTEM_PROMPT = (
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
     "(installed CLIs, credentials present, jobs scheduled, this OS), not from guesses — "
-    "and keep a short, current 'What I can do here' section in SOUL.md, updating it "
+    f"and keep a short, current note of it in {MEMORY_DIR / 'what-i-can-do.md'}, updating it "
     "whenever you gain or lose a capability. "
     f"YOUR HOSTING: {HOSTING_FILE} says what kind of machine this is (self-hosted on "
     "their own computer, or a dedicated box kencomputer.dev provisioned for them), who "
@@ -446,10 +453,6 @@ def build_system() -> str:
         system += f"\n\n=== your memory folder ({MEMORY_DIR}) does not exist yet ==="
     except Exception:
         pass
-    try:
-        system += "\n\n" + ENGINE.chief_brief()
-    except Exception as e:
-        log.warning("agent listing failed: %s", e)
     if browser_mcp():
         system += "\n\n" + BROWSER_PROMPT
     connected = CONNECTIONS.prompt()
@@ -785,6 +788,16 @@ async def send_outbound(bot, text: str) -> None:
             await bot.send_message(ALLOWED_USER_ID, chunk)
 
 
+JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
+
+
+def job_tag(job: dict) -> dict:
+    """What a job's messages carry, so the app and the phone can say why Ken is talking."""
+    name = str(job.get("name", "job"))
+    return {"name": name, "label": JOB_LABELS.get(name, "⏰ " + name.replace("-", " ").capitalize()),
+            "time": job.get("time", ""), "at": time.time()}
+
+
 async def run_outbound(job: dict) -> None:
     """The initiative: a scheduled job hands the assistant the pen."""
     async def deliver(text: str) -> None:
@@ -810,7 +823,7 @@ async def run_outbound(job: dict) -> None:
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver)
+        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
@@ -856,6 +869,22 @@ def job_key(job: dict) -> str:
     """How the schedule remembers a job ran: an agent's job is filed under its agent too."""
     name = job.get("name", job.get("prompt", ""))
     return f"{job['agent']}:{name}" if job.get("agent") else name
+
+
+def refresh_default_jobs() -> None:
+    """A shipped job whose prompt they never changed gets the current wording."""
+    try:
+        jobs = json.loads(JOBS_FILE.read_text())
+        for j in jobs:
+            if j.get("name") == "nightly-review" and str(j.get("prompt", "")).endswith(OLD_NIGHTLY_TAIL):
+                j["prompt"] = j["prompt"][: -len(OLD_NIGHTLY_TAIL)] + NEW_NIGHTLY_TAIL
+                JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+    except Exception as e:
+        log.warning("couldn't refresh %s: %s", JOBS_FILE, e)
+
+
+OLD_NIGHTLY_TAIL = "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
+NEW_NIGHTLY_TAIL = "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\""
 
 
 def migrate_jobs() -> None:
@@ -950,7 +979,7 @@ async def scheduler() -> None:
                         # An agent's job runs in that agent's own chat.
                         asyncio.create_task(ENGINE.send_message(
                             str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})",
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
                         ))
                     else:
                         asyncio.create_task(run_outbound(job))
@@ -993,6 +1022,7 @@ async def start_engine() -> None:
         migrate_jobs()
     except Exception as e:
         log.warning("moving agent jobs failed: %s", e)
+    refresh_default_jobs()
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
@@ -1235,8 +1265,52 @@ def ensure_home() -> None:
         legacy.rename(soul)
     if not soul.exists():
         soul.write_text((SOURCE / "SOUL.template.md").read_text().replace("{{NAME}}", "my human"))
+    try:
+        tidy_soul(soul)
+    except Exception as e:
+        log.warning("couldn't tidy %s: %s", soul, e)
     if not JOBS_FILE.exists():
         shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
+
+
+# Soul files from before app instructions moved into the code carry the app's manual in them:
+# how the body works, a capabilities placeholder, how memory works. Drop that, keep anything personal.
+OLD_SOUL_SECTIONS = ("## Your body — how you physically work", "## What I can do here")
+OLD_SOUL_LINES = re.compile(
+    r"^(\(Keep this current — it's your honest inventory.*|\(Nothing here yet\. Learn as you go.*|\(nothing yet\)"
+    r"|This file is read at the start of every task; it IS your long-term memory.*"
+    r"|- When .+ explicitly says to remember something, save it here.*|- Same when they correct you or set a rule: write it here.*"
+    r"|- Otherwise don't scatter notes as you go\..*|- When your picture of .+ is thin and the moment invites it.*"
+    r"|- You live on their computer: with their ok, you can look around.*|- Beyond this file: `~/\.ken/memory/` is a flat folder.*"
+    r"|- Markdown is fine \(bold, code, links, bullets\).*)$")
+
+OLD_SOUL_SENTENCES = (
+    r' ?"Ken" is the computer you live on; your own name is chosen by .+? during your first conversation — once named, update this file\'s title and identity to match, everywhere\.',
+    r" ?Not a coding session — an assistant\.",
+    r" ?They talk to you in the Ken app on this computer, and from their phone through Telegram if they've connected it, often by voice \(auto-transcribed, so expect typos — interpret intent, don't nitpick wording\)\.",
+)
+
+
+def tidy_soul(soul: Path) -> None:
+    text = soul.read_text()
+    if not any(h in text for h in OLD_SOUL_SECTIONS):
+        return
+    out, skipping = [], False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            skipping = line.strip() in OLD_SOUL_SECTIONS
+            if line.strip() == "## Memory":
+                line = "## Remembered"
+        if skipping or OLD_SOUL_LINES.match(line.strip()):
+            continue
+        out.append(line)
+    tidy = "\n".join(out)
+    for sentence in OLD_SOUL_SENTENCES:
+        tidy = re.sub(sentence, "", tidy)
+    tidy = re.sub(r"\n{3,}", "\n\n", tidy).strip() + "\n"
+    tidy = re.sub(r"## Remembered\n+(?=## |$)", "", tidy)  # nothing personal was saved under it
+    soul.with_name(f"SOUL.before-{time.strftime('%Y%m%d')}.md").write_text(text)
+    soul.write_text(tidy)
 
 
 ENGINE_LOCK = KEN_HOME / "engine.lock"

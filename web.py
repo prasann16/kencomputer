@@ -252,7 +252,6 @@ class WebApp:
 
     async def chat(self, request):
         pid = self._pid(request)
-        self.engine.welcome(pid)
         return _json(self.engine.chat_view(pid))
 
     async def open_chat(self, request):
@@ -387,12 +386,52 @@ class WebApp:
         self.engine.set_context(pid, str((await self._body(request)).get("text", "")))
         return _json({"ok": True})
 
+    async def about(self, request):
+        return _json(self.engine.about(self._pid(request)))
+
+    async def put_about_context(self, request):
+        pid = self._pid(request)
+        self.engine.set_about_context(pid, str((await self._body(request)).get("text", "")))
+        return _json(self.engine.about(pid))
+
+    async def note(self, request):
+        pid, name = self._pid(request), request.match_info["name"]
+        try:
+            if request.method == "GET":
+                return _json({"name": name, "text": self.engine.read_note(pid, name)})
+            if request.method == "DELETE":
+                self.engine.remove_note(pid, name)
+            else:
+                self.engine.write_note(pid, name, str((await self._body(request)).get("text", "")))
+        except KeyError:
+            raise web.HTTPNotFound()
+        return _json(self.engine.about(pid))
+
+    async def put_tools(self, request):
+        pid = self._pid(request)
+        self.engine.set_tools_use(pid, list((await self._body(request)).get("use", [])))
+        return _json(self.engine.about(pid))
+
+    async def export_agent(self, request):
+        from urllib.parse import quote
+
+        pid = self._agent(request)
+        name = self.engine.get_agent(pid)["name"]
+        return web.Response(body=self.engine.export_agent(pid), content_type="application/zip", headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name + '.ken-agent.zip')}"})
+
+    async def import_agent(self, request):
+        try:
+            return _json(self.engine.import_agent(await request.content.read(5 << 20)))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+
     async def keys(self, request):
-        return _json(self.engine.list_keys(self._agent(request)))
+        return _json(self.engine.list_keys(self._pid(request)))
 
     async def put_key(self, request):
         """A named value ({value}), or a whole file sent as the raw body (?file=1)."""
-        pid = self._agent(request)
+        pid = self._pid(request)
         try:
             if request.query.get("file") == "1":
                 data = await request.content.read(1 << 20)
@@ -403,7 +442,7 @@ class WebApp:
 
     async def remove_key(self, request):
         try:
-            return _json(self.engine.remove_key(self._agent(request), request.match_info["name"]))
+            return _json(self.engine.remove_key(self._pid(request), request.match_info["name"]))
         except KeyError:
             raise web.HTTPNotFound()
 
@@ -516,6 +555,12 @@ class WebApp:
         r.add_put("/api/agents/{pid}/context", self.put_context)
         r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
         r.add_get("/api/agents/{pid}/keys", self.keys)
+        r.add_put("/api/agents/{pid}/tools", self.put_tools)
+        r.add_get("/api/agents/{pid}/export", self.export_agent)
+        r.add_post("/api/agents/import", self.import_agent)
+        r.add_get("/api/about/{pid}", self.about)
+        r.add_put("/api/about/{pid}/context", self.put_about_context)
+        r.add_route("*", "/api/about/{pid}/memory/{name}", self.note)
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)

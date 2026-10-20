@@ -21,6 +21,7 @@ class FakeSession(Session):
         self.brain, self.cwd, self.system, self.session_id = brain, cwd, system, resume
         self.model_fn = model_fn or (lambda: "")
         self.env_fn = env_fn or (lambda: {})
+        self.mcp_fn = mcp_fn or (lambda: {})
         self.busy = False
         self.warmed = False
 
@@ -88,7 +89,7 @@ def test_project_folder_must_exist(engine, tmp_path):
         engine.create_agent("X", path=str(tmp_path / "nope"))
     repo = tmp_path / "repo"
     repo.mkdir()
-    assert engine.create_agent("Repo", path=str(repo))["workdir"] == str(repo)
+    assert engine.create_agent("Repo", path=str(repo))["workdir"] == str(engine.agents_dir / "repo")
 
 
 def test_bad_ids_and_paths_rejected(engine):
@@ -115,7 +116,7 @@ async def test_project_chat_is_ken_plus_context(engine, tmp_path):
     while not q.empty():
         events.append(q.get_nowait()["type"])
     ask = engine.brain.asks[0]
-    assert ask["cwd"] == str(repo)
+    assert ask["cwd"] == str(engine.agents_dir / "myreader") and str(repo) in ask["system"]
     assert ask["system"].startswith("KEN AT WORK") and "For heavy readers." in ask["system"]
     assert ask["prompt"].startswith("[") and ask["prompt"].endswith("hi")
     assert [m["role"] for m in engine.messages("myreader")] == ["you", "ken"]
@@ -132,7 +133,7 @@ async def test_home_chat_and_history_hook(engine):
         heard.append(t)
 
     await engine.send_message(HOME, "plan my day", via="telegram", listener=listener)
-    assert engine.brain.asks[0]["system"] == "KEN SOUL"
+    assert engine.brain.asks[0]["system"].startswith("KEN SOUL") and "Your tools and keys" in engine.brain.asks[0]["system"]
     assert heard == ["did it"]
     assert seen == [("you", "plan my day"), ("ken", "did it")]
     assert engine.messages(HOME)[0]["via"] == "telegram"
@@ -241,7 +242,9 @@ def test_project_model_rename_and_folder(engine, tmp_path):
         engine.update_agent("reader", name="  ")
     repo = tmp_path / "repo"
     repo.mkdir()
-    assert engine.update_agent("reader", path=str(repo))["workdir"] == str(repo)
+    p = engine.update_agent("reader", path=str(repo))
+    assert p["workdir"] == str(engine.agents_dir / "reader")  # it still lives under Ken
+    assert str(repo) in engine.system("reader") and engine._chat_session("reader").cwd == p["workdir"]
 
 
 async def test_remove_project_keeps_its_folder(engine, tmp_path):
@@ -349,3 +352,33 @@ async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path
     with pytest.raises(ValueError):
         engine.set_key("reader", "1BAD", "x")
     assert engine.remove_key("reader", "STRIPE_KEY") == [{"name": "firebase.json", "kind": "file"}]
+
+
+async def test_ken_itself_gets_keys_tools_and_an_editable_about(engine):
+    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.set_key(HOME, "OPENAI_KEY", "sk-proj-abcdef123456")
+    s = engine._chat_session(HOME)
+    assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}
+    assert "$OPENAI_KEY" in engine.system(HOME) and "abcdef" not in engine.system(HOME)
+    assert engine.mask(HOME, "sk-proj-abcdef123456") == "••••••"
+    engine.set_tools_use(HOME, ["browser"])
+    assert set(engine._chat_session(HOME).mcp_fn()) == {"browser"}
+    engine.set_about_context(HOME, "# You are Ken")
+    engine.write_note(HOME, "people.md", "Who they work with")
+    about = engine.about(HOME)
+    assert about["context"].startswith("# You are Ken") and about["memory"] == [{"name": "people.md", "about": "Who they work with"}]
+    with pytest.raises(KeyError):
+        engine.write_note(HOME, "../escape.md", "x")
+
+
+def test_share_an_agent_without_its_keys(engine):
+    engine.create_agent("Brand", context="Grow my X following.")
+    engine.set_key("brand", "X_TOKEN", "secret-token-123")
+    (engine.agents_dir / "brand/tools.json").write_text(json.dumps({"use": ["browser"], "mcp": {"x": {"url": "u", "headers": {"Authorization": "secret-token-123"}}}}))
+    engine.write_note("brand", "voice.md", "Short and dry.")
+    data = engine.export_agent("brand")
+    assert b"secret-token-123" not in data
+    copy = engine.import_agent(data)
+    assert copy["id"] == "brand-2" and "Grow my X following." in engine.get_context("brand-2")
+    assert engine.read_note("brand-2", "voice.md").startswith("Short and dry.") and engine.list_keys("brand-2") == []
+

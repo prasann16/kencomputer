@@ -3,6 +3,22 @@ import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback
 
 // ------------------------------------------------------------------ helpers
 
+// Never a silent failure: if anything on the page breaks, say so, with a way out. Plain DOM,
+// so it still works when the part that broke is the app itself.
+function showFailure(message) {
+  let bar = document.getElementById('page-error');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'page-error';
+    bar.setAttribute('role', 'alert');
+    document.body.append(bar);
+  }
+  const reload = Object.assign(document.createElement('button'), { textContent: 'Reload', onclick: () => location.reload() });
+  bar.replaceChildren(document.createTextNode(`Something went wrong: ${message || 'unknown error'}. `), reload);
+}
+addEventListener('error', (e) => showFailure(e.message));
+addEventListener('unhandledrejection', (e) => showFailure(e.reason?.message || String(e.reason)));
+
 async function api(path, opts = {}) {
   const init = { method: opts.method || (opts.json !== undefined || opts.body !== undefined ? 'POST' : 'GET'), headers: {} };
   if (opts.json !== undefined) {
@@ -39,7 +55,7 @@ const ago = (ts) => {
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
-const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null });
+const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null, knows: location.hash === '#/knows' });
 
 // Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
@@ -64,6 +80,26 @@ function prose(text) {
 function md(text) {
   return String(text || '').split(/```[^\n]*\n?([\s\S]*?)```/g).map((block, i) =>
     i % 2 ? html`<pre><code>${block.replace(/\n$/, '')}</code></pre>` : prose(block));
+}
+
+// A notes file as a page: headings, bullet lists and paragraphs, with the same inline markdown.
+function doc(text) {
+  const blocks = [];
+  let list = null, para = [];
+  const flush = () => {
+    if (para.length) blocks.push(html`<p>${inline(para.join(' '))}</p>`);
+    if (list) blocks.push(html`<ul>${list.map((li) => html`<li>${inline(li)}</li>`)}</ul>`);
+    para = []; list = null;
+  };
+  for (const line of String(text || '').split('\n')) {
+    const h = line.match(/^(#{1,4})\s+(.*)/), li = line.match(/^\s*[-*]\s+(.*)/);
+    if (h) { flush(); blocks.push(h[1].length === 1 ? html`<h2>${inline(h[2])}</h2>` : html`<h3>${inline(h[2])}</h3>`); }
+    else if (li) { if (para.length) { const l = list; list = null; flush(); list = l; } (list = list || []).push(li[1]); }
+    else if (!line.trim()) flush();
+    else { if (list) flush(); para.push(line.trim()); }
+  }
+  flush();
+  return blocks;
 }
 
 // -------------------------------------------------------------------- icons
@@ -251,7 +287,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
   </div>`;
 }
 
-function Message({ m }) {
+function Message({ m, label }) {
   const files = m.files || [];
   const content = useMemo(() => md(m.text), [m.text]);
   const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
@@ -267,7 +303,10 @@ function Message({ m }) {
       ${m.text && !recording && html`<div class="bubble">${content}</div>`}
     </div></div>`;
   }
-  return html`<div class=${'msg' + (m.error ? ' err' : '')}><div class="txt">
+  // A scheduled job's report says what it is, so Ken never seems to talk out of nowhere.
+  return html`<div class=${'msg' + (m.error ? ' err' : '') + (m.job ? ' from-job' : '')}>
+    ${label && html`<div class="job-label">${m.job.label}${m.job.time && html`<span> · ${m.job.time}</span>`}<a class="text-action" href="#/knows" title="Turn it off or change its time">Change</a></div>`}
+    <div class="txt">
     ${m.run_title && html`<div class="from-run">${m.run_status === 'done' ? '✓' : '✕'} ${m.run_title}</div>`}
     ${content}</div></div>`;
 }
@@ -381,7 +420,7 @@ function RunDrawer({ rid, projects, tick, onClose, toast }) {
 
 // -------------------------------------------------------------------- modals
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, wide }) {
   const box = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -400,7 +439,7 @@ function Modal({ title, children, onClose }) {
     return () => { removeEventListener('keydown', onKey); if (previous && previous.isConnected) previous.focus(); };
   }, []);
   return html`<div class="scrim center" onClick=${(e) => e.target === e.currentTarget && onClose()}>
-    <div ref=${box} class="modal" role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
+    <div ref=${box} class=${'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
   </div>`;
 }
 
@@ -436,9 +475,8 @@ function PreviewModal({ file, onClose, toast }) {
   <//>`;
 }
 
-function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup }) {
+function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup }) {
   const thread = useRef(null);
-  const following = useRef(true);
   const [dragging, setDragging] = useState(false);
   // Drop files anywhere in the window, or paste them, to attach to the message.
   useEffect(() => {
@@ -457,51 +495,68 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
   const messages = chat ? chat.messages : [];
   const clearedAt = chat ? chat.cleared_at || 0 : 0;
   const busy = chat && chat.busy;
-  const project = projects.find((p) => p.id === pid);
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
   const timeline = [
-    ...messages.map((m) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
+    ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
-  // Opening a chat shows the latest messages. After you send, your question moves to the
-  // top and Ken's answer grows below it; the view never chases the end of a long answer.
-  // When the thread still has room at the bottom, nothing moves at all.
-  const pin = useRef(null), spacer = useRef(null);
+  // One continuous conversation, never a blank page. Opening a chat lands on the first unread
+  // reply, or the end. Sending brings your message into view at the bottom. While Ken replies the
+  // view follows, but stops once the start of the reply reaches the top, so you read it from the
+  // start. Scroll up and it leaves you alone; "New reply" takes you back down.
+  const following = useRef(true), placed = useRef(false), reply = useRef(null), seen = useRef({ n: 0, stream: '' });
+  const [below, setBelow] = useState(false);
   const lastMine = () => [...timeline].reverse().find((item) => item.mine)?.key;
-  const pinNext = () => { pin.current = { after: lastMine() }; };
+  const sent = () => { following.current = true; reply.current = { after: lastMine() }; setBelow(false); };
+  const atEnd = (box) => box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const toEnd = () => { const box = thread.current; if (box) { following.current = true; setBelow(false); box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); } };
   useLayoutEffect(() => {
     const box = thread.current;
-    if (!box) return;
-    if (pin.current && !pin.current.key && lastMine() !== pin.current.after) pin.current = { key: lastMine() };
-    const el = pin.current?.key && box.querySelector(`[data-key="${CSS.escape(pin.current.key)}"]`);
-    if (!el) { if (following.current) box.scrollTop = box.scrollHeight; return; }
-    if (!pin.current.placed) pin.current.still = box.scrollHeight - spacer.current.offsetHeight <= box.clientHeight;
-    if (pin.current.still) { pin.current.placed = true; spacer.current.style.height = '0px'; return; }
-    const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16;
-    const below = spacer.current.getBoundingClientRect().top - el.getBoundingClientRect().top;
-    spacer.current.style.height = Math.max(0, box.clientHeight - below - 56) + 'px';
-    if (!pin.current.placed) { pin.current.placed = true; box.scrollTo({ top, behavior: 'smooth' }); }
+    if (!box || !chat) return;
+    const offset = (el) => el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    if (!placed.current) {
+      placed.current = true;
+      const unread = seenTs && messages.find((m) => m.role === 'ken' && m.ts > seenTs);
+      const el = unread && box.querySelector(`[data-key="${CSS.escape('m' + (unread.client_id || unread.id))}"]`);
+      if (el && offset(el) + el.offsetHeight > box.clientHeight) { box.scrollTop = offset(el) - 16; following.current = atEnd(box); }
+      else box.scrollTop = box.scrollHeight;
+    } else if (following.current) {
+      if (reply.current && !reply.current.key && lastMine() !== reply.current.after) reply.current = { key: lastMine() };
+      const mine = reply.current?.key && box.querySelector(`[data-key="${CSS.escape(reply.current.key)}"]`);
+      const stop = mine ? offset(mine) + mine.offsetHeight - 16 : Infinity; // where the reply starts
+      const target = box.scrollHeight - box.clientHeight;
+      if (target > stop) { box.scrollTop = Math.max(box.scrollTop, stop); following.current = false; }
+      else box.scrollTop = target;
+    }
+    const grew = timeline.length !== seen.current.n || (stream || '') !== seen.current.stream;
+    seen.current = { n: timeline.length, stream: stream || '' };
+    if (grew && !atEnd(box) && !following.current && !below) setBelow(true);
   });
+  // Scrolling up yourself always wins over following.
+  const leave = () => { following.current = false; };
   return html`<section class="conversation-body" aria-label="Conversation"
 >
-    <div class="scroll" ref=${thread} onScroll=${() => { const el = thread.current; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+    <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
+      onScroll=${() => { if (atEnd(thread.current)) setBelow(false); }}>
       <div class="thread conversation-thread">
-        ${!chat ? html`<p class="quiet-copy" role="status">Loading your conversation…</p>` : !messages.length && !busy && html`<div class="chat-welcome"><p class="hello">${project ? 'Let’s pick up ' + project.name + '.' : 'A fresh thread.'}</p><p>${project ? 'Tell me what you’d like to work on.' : 'What would you like to work on?'}</p></div>`}
+        ${!chat && html`<p class="quiet-copy" role="status">Loading your conversation…</p>`}
+        ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
+          <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
         ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
-        <div ref=${spacer} aria-hidden="true"></div>
       </div>
     </div>
     <div class="chat-bottom">
+      ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
-        onVoice=${(...args)=>{pinNext();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
-        onSend=${async (text, files) => { pinNext(); await onSend(text, files); }}/>
+        onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
+        onSend=${async (text, files) => { sent(); await onSend(text, files); }}/>
     </div>
     ${dragging && html`<div class="dropzone">Drop files into your message</div>`}
   </section>`;
@@ -510,8 +565,8 @@ function ChatPage({ pid, chat, data, files, stream, activity, voice, toast, onPr
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
 const modelName = (id) => { const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
 
-function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, title, onToggleSide, onProjectMenu }) {
-  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide agents" title="Agents (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
+function ChatHeader({ onClear, clearing, model, onModel, status, onRetry, awake, onAwake, connected, title, page, onToggleSide, onProjectMenu }) {
+  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide the sidebar" title="Sidebar (⌘\\)" onClick=${onToggleSide}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button><div class="ken-brand">${page ? html`<span>${page}</span>` : html`${title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<img src="/ken.svg" alt=""/><span>Ken</span>`}`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>${connected && !page && html`<div class="header-actions">${awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model?.choices?.length > 0 && html`<select class="model-select" aria-label="Model" title="Model" value=${model.current || ''} onChange=${(e) => onModel(e.target.value)}>${!model.current && html`<option value="">Default model</option>`}${model.choices.map((m) => html`<option value=${m}>${modelName(m)}</option>`)}</select>`}<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button></div>`}</header>`;
 }
 
 // First run: connect Claude with the same `claude setup-token` the installer runs.
@@ -540,27 +595,63 @@ function Connect({ onDone }) {
   </div>`;
 }
 
-// Ken's main chat first, then one chat per agent, each with its own folder of context, memory, jobs and tools.
-function Sidebar({ chats, current, unread, onNew, onProjectMenu, onConnections }) {
-  return html`<nav class="side" aria-label="Chats">
-    <div class="side-top"></div>
-    ${chats.map((c, i) => html`${i === 1 && html`<div class="side-label">Agents</div>`}<a class=${'side-item' + (c.id === current ? ' sel' : '')} href=${c.id === 'home' ? '#/' : '#/p/' + c.id} onContextMenu=${(e) => { if (c.id !== 'home' && onProjectMenu) { e.preventDefault(); onProjectMenu(e, c.id); } }}>
-      ${c.id === 'home' ? html`<img src="/ken.svg" alt=""/>` : html`<i class="proj-dot" style=${{background:c.color}}></i>`}
-      <span class="side-name">${c.name}</span>${c.busy ? html`<b class="side-busy" title="Working"></b>` : unread[c.id] && html`<b class="side-unread" title="New messages"></b>`}</a>`)}
-    ${chats.length <= 1 && html`<div class="side-label">Agents</div>`}
-    <button class="side-item side-new" onClick=${onNew}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="side-name">New agent</span></button>
-    <button class="side-item side-connections" onClick=${onConnections}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H7a5 5 0 000 10h2M15 7h2a5 5 0 010 10h-2M8 12h8"/></svg><span class="side-name">Settings</span></button>
-  </nav>`;
+const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
+
+// What Ken can use, connected right here: Chrome, email, calendar, plus any tool Ken adds itself.
+// A connected tool has a switch (does Ken use it); one that isn't connected has Connect.
+function ToolList({ tools, onUse, onAddTool }) {
+  const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
+  useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
+  const act = async (path, opts, after) => {
+    setBusy(true); setError('');
+    try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
+    finally { setBusy(false); }
+  };
+  const domain = (address.split('@')[1] || '').toLowerCase();
+  const help = APP_PASSWORD[domain];
+  if (!state) return html`<p class="np-note">${error || 'Loading…'}</p>`;
+  const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
+  const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
+  const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
+  const use = (t, connected, connect) => connected
+    ? html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
+    : connect;
+  return html`<div class="tool-list">
+    ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
+      use('browser', state.chrome, html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
+      open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}
+    ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
+      use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
+      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
+      ${open === 'email' && html`<div class="conn-form">
+        <input class="np-input" autofocus placeholder="you@gmail.com" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
+        <input class="np-input" type="password" placeholder="App password" value=${password} onInput=${(e) => setPassword(e.target.value)}/>
+        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
+        <p class="conn-steps">Use an app password, not your normal one. ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">Create one</a>` : 'Your email provider’s security settings can create one.'} ${domain.match(/gmail/) ? '(Google asks you to turn on 2-Step Verification first.)' : ''}</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
+      </div>`}`)}
+    ${row(icon('M4 6h16v14H4zM4 10h16M9 3v4M15 3v4'), 'Calendar', 'Ken reads your schedule for briefs and planning. Read-only.',
+      use('calendar', state.calendars.length > 0, open !== 'calendar' && html`<button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>Connect</button>`),
+      html`${state.calendars.length > 0 && html`<div class="conn-list">${state.calendars.map((c, i) => html`<div>${on(c.name)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/calendar?index=${i}`, { method: 'DELETE' })}>Remove</button></div>`)}${open !== 'calendar' && html`<div><button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>Add another</button></div>`}</div>`}
+      ${open === 'calendar' && html`<div class="conn-form">
+        <input class="np-input" autofocus placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value=${url} onInput=${(e) => setUrl(e.target.value)}/>
+        <p class="conn-steps">In Google Calendar: <b>Settings</b> → your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. Apple Calendar and Outlook have a similar private link.</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !url.trim()} onClick=${() => act('/api/connections/calendar', { json: { url } }, () => setUrl(''))}>${busy ? 'Checking…' : 'Add calendar'}</button></div>
+      </div>`}`)}    ${Object.keys(tools.mcp).map((t) => row(icon('M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z'), t, 'Added by Ken.', on('On')))}
+    ${open === 'add' ? html`<div class="conn-form tool-add"><input class="np-input" autofocus placeholder="Stripe, GitHub, Notion…" value=${want} onInput=${(e) => setWant(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && want.trim() && onAddTool(want.trim())}/>
+        <p class="conn-steps">Ken sets it up in the chat: an MCP server, a command-line tool or an API, whichever works best, and asks for anything it needs.</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${!want.trim()} onClick=${() => onAddTool(want.trim())}>Ask Ken</button></div></div>`
+      : html`<button class="text-action tool-add-btn" onClick=${() => { setOpen('add'); setWant(''); }}>+ Add a tool</button>`}
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+  </div>`;
 }
 
-// Settings: what Ken can reach (Chrome, email, calendars), Ken on your phone, and standing jobs.
-const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
-function Connections({ onClose, toast }) {
-  const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState('');
-  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('connections');
+function Settings({ onClose, toast }) {
+  const [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [reconnect, setReconnect] = useState(false);
+  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
   const [phone, setPhone] = useState(null), [botToken, setBotToken] = useState('');
-  useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); api('/api/jobs').then(setJobs).catch(() => {}); api('/api/phone').then(setPhone).catch(() => {}); }, []);
+  useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); api('/api/phone').then(setPhone).catch(() => {}); }, []);
   // While the phone hasn't opened the pairing link yet, check every 2 seconds.
   useEffect(() => {
     if (!phone?.link) return;
@@ -573,41 +664,14 @@ function Connections({ onClose, toast }) {
     finally { setBusy(false); }
   };
   const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); } catch (e) { setError(e.message); } };
-  const act = async (path, opts, after) => {
-    setBusy(true); setError('');
-    try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
-    finally { setBusy(false); }
-  };
-  const domain = (address.split('@')[1] || '').toLowerCase();
-  const help = APP_PASSWORD[domain];
-  if (!state) return html`<${Modal} title="Settings" onClose=${onClose}><p class="np-help">${error || 'Loading…'}</p><//>`;
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" onClose=${onClose}>
-    <div class="set-tabs" role="tablist">${[['connections', 'Connections'], ['jobs', 'Jobs'], ['phone', 'Phone']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
-    ${tab === 'connections' && html`<div class="set-body"><p class="np-help">What Ken can reach for you, beyond the files on this computer.</p>
-    ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
-      state.chrome ? on('On') : html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Set up</button>`,
-      open === 'chrome' && !state.chrome && html`<p class="conn-steps">In the Chrome page that opened, switch on <b>Allow remote debugging</b>. The first time Ken uses Chrome, click <b>Allow</b>. Needs Chrome 144 or newer.</p>`)}
-    ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
-      open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>${state.emails.length ? 'Add' : 'Connect'}</button>`,
-      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}</div>`}
-      ${open === 'email' && html`<div class="conn-form">
-        <input class="np-input" autofocus placeholder="you@gmail.com" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
-        <input class="np-input" type="password" placeholder="App password" value=${password} onInput=${(e) => setPassword(e.target.value)}/>
-        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
-        <p class="conn-steps">Use an app password, not your normal one. ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">Create one</a>` : 'Your email provider’s security settings can create one.'} ${domain.match(/gmail/) ? '(Google asks you to turn on 2-Step Verification first.)' : ''}</p>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
-      </div>`}`)}
-    ${row(icon('M4 6h16v14H4zM4 10h16M9 3v4M15 3v4'), 'Calendar', 'Ken reads your schedule for briefs and planning. Read-only.',
-      open !== 'calendar' && html`<button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>${state.calendars.length ? 'Add' : 'Connect'}</button>`,
-      html`${state.calendars.length > 0 && html`<div class="conn-list">${state.calendars.map((c, i) => html`<div>${on(c.name)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/calendar?index=${i}`, { method: 'DELETE' })}>Remove</button></div>`)}</div>`}
-      ${open === 'calendar' && html`<div class="conn-form">
-        <input class="np-input" autofocus placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value=${url} onInput=${(e) => setUrl(e.target.value)}/>
-        <p class="conn-steps">In Google Calendar: <b>Settings</b> → your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>. Apple Calendar and Outlook have a similar private link.</p>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !url.trim()} onClick=${() => act('/api/connections/calendar', { json: { url } }, () => setUrl(''))}>${busy ? 'Checking…' : 'Add calendar'}</button></div>
-      </div>`}`)}</div>`}
+    <div class="set-tabs" role="tablist">${[['claude', 'Claude'], ['phone', 'Phone'], ['jobs', 'Jobs']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Ken runs on your Claude subscription.</p>
+    ${reconnect ? html`<${Connect} onDone=${() => { setReconnect(false); toast('Claude is connected.'); }}/>`
+      : html`<div class="conn-list"><div>${on('Connected to your Claude account')}<button class="text-action" onClick=${() => setReconnect(true)}>Reconnect</button></div></div>`}</div>`}
     ${tab === 'phone' && phone && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p>
     ${phone.paired ? html`<div class="conn-list phone-list"><div>${on(phone.owner ? `@${phone.bot} · ${phone.owner}` : '@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Disconnect</button></div></div>`
     : phone.connected ? html`<div class="conn-form phone-form">
@@ -623,7 +687,7 @@ function Connections({ onClose, toast }) {
         <input class="np-input" placeholder="1234567890:AAH…" value=${botToken} onInput=${(e) => setBotToken(e.target.value)}/>
         <div class="row np-actions"><button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => phoneAct({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Connect'}</button></div>
       </div>`}</div>`}
-    ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken and your agents do on their own. You can also just tell them to change these.</p>
+    ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
     ${jobs.map((j) => row(icon('M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'), (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()),
       (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || (j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days)),
       html`<input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j, { time: e.target.value })}/>
@@ -644,27 +708,84 @@ function RenameProject({ project, onClose, onDone }) {
   <//>`;
 }
 
-// An agent's keys: named values it gets as environment variables, and whole files (a service-account
-// JSON). Stored outside its folder where only you can read them; values are never shown again.
-function AgentKeys({ project, onClose }) {
-  const [keys, setKeys] = useState(null), [name, setName] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const base = `/api/agents/${project.id}/keys`;
-  useEffect(() => { api(base).then(setKeys).catch((e) => setError(e.message)); }, []);
+// Keys: named values Ken gets as environment variables, and whole files (a service-account JSON).
+// Stored where only you can read them; a value is never shown again, and Ken masks it in chat.
+function Keys({ pid, initial }) {
+  const [keys, setKeys] = useState(initial || null), [name, setName] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const base = `/api/agents/${pid}/keys`;
+  useEffect(() => { if (!initial) api(base).then(setKeys).catch((e) => setError(e.message)); }, []);
   const act = async (fn) => { setBusy(true); setError(''); try { setKeys(await fn()); return true; } catch (e) { setError(e.message); return false; } finally { setBusy(false); } };
   const add = async () => { if (await act(() => api(`${base}/${encodeURIComponent(name.trim())}`, { method: 'PUT', json: { value } }))) { setName(''); setValue(''); } };
   const addFile = (file) => file && act(() => api(`${base}/${encodeURIComponent(file.name)}?file=1`, { method: 'PUT', body: file }));
   const remove = (k) => act(() => api(`${base}/${encodeURIComponent(k.name)}`, { method: 'DELETE' }));
-  return html`<${Modal} title=${`${project.name}’s keys`} onClose=${onClose}>
-    <p class="np-help">Logins and API keys this agent can use. Only this agent gets them, they’re saved where only you can read them, and Ken hides them if they ever show up in a chat.</p>
+  return html`<div class="keys">
     ${keys && keys.map((k) => html`<div class="key-row"><code>${k.kind === 'file' ? k.name : '$' + k.name}</code><span>${k.kind === 'file' ? 'file' : '••••••'}</span><button class="text-action" disabled=${busy} onClick=${() => remove(k)}>Remove</button></div>`)}
-    ${keys && !keys.length && html`<p class="np-note">No keys yet.</p>`}
-    <div class="key-add"><input class="np-input" placeholder="STRIPE_KEY" value=${name} onInput=${(e) => setName(e.target.value.toUpperCase())}/>
-      <input class="np-input" type="password" autocomplete="off" placeholder="Paste the value" value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && name.trim() && value && !busy && add()}/>
+    ${keys && !keys.length && html`<p class="np-note">No keys yet. When Ken needs a login or API key, it asks you to add it here.</p>`}
+    <div class="key-add"><input class="np-input" aria-label="Key name" placeholder="STRIPE_KEY" value=${name} onInput=${(e) => setName(e.target.value.toUpperCase())}/>
+      <input class="np-input" aria-label="Key value" type="password" autocomplete="off" placeholder="Paste the value" value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && name.trim() && value && !busy && add()}/>
       <button class="btn primary" disabled=${busy || !name.trim() || !value} onClick=${add}>Add</button></div>
     <label class="text-action key-file">Add a file (like a service-account JSON)…<input type="file" hidden onChange=${(e) => { addFile(e.target.files[0]); e.target.value = ''; }}/></label>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Done</button></div>
-  <//>`;
+  </div>`;
+}
+
+const EXAMPLES = ['Plan my day', 'Catch me up on my email', 'Set up a morning brief'];
+const TOOL_NAMES = { browser: 'Your Chrome', email: 'Email', calendar: 'Calendar' };
+
+// Everything Ken knows and has, in one place to read and edit: who it is (SOUL.md), its memory
+// notes, its tools and keys, its jobs and the files you've given it.
+function About({ pid, onClose, onPreview, page, onAddTool }) {
+  // As a page (What Ken knows) or as a dialog (an agent's About); the same content either way.
+  const frame = (title, body, wide = true) => page
+    ? html`<div class="knows-page"><div class="knows-inner"><h1>${title}</h1>${body}</div></div>`
+    : html`<${Modal} wide=${wide} title=${title} onClose=${edit ? () => setEdit(null) : onClose}>${body}<//>`;
+  const [a, setA] = useState(null), [jobs, setJobs] = useState([]), [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const load = () => api(`/api/about/${pid}`).then(setA).catch((e) => setError(e.message));
+  useEffect(() => { load(); api('/api/jobs').then((all) => setJobs(all.filter((j) => (j.agent || 'home') === pid))).catch(() => {}); }, []);
+  const save = async (fn) => { setBusy(true); setError(''); try { setA(await fn()); setEdit(null); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const openNote = (name) => api(`/api/about/${pid}/memory/${encodeURIComponent(name)}`).then((n) => setEdit({ kind: 'note', name, text: n.text })).catch((e) => setError(e.message));
+  const noteName = (n) => (n.trim().replace(/[^\w .-]/g, '').replace(/\.md$/i, '') || 'note') + '.md';
+  const job = async (j, change) => { try { const all = await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } }); setJobs(all.filter((x) => (x.agent || 'home') === pid)); } catch (e) { setError(e.message); } };
+  const title = a ? (pid === 'home' ? 'What Ken knows' : `About ${a.name}`) : 'What Ken knows';
+  if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : 'Context') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
+    ${edit.isNew && html`<input class="np-input" placeholder="Note name, like people" value=${edit.name} onInput=${(e) => setEdit({ ...edit, name: e.target.value })}/>`}
+    <textarea class="np-input about-editor" value=${edit.text} onInput=${(e) => setEdit({ ...edit, text: e.target.value })}></textarea>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    <div class="row np-actions">
+      ${edit.kind === 'note' && !edit.isNew && html`<button class="btn ghost" style="margin-right:auto" disabled=${busy} onClick=${() => save(() => api(`/api/about/${pid}/memory/${encodeURIComponent(edit.name)}`, { method: 'DELETE' }))}>Delete note</button>`}
+      <button class="btn ghost" onClick=${() => setEdit(null)}>Cancel</button>
+      <button class="btn primary" disabled=${busy || (edit.isNew && !edit.name.trim())} onClick=${() => save(() => edit.kind === 'context'
+        ? api(`/api/about/${pid}/context`, { method: 'PUT', json: { text: edit.text } })
+        : api(`/api/about/${pid}/memory/${encodeURIComponent(edit.isNew ? noteName(edit.name) : edit.name)}`, { method: 'PUT', json: { text: edit.text } }))}>Save</button>
+    </div>`);
+  return frame(title, html`
+    ${!a ? html`<p class="np-help">${error || 'Loading…'}</p>` : html`<div class="about">
+      <section><div class="about-head"><h3>${pid === 'home' ? 'Who Ken is' : 'Context'}</h3><button class="text-action" onClick=${() => setEdit({ kind: 'context', text: a.context })}>Edit</button></div>
+        <div class="about-context">${a.context.trim() ? doc(a.context) : 'Nothing yet.'}</div></section>
+      <section><div class="about-head"><h3>Memory</h3><button class="text-action" onClick=${() => setEdit({ kind: 'note', isNew: true, name: '', text: '' })}>New note</button></div>
+        ${a.memory.length ? a.memory.map((n) => html`<button class="about-item" onClick=${() => openNote(n.name)}><b>${n.name.replace(/\.md$/, '')}</b><span>${n.about}</span></button>`) : html`<p class="np-note">No notes yet. Ken writes them as it learns about you.</p>`}</section>
+      <section><div class="about-head"><h3>Tools</h3></div>
+        <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/></section>
+      <section><div class="about-head"><h3>Keys</h3></div><${Keys} pid=${pid} initial=${a.keys}/></section>
+      ${jobs.length > 0 && html`<section><div class="about-head"><h3>Jobs</h3></div>
+        ${jobs.map((j) => html`<div class="about-job"><span>${(pid === 'home' && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())}</span>
+          <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j, { time: e.target.value })}/>
+          <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => job(j, { on: e.target.checked })}/></div>`)}</section>`}
+      ${a.files.length > 0 && html`<section><div class="about-head"><h3>Files</h3></div>
+        ${a.files.slice(0, 30).map((f) => html`<button class="about-item" onClick=${() => onPreview({ ...f, project: pid })}><b>${f.name}</b><span>${bytes(f.size)}</span></button>`)}</section>`}
+    </div>`}
+    ${error && a && html`<p class="connect-error" role="alert">${error}</p>`}
+    ${!page && html`<div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Done</button></div>`}`);
+}
+
+// Three places, labelled: the chat, everything Ken knows and has, and Settings.
+function Sidebar({ knows, onSettings }) {
+  return html`<nav class="side" aria-label="Ken">
+    <div class="side-top"></div>
+    <a class=${'side-item' + (!knows ? ' sel' : '')} href="#/"><img src="/ken.svg" alt=""/><span class="side-name">Chat</span></a>
+    <a class=${'side-item' + (knows ? ' sel' : '')} href="#/knows"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg><span class="side-name">What Ken knows</span></a>
+    <button class="side-item side-connections" onClick=${onSettings}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span class="side-name">Settings</span></button>
+  </nav>`;
 }
 
 function RemoveProject({ project, onClose, onDone }) {
@@ -693,8 +814,8 @@ function NewAgent({ onClose, onCreated }) {
       ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">Pick a code folder to have it work there and reuse its CLAUDE.md.</small></div>`
-      : html`<button class="text-action" onClick=${() => setMore(true)}>Work in a code folder…</button>`}
+      <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
+      : html`<button class="text-action" onClick=${() => setMore(true)}>Point it to a code or info folder…</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
   <//>`;
@@ -716,7 +837,7 @@ function App() {
   const [awake,setAwake]=useState(null);
   const [setup,setSetup]=useState(null);
   const [chats,setChats]=useState([]);
-  const [sideOpen,setSideOpen]=useState(()=>{try{return localStorage.getItem('ken-sidebar')!=='0';}catch{return true;}});
+  const [sideOpen,setSideOpen]=useState(()=>{try{return localStorage.getItem('ken-sidebar')==='1';}catch{return false;}}); // closed until you open it
   const toggleSide=()=>setSideOpen((o)=>{try{localStorage.setItem('ken-sidebar',o?'0':'1');}catch{}return !o;});
   useEffect(()=>{const onKey=(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='\\'){e.preventDefault();toggleSide();}};addEventListener('keydown',onKey);return()=>removeEventListener('keydown',onKey);},[]);
   const [newProject,setNewProject]=useState(false);
@@ -729,13 +850,13 @@ function App() {
   const projectMenu=async(e,id)=>{
     const native=window.kenDesktop; if(!native?.popupMenu)return;
     const project=chats.find((c)=>c.id===id); if(!project)return;
-    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'keys',label:'Keys…'},{id:'rename',label:'Rename…'},{id:'folder',label:'Change folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},{id:'folder',label:'Code or info folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
     if(choice==='open'){ const v=await api(`/api/agents/${id}`); native.openFolder(v.agent.workdir); }
     if(choice==='keys')setProjectDialog({kind:'keys',project});
     if(choice==='rename')setProjectDialog({kind:'rename',project});
     if(choice==='remove')setProjectDialog({kind:'remove',project});
     if(choice==='folder'){ const path=await native.pickFolder(); if(!path)return;
-      try{ await api(`/api/agents/${id}`,{method:'PATCH',json:{path}}); toast(`Ken now works in ${path.replace(/^\/Users\/[^/]+/,'~')}.`); if(id===pid)loadProjectMeta(id); }catch(err){toast(err.message);} }
+      try{ await api(`/api/agents/${id}`,{method:'PATCH',json:{path}}); toast(`${project.name} now knows its job is in ${path.replace(/^\/Users\/[^/]+/,'~')}.`); if(id===pid)loadProjectMeta(id); }catch(err){toast(err.message);} }
   };
   // Unread: a chat whose last message is newer than when it was last open.
   const seen=()=>{try{return JSON.parse(localStorage.getItem('ken-seen')||'{}');}catch{return {};}};
@@ -933,17 +1054,19 @@ function App() {
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
   useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
-  const unread = Object.fromEntries(chats.map((c) => [c.id, c.id !== pid && c.last_ts > (seenAt[c.id] || 0)]));
+  // When you last read this chat, as of opening it: where the first unread reply starts.
+  const opened = useRef({ pid: null, ts: 0 });
+  if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} chats=${chats} current=${pid} unread=${unread} onNew=${()=>setNewProject(true)} onProjectMenu=${projectMenu} onConnections=${()=>setConnections(true)}/>`}<main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
+  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} knows=${route.knows} onSettings=${()=>setConnections(true)}/>`}<main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} page=${route.knows ? 'What Ken knows' : null} onToggleSide=${toggleSide} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
       ? api(`/api/agents/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
       : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
-    ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : html`<${ChatPage} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+    ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : route.knows ? html`<${About} page pid="home" onPreview=${setPreview} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
-    ${connections && html`<${Connections} toast=${toast} onClose=${()=>setConnections(false)}/>`}
-    ${projectDialog?.kind==='keys' && html`<${AgentKeys} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)}/>`}
+    ${connections && html`<${Settings} toast=${toast} onClose=${()=>setConnections(false)}/>`}
+    ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
     ${newProject && html`<${NewAgent} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/>`}
