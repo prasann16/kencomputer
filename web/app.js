@@ -636,7 +636,7 @@ function ToolList({ tools, onUse, onAddTool }) {
       open === 'chrome' && (state.chrome
         ? html`<p class="conn-steps">${on('Connected')} The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`
         : html`<div class="conn-form"><ol class="conn-steps">
-            <li>${window.kenDesktop ? 'In the Chrome page that just opened' : html`In Chrome, open <b>chrome://inspect/#remote-debugging</b>`}, switch on <b>Allow remote debugging</b>.</li>
+            <li>${window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
             <p class="conn-steps">Needs Chrome 144 or newer. If Chrome restarts, this switches off, so connect again here.</p>
             <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`))}

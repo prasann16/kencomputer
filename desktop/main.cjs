@@ -321,10 +321,22 @@ function updateItem() {
     ? { label: `Restart to update to ${updateVersion}`, click: () => installNow() }
     : { label: 'Check for Updates…', click: () => { show(); checkNow(true); } };
 }
-// Ken uses the user's own Chrome; Chrome needs remote debugging switched on once.
+// Ken uses the user's own Chrome; Chrome needs remote debugging switched on (again after it
+// restarts). Chrome ignores chrome:// links handed to it by `open`, so ask Chrome to open the tab;
+// if that's refused, bring Chrome forward with the address on the clipboard to paste.
+const CHROME_PAGE = 'chrome://inspect/#remote-debugging';
 function connectChrome() {
-  execFile('open', ['-a', 'Google Chrome', 'chrome://inspect/#remote-debugging'], (error) => {
-    if (error) dialog.showMessageBox({ message: 'Ken uses Google Chrome to work on websites.', detail: 'Install Chrome, then choose Connect Chrome… again.' });
+  const script = `tell application "Google Chrome"
+    activate
+    if (count of windows) is 0 then make new window
+    tell front window to make new tab with properties {URL:"${CHROME_PAGE}"}
+  end tell`;
+  execFile('/usr/bin/osascript', ['-e', script], (error) => {
+    if (!error) return;
+    clipboard.writeText(CHROME_PAGE);
+    execFile('open', ['-a', 'Google Chrome'], (missing) => {
+      if (missing) dialog.showMessageBox({ message: 'Ken uses Google Chrome to work on websites.', detail: 'Install Chrome, then choose Connect Chrome… again.' });
+    });
   });
 }
 function buildMenus() {

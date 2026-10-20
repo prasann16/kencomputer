@@ -8,5 +8,7 @@
   <key>com.apple.security.cs.disable-library-validation</key><true/>
   <!-- Voice notes -->
   <key>com.apple.security.device.audio-input</key><true/>
+  <!-- Opening Chrome's remote debugging page: Chrome won't take chrome:// links from open -->
+  <key>com.apple.security.automation.apple-events</key><true/>
 </dict>
 </plist>

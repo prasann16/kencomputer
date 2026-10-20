@@ -38,7 +38,8 @@
         "zip"
       ],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Ken uses your microphone when you choose to dictate a message."
+        "NSMicrophoneUsageDescription": "Ken uses your microphone when you choose to dictate a message.",
+        "NSAppleEventsUsageDescription": "Ken opens the Chrome page where you let Ken use Chrome."
       },
       "hardenedRuntime": true,
       "entitlements": "desktop/entitlements.mac.plist",
