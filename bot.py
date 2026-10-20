@@ -240,16 +240,21 @@ SYSTEM_PROMPT = (
     "tools) to learn their world; show them what you wrote down. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
-    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
-    "shows your Home chat, agent chats (one per agent they set up, each with one job), and Settings: Connections (Chrome, Email, Calendar), "
-    "Phone (Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
-    "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
-    "Home conversation, memory and connections as the app, not a separate assistant. The "
-    "header line of each message says where they wrote from. On their phone, keep it short "
-    "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new and "
-    "/model; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
-    "they ask how to connect something or how to use you on their phone, point them to the "
-    "exact place in Settings in one line. If SOUL.md describes your body differently (older "
+    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer has "
+    "two tabs at the top: Chat (this conversation; Clear starts a fresh thread, memory and files stay) "
+    "and Brain (who you are, your memory notes, Tools: Chrome, email and calendar connected right there "
+    "plus any tool you add, Keys, Jobs and files, all of it viewable and editable). Settings, at the top "
+    "right, has Claude (the account you run on), Phone and Jobs. Ken on your phone is their own Telegram "
+    "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
+    "app, not a separate assistant. The header line of each message says where they wrote from. On their "
+    "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
+    "button, the model menu and the coffee cup; in Telegram /stop (stop the current task), /new (fresh "
+    "thread), /model (switch models), /coffee and /decaf. Never suggest Esc or Ctrl+C. COFFEE keeps this "
+    "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
+    "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
+    "While the Mac sleeps you can't run or answer. Suggest coffee, once, when they want something done "
+    "while they're away or a job falls at a time the Mac usually sleeps. When they ask how to connect "
+    "something or how to use you on their phone, point them to the exact place in one line. If SOUL.md describes your body differently (older "
     "installs say you are only a Telegram bot, or carry a 'Your body' section), these instructions are the "
     "truth; leave app mechanics out of SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
@@ -762,8 +767,8 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def get_oauth_token() -> str:
     """Claude Code's own credentials: env var, credentials file, or macOS Keychain."""
     tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if tok:
-        return tok
+    if tok or os.environ.get("KEN_OWN_LOGIN_ONLY"):
+        return tok  # testing first-run setup: act like a Mac where Claude Code was never signed in
     creds = Path.home() / ".claude" / ".credentials.json"
     if creds.exists():
         try:
@@ -1366,6 +1371,98 @@ def _lock_windows(lock) -> None:
 PAIR_MINUTES = 10
 
 
+KEN_SITE = os.environ.get("KEN_SITE", "https://kencomputer.dev")
+HANDOFF_MINUTES = 10
+
+
+class Handoff:
+    """Send the code from your phone. BotFather's code is on the phone and Ken is here; the phone
+    page on kencomputer.dev encrypts it with a key that's only in the QR link's #fragment (browsers
+    never send that part), so the site only ever relays scrambled bytes, once. Ken fetches them,
+    decrypts them, and asks the human to confirm the bot by name before connecting it: someone who
+    photographed the QR could otherwise slip in a bot of their own."""
+
+    def __init__(self, phone: "Phone") -> None:
+        self.phone = phone
+        self.id = ""
+        self.key = b""
+        self.qr = ""
+        self.until = 0.0
+        self.pending: dict | None = None  # {"token", "bot"} waiting for their OK
+        self.error = ""
+        self.task: asyncio.Task | None = None
+
+    def view(self) -> dict | None:
+        if self.pending:
+            return {"bot": self.pending["bot"]}
+        if self.task is not None and not self.task.done():
+            return {"qr": self.qr, "error": self.error}
+        return None
+
+    def _new(self) -> None:
+        """A fresh one-time link and key (each can carry exactly one code)."""
+        import base64
+        import secrets
+
+        import segno
+
+        self.id, self.key = secrets.token_urlsafe(18), secrets.token_bytes(32)
+        link = f"{KEN_SITE}/phone#{self.id}.{base64.urlsafe_b64encode(self.key).decode().rstrip('=')}"
+        self.qr = segno.make(link, error="m").svg_inline(scale=4, border=2, omitsize=True, dark="#111", light="#fff")
+        self.until = time.time() + HANDOFF_MINUTES * 60
+
+    async def start(self) -> dict:
+        if self.view():
+            return self.view()
+        self.error = ""
+        self._new()
+        self.task = asyncio.create_task(self._wait())
+        return self.view()
+
+    async def _wait(self) -> None:
+        async with httpx.AsyncClient(timeout=10) as http:
+            while time.time() < self.until:
+                try:
+                    r = await http.get(f"{KEN_SITE}/api/handoff", params={"id": self.id})
+                except httpx.HTTPError:
+                    r = None  # offline for a moment: keep waiting
+                if r is not None and r.status_code == 200:
+                    try:
+                        token = self.decrypt(r.json())
+                        async with Bot(token) as probe:
+                            me = await probe.get_me()
+                        self.pending, self.error = {"token": token, "bot": me.username}, ""
+                        return
+                    except Exception as e:  # never log the code itself: errors can quote it
+                        log.info("phone handoff: the code from the phone didn't work (%s)", type(e).__name__)
+                        self.error = "Telegram didn't accept that code. Scan again and paste the whole code."
+                        self._new()  # this link is used up
+                await asyncio.sleep(2)
+
+    def decrypt(self, sealed: dict) -> str:
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        unb64 = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))  # noqa: E731
+        token = AESGCM(self.key).decrypt(unb64(sealed["iv"]), unb64(sealed["ct"]), self.id.encode()).decode()
+        if not re.fullmatch(r"\d{6,}:[A-Za-z0-9_-]{30,}", token):
+            raise ValueError("not a bot code")
+        return token
+
+    async def confirm(self) -> dict:
+        if not self.pending:
+            raise ValueError("Nothing to confirm. Scan the QR code again.")
+        token, self.pending = self.pending["token"], None
+        return await self.phone.connect(token)
+
+    async def stop(self) -> dict:
+        if self.task is not None:
+            self.task.cancel()
+        self.task, self.pending = None, None
+        return self.phone.status()
+
+
 class Phone:
     """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
     Connected, paired and disconnected while Ken runs (Settings → Phone).
@@ -1378,6 +1475,7 @@ class Phone:
         self.pair_until = 0.0
         self.notify: asyncio.Task | None = None
         self.retry: asyncio.Task | None = None
+        self.handoff = Handoff(self)
 
     @property
     def bot(self):
@@ -1389,6 +1487,8 @@ class Phone:
         if self.app and not ALLOWED_USER_ID:
             self.pair_until = time.time() + PAIR_MINUTES * 60  # Settings is waiting for the tap
             s["link"] = f"https://t.me/{self.username}"
+        if not self.app:
+            s["handoff"] = self.handoff.view()
         return s
 
     def pair(self, user_id: int, name: str) -> bool:
@@ -1463,9 +1563,10 @@ class Phone:
     async def connect(self, token: str) -> dict:
         """A bot token from BotFather: check it, then switch Telegram over to it."""
         global ALLOWED_USER_ID
-        token = token.strip()
-        if not re.fullmatch(r"\d+:[A-Za-z0-9_-]{30,}", token):
+        found = re.search(r"\d{6,}:[A-Za-z0-9_-]{30,}", token)  # the code alone, or BotFather's whole message
+        if not found:
             raise ValueError("That doesn't look like the code from BotFather. It looks like 1234567890:AAH… — copy the whole thing.")
+        token = found.group(0)
         try:
             async with Bot(token) as probe:
                 await probe.get_me()

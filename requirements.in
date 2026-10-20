@@ -18,3 +18,5 @@ cryptography<49 ; sys_platform == 'darwin' and platform_machine == 'x86_64'
 # Calendar: read a calendar's private iCal link, including recurring events.
 icalendar
 recurring-ical-events
+# Ken on your phone: the QR code the phone scans to send the BotFather code to this computer.
+segno

@@ -652,22 +652,98 @@ function ToolList({ tools, onUse, onAddTool }) {
   </div>`;
 }
 
-function Settings({ onClose, toast }) {
-  const [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [reconnect, setReconnect] = useState(false);
-  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
-  const [phone, setPhone] = useState(null), [botToken, setBotToken] = useState('');
-  useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); api('/api/phone').then(setPhone).catch(() => {}); }, []);
-  // While the phone hasn't opened the pairing link yet, check every 2 seconds.
+const BOT_TOKEN = /\d{6,}:[A-Za-z0-9_-]{30,}/;  // a BotFather code, alone or inside its whole message
+
+// Ken on your phone, wherever it's set up (first run, Settings): make a bot with BotFather on the
+// phone, then paste its code here. An iPhone's copy is already on this Mac's clipboard, and Ken
+// picks it up by itself.
+function PhoneSteps({ toast, onPaired }) {
+  const [phone, setPhone] = useState(null);
+  const [botToken, setBotToken] = useState(''), [found, setFound] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const waiting = phone && !phone.paired && !phone.connected;
+  useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
+  // Send it from the phone (encrypted, through kencomputer.dev): a QR while they're on this step.
   useEffect(() => {
-    if (!phone?.link) return;
-    const timer = setInterval(() => api('/api/phone').then((p) => { setPhone(p); if (p.paired) toast(`Ken is on your phone. Say hi to @${p.bot}.`); }).catch(() => {}), 2000);
+    if (!waiting || phone.handoff) return;
+    api('/api/phone/handoff', { json: {} }).then((h) => setPhone((p) => ({ ...p, handoff: h }))).catch(() => {});
+  }, [waiting, !!phone?.handoff]);  // and again after "No, it isn't"
+  useEffect(() => () => { api('/api/phone/handoff', { method: 'DELETE' }).catch(() => {}); }, []);
+  // Every 2s: has the phone sent the code, or tapped Start on the new bot?
+  useEffect(() => {
+    if (!phone || phone.paired) return;
+    const timer = setInterval(() => api('/api/phone').then((p) => {
+      setPhone(p);
+      if (p.paired) { toast?.(`Ken is on your phone. Say hi to @${p.bot}.`); onPaired?.(); }
+    }).catch(() => {}), 2000);
     return () => clearInterval(timer);
-  }, [phone?.link]);
-  const phoneAct = async (opts) => {
+  }, [phone?.paired]);
+  // Only a bot token is ever read from the clipboard, nothing else.
+  const fromClipboard = async (asked) => {
+    let code = null;
+    try {
+      code = window.kenDesktop?.botTokenFromClipboard ? await window.kenDesktop.botTokenFromClipboard()
+        : asked ? ((await navigator.clipboard.readText()).match(BOT_TOKEN) || [])[0] : null;
+    } catch {}
+    if (code) { setBotToken(code); setFound(true); setError(''); }
+    else if (asked) setError('Nothing to paste yet. Copy the code in Telegram first.');
+  };
+  useEffect(() => {
+    if (!waiting) return;
+    const look = () => { if (!document.hidden) fromClipboard(false); };
+    look(); addEventListener('focus', look);
+    return () => removeEventListener('focus', look);
+  }, [waiting]);
+  const act = async (opts) => {
     setBusy(true); setError('');
-    try { setPhone(await api('/api/phone', opts)); setBotToken(''); setOpen(''); } catch (e) { setError(e.message); }
+    try { setPhone(await api(opts.path || '/api/phone', opts)); setBotToken(''); } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
+  const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
+  if (!phone) return html`<p class="np-note">${error || 'Loading…'}</p>`;
+  if (phone.paired) return html`<div class="conn-list phone-list"><div>${on(phone.owner ? `@${phone.bot} · ${phone.owner}` : '@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Disconnect</button></div></div>`;
+  if (phone.handoff?.bot) return html`<div class="phone-confirm"><p>Your phone sent a bot: <b>@${phone.handoff.bot}</b>. Is that the one you just made?</p>
+    <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => act({ method: 'DELETE', path: '/api/phone/handoff' })}>No, it isn't</button>
+    <button class="btn primary" disabled=${busy} onClick=${() => act({ json: {}, path: '/api/phone/handoff/confirm' })}>${busy ? 'Connecting…' : `Connect @${phone.handoff.bot}`}</button></div></div>`;
+  if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and tap <b>Start</b>.</p>
+    <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Use a different bot</button></div>`;
+  return html`<div class="phone-steps-box">
+    <div class="phone-how">
+      <video class="phone-video" src="/media/botfather.mp4" autoplay muted loop playsinline aria-label="What you'll do in Telegram"></video>
+      <div>
+        <ol class="phone-steps">
+          <li>In Telegram, open <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> and tap <b>Start</b></li>
+          <li>Send <code>/newbot</code>, then a name, then a username ending in <code>bot</code></li>
+          <li>Copy the long code it sends back and paste it on your phone, or below</li>
+        </ol>
+        ${phone.handoff?.qr
+          ? html`<div class="phone-qr"><div class="phone-send-qr" dangerouslySetInnerHTML=${{ __html: phone.handoff.qr }}></div><span class=${phone.handoff.error ? 'err' : ''}>${phone.handoff.error || 'Scan with your phone: it opens BotFather, then sends the code back here'}</span></div>`
+          : html`<div class="phone-qr"><img src="/media/botfather-qr.svg" alt="QR code that opens @BotFather"/><span>Scan with your phone's camera to open @BotFather</span></div>`}
+      </div>
+    </div>
+    <div class="token-row"><input class="np-input" placeholder="Paste the code, or BotFather's whole message" value=${botToken}
+          onInput=${(e) => { const v = e.target.value, code = (v.match(BOT_TOKEN) || [])[0]; setBotToken(code || v); setFound(!!code && code !== v.trim()); }}/>
+          <button class="btn" onClick=${() => fromClipboard(true)}>Paste</button>
+          <button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => act({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Connect'}</button></div>
+        ${(error || found) && html`<p class=${'token-hint' + (error ? ' err' : '')} role=${error ? 'alert' : 'status'}>${error || 'Found the code from BotFather'}</p>`}
+  </div>`;
+}
+
+// First run, step 2 of 2 (after Connect Claude): the two ways to reach Ken, and the phone set up
+// or skipped. Then the chat opens and Ken takes it from there.
+function PhoneSetup({ onDone, toast }) {
+  const [busy, setBusy] = useState(false);
+  const skip = async () => { setBusy(true); try { onDone(await api('/api/setup', { json: { action: 'skip-phone' } })); } catch (e) { toast(e.message); setBusy(false); } };
+  return html`<div class="connect phone-setup"><img src="/ken.svg" alt=""/><h1>Ken on your phone</h1>
+    <p>Text or voice-note Ken from anywhere with Telegram. Same Ken, same chat.</p>
+    <${PhoneSteps} toast=${toast} onPaired=${() => api('/api/setup').then(onDone).catch(() => {})}/>
+    <button class="text-action" disabled=${busy} onClick=${skip}>Skip for now (you can do it later in Settings)</button>
+  </div>`;
+}
+
+function Settings({ onClose, toast }) {
+  const [error, setError] = useState(''), [reconnect, setReconnect] = useState(false);
+  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
+  useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); }, []);
   const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
@@ -677,21 +753,7 @@ function Settings({ onClose, toast }) {
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Ken runs on your Claude subscription.</p>
     ${reconnect ? html`<${Connect} onDone=${() => { setReconnect(false); toast('Claude is connected.'); }}/>`
       : html`<div class="conn-list"><div>${on('Connected to your Claude account')}<button class="text-action" onClick=${() => setReconnect(true)}>Reconnect</button></div></div>`}</div>`}
-    ${tab === 'phone' && phone && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p>
-    ${phone.paired ? html`<div class="conn-list phone-list"><div>${on(phone.owner ? `@${phone.bot} · ${phone.owner}` : '@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Disconnect</button></div></div>`
-    : phone.connected ? html`<div class="conn-form phone-form">
-        <p class="phone-last">Last step: open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> on your phone and tap <b>Start</b>.</p>
-        <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => phoneAct({ method: 'DELETE' })}>Cancel</button></div>
-      </div>`
-    : html`<div class="conn-form phone-form">
-        <ol class="phone-steps">
-          <li>In Telegram, message <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a></li>
-          <li>Send <code>/newbot</code> and follow along</li>
-          <li>Paste the code it gives you</li>
-        </ol>
-        <input class="np-input" placeholder="1234567890:AAH…" value=${botToken} onInput=${(e) => setBotToken(e.target.value)}/>
-        <div class="row np-actions"><button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => phoneAct({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Connect'}</button></div>
-      </div>`}</div>`}
+    ${tab === 'phone' && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`}
     ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
     ${jobs.map((j) => row(icon('M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'), (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()),
       (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || (j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days)),
@@ -1069,7 +1131,7 @@ function App() {
   return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
       ? api(`/api/agents/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
       : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
-    ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+    ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}

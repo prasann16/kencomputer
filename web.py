@@ -141,7 +141,7 @@ class WebApp:
                       "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {"claude": True, "voice": {"state": "ready"}})
+        return _json(self.setup.status() if self.setup else {"claude": True, "phone": "done", "voice": {"state": "ready"}})
 
     async def setup_action(self, request):
         """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
@@ -149,6 +149,8 @@ class WebApp:
         try:
             if b.get("action") == "start":
                 return _json(await self.setup.start())
+            if b.get("action") == "skip-phone":
+                return _json(self.setup.skip_phone())
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"])))
         except RuntimeError as exc:
@@ -203,6 +205,19 @@ class WebApp:
             return _json(await self.phone.disconnect())
         try:
             return _json(await self.phone.connect(str((await self._body(request)).get("token", ""))))
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+
+    async def phone_handoff(self, request):
+        """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
+        if not self.phone:
+            return _json({"error": "Ken on your phone isn't available here."}, 400)
+        try:
+            if request.method == "DELETE":
+                return _json(await self.phone.handoff.stop())
+            if request.path.endswith("/confirm"):
+                return _json(await self.phone.handoff.confirm())
+            return _json(await self.phone.handoff.start())
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
@@ -578,6 +593,9 @@ class WebApp:
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
+        r.add_post("/api/phone/handoff", self.phone_handoff)
+        r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
+        r.add_delete("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/connections/{kind}", self.connections_change)
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)
