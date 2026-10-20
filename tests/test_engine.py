@@ -393,3 +393,25 @@ async def test_a_new_install_gets_kens_first_contact_once(engine):
     await engine.first_contact()  # it already spoke
     assert len(engine.brain.asks) == 1 and "very first contact" in engine.brain.asks[0]["prompt"]
     assert [m["role"] for m in engine.messages(HOME)] == ["ken"]
+
+
+async def test_work_stops_only_after_the_brain_goes_quiet():
+    import time as _time
+
+    import engine as engine_mod
+
+    class Session:
+        last_activity = _time.monotonic()
+
+    async def busy():  # keeps reporting progress, so it is never stopped
+        for _ in range(6):
+            Session.last_activity = _time.monotonic()
+            await asyncio.sleep(0.05)
+        return "done"
+    assert await engine_mod.until_idle(Session, busy(), limit=0.1) == "done"
+
+    async def silent():
+        await asyncio.sleep(5)
+    Session.last_activity = _time.monotonic()
+    with pytest.raises(asyncio.TimeoutError):
+        await engine_mod.until_idle(Session, silent(), limit=0.1)

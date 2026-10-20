@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import deque
 from typing import Awaitable, Callable
 
 log = logging.getLogger("ken")
@@ -26,6 +28,7 @@ class Session:
 
     session_id: str | None = None
     busy: bool = False
+    last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
 
     async def ask(
         self, prompt: str, on_text: OnText, on_tool: OnTool | None = None, on_delta: OnText | None = None
@@ -89,6 +92,9 @@ class ClaudeSession(Session):
         self.client = None
         self.model = ""
         self.busy = False
+        self.last_activity = time.monotonic()
+        self.stderr: deque[str] = deque(maxlen=40)  # Claude Code's own error output, logged when a turn fails
+        self._heard = False
         self._connecting = asyncio.Lock()
 
     async def _connect(self, resume: str | None) -> None:
@@ -109,6 +115,11 @@ class ClaudeSession(Session):
             # One message can carry a browser screenshot or a page snapshot; the SDK's 1 MB default
             # dropped the whole turn ("JSON message exceeded maximum buffer size").
             max_buffer_size=64 * 1024 * 1024,
+            stderr=self.stderr.append,
+            # Ken is the same on every computer: none of this Mac's own Claude Code settings,
+            # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
+            setting_sources=[],
+            strict_mcp_config=True,
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
@@ -135,6 +146,21 @@ class ClaudeSession(Session):
         await self._ensure()
 
     async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
+        from claude_agent_sdk import CLIConnectionError, ProcessError
+
+        try:
+            return await self._ask_once(prompt, on_text, on_tool, on_delta)
+        except (CLIConnectionError, ProcessError) as e:
+            # Claude Code's process was gone before it said or did anything (it was killed, or
+            # died between messages): start it again and ask once more. Never after it started
+            # working, since it may already have sent or posted something.
+            if self._heard:
+                raise
+            log.warning("Claude Code wasn't running (%s); starting it again", e)
+            await self.close()
+            return await self._ask_once(prompt, on_text, on_tool, on_delta)
+
+    async def _ask_once(self, prompt, on_text, on_tool=None, on_delta=None):
         final = await self._ask(prompt, on_text, on_tool, on_delta)
         if final is TOO_NEW:  # the model needs a newer Claude Code: answer on the default instead
             log.warning("model %s needs a newer Claude Code; using the default until Ken updates", self.model)
@@ -152,13 +178,15 @@ class ClaudeSession(Session):
         if model != self.model:
             await self.client.set_model(model or None)
             self.model = model
-        self.busy = True
+        self.busy, self._heard = True, False
+        self.last_activity = time.monotonic()
         last_text = ""
         final = None
         partial = ""
         try:
             await self.client.query(prompt)
             async for msg in self.client.receive_response():
+                self._heard, self.last_activity = True, time.monotonic()
                 if isinstance(msg, StreamEvent):
                     ev = msg.event or {}
                     if ev.get("type") == "message_start":
@@ -191,6 +219,10 @@ class ClaudeSession(Session):
                     if result and result != last_text:
                         final = result
                         await on_text(result)
+        except Exception:
+            if self.stderr:
+                log.warning("Claude Code said:\n%s", "\n".join(self.stderr))
+            raise
         finally:
             self.busy = False
         return final

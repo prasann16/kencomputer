@@ -62,6 +62,27 @@ DEFAULT_AUTONOMY = {
     "ask": ["Email customers", "Post publicly", "Merge & ship", "Spend money"],
 }
 APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
+# Work runs as long as it needs; only a brain that has said nothing for this long is stopped.
+IDLE_LIMIT = 45 * 60
+
+
+async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
+    """Await the brain's work, raising TimeoutError once it has been silent for `limit` seconds."""
+    task = asyncio.ensure_future(work)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=min(30, limit))
+            if done:
+                return task.result()
+            if time.monotonic() - (getattr(session, "last_activity", 0) or time.monotonic()) > limit:
+                raise asyncio.TimeoutError
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
 BUILTIN_TOOLS = ("browser", "email", "calendar")
 
 
@@ -845,7 +866,7 @@ class Engine:
 
             started, outcome = time.monotonic(), "ok"
             try:
-                await asyncio.wait_for(session.ask(body, on_text, on_tool, on_delta), timeout=1800)
+                await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
             except asyncio.CancelledError:
                 outcome = "stopped"
                 raise
@@ -856,7 +877,7 @@ class Engine:
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
-                msg = "That took too long, so I stopped." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
+                msg = "Claude went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
                 self.log_message(pid, "ken", msg, error=True)
                 if listener is not None:
                     await listener(msg)
@@ -1051,13 +1072,13 @@ class Engine:
 
             status, summary = "failed", ""
             try:
-                final = await asyncio.wait_for(session.ask(run["prompt"], on_text, on_tool), timeout=3600)
+                final = await until_idle(session, session.ask(run["prompt"], on_text, on_tool))
                 status, summary = "done", self.mask(pid, (final or last or "Finished.").strip())
             except asyncio.CancelledError:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                summary = "Timed out." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
+                summary = "Stopped: Claude went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
                 try:
