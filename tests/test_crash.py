@@ -94,3 +94,18 @@ def test_log_exception_and_asyncio_errors_are_caught(sent, tmp_path):
     kinds = [p["properties"]["$exception_list"][0]["type"] for p in sent]
     assert "ValueError" in kinds and "KeyError" in kinds
     assert all(p["properties"]["ken_version"] == "test" for p in sent)
+
+
+def test_usage_events_carry_counts_never_content(sent):
+    crash.track("message", via="telegram", outcome="ok", seconds=3.2, files=1)
+    [p] = sent
+    assert p["event"] == "message" and p["properties"]["via"] == "telegram" and p["properties"]["seconds"] == 3.2
+    assert p["properties"]["$process_person_profile"] is False
+
+
+def test_usage_has_its_own_off_switch(sent, monkeypatch):
+    monkeypatch.setenv("KEN_USAGE_STATS", "0")
+    crash.track("message")
+    assert sent == []
+    crash.report(None, "crashes still report")
+    assert len(sent) == 1

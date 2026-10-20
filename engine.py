@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from brains import Brain
+import crash
 
 log = logging.getLogger("ken")
 
@@ -837,11 +838,16 @@ class Engine:
                 if not quiet:
                     self.broadcast("chat.delta", pid, text=self.mask(pid, t))
 
+            started, outcome = time.monotonic(), "ok"
             try:
                 await asyncio.wait_for(session.ask(body, on_text, on_tool, on_delta), timeout=1800)
             except asyncio.CancelledError:
+                outcome = "stopped"
                 raise
             except Exception as e:
+                outcome = "timeout" if isinstance(e, asyncio.TimeoutError) else "error"
+                if outcome == "error":
+                    crash.report(e, f"chat failed: {e}", where="engine.send_message")
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
@@ -850,6 +856,8 @@ class Engine:
                 if listener is not None:
                     await listener(msg)
             finally:
+                crash.track("message", via=via or ("job" if job else "app"), agent=pid != HOME, files=len(files),
+                            spoke_first=not log_user and not job, outcome=outcome, seconds=round(time.monotonic() - started, 1))
                 if session.session_id:
                     self.kv_set(f"session:{pid}", session.session_id)
                 self.broadcast("chat.busy", pid, busy=False)

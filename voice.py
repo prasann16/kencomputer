@@ -4,6 +4,8 @@ import os
 import threading
 import time
 
+import crash
+
 log = logging.getLogger("ken.voice")
 _model = None
 _lock = threading.RLock()
@@ -44,6 +46,8 @@ def transcribe(path: str) -> str:
             segments, info = model.transcribe(path, vad_filter=False, condition_on_previous_text=False, language=FALLBACK)
         segments = list(segments)
         text = " ".join(s.text.strip() for s in segments).strip()
+        crash.track("voice_note", audio_seconds=round(info.duration, 1), took_seconds=round(time.monotonic() - started, 1),
+                    empty=not text, language=getattr(info, "language", ""))
         log.info("transcribed %.1fs audio in %.2fs -> %d segments, %.1fs speech, %d chars",
                  info.duration, time.monotonic() - started, len(segments), sum(s.end - s.start for s in segments), len(text))
         return text

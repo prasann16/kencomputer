@@ -180,3 +180,35 @@ def flush(seconds: float = 3) -> None:
     for t in threading.enumerate():
         if t.name == "ken-crash-report":
             t.join(max(0, end - time.time()))
+
+
+# Usage: what people do with Ken, counted, never read. Event names and small fixed values only:
+# no message text, file names, emails, calendar contents or paths. Off with KEN_USAGE_STATS=0.
+EVENTS_PER_HOUR = 300
+_events: list[float] = []
+
+
+def usage_enabled() -> bool:
+    return bool(key()) and os.environ.get("KEN_USAGE_STATS", "1") != "0"
+
+
+def track(name: str, **props) -> None:
+    """Count one thing that happened, e.g. track("message", via="telegram", outcome="ok")."""
+    if not usage_enabled():
+        return
+    now = time.time()
+    with _lock:
+        _events[:] = [t for t in _events if now - t < 3600]
+        if len(_events) >= EVENTS_PER_HOUR:
+            return
+        _events.append(now)
+    safe = {k: (v if isinstance(v, (bool, int, float)) or v is None else scrub(v)[:80]) for k, v in props.items()}
+    payload = {
+        "event": name,
+        "distinct_id": _state["id"] or "unknown",
+        "properties": {
+            **safe, "ken_version": _state["version"], "os": f"{platform.system()} {platform.release()}",
+            "arch": platform.machine(), "$process_person_profile": False,
+        },
+    }
+    threading.Thread(target=_post, args=(payload,), daemon=True, name="ken-crash-report").start()

@@ -18,6 +18,8 @@ from email.utils import formatdate, make_msgid, parseaddr
 from html import unescape
 from pathlib import Path
 
+import crash
+
 # Mail servers by address domain: (IMAP host, SMTP host, SMTP port).
 HOSTS = {
     "gmail.com": ("imap.gmail.com", "smtp.gmail.com", 465),
@@ -279,8 +281,10 @@ class Connections:
         try:
             await asyncio.to_thread(lambda: Email(cfg).imap().logout())
         except imaplib.IMAP4.error:
+            crash.track("connect_failed", tool="email", reason="login", gmail=domain.endswith("gmail.com"))
             raise ValueError("That email and app password didn't work. Check both and try again.") from None
         except OSError:
+            crash.track("connect_failed", tool="email", reason="server")
             raise ValueError(f"Couldn't reach a mail server for {domain}. If your email is hosted by Google, enter imap.gmail.com as the server.") from None
         data = self.load()
         data["emails"] = [e for e in data.get("emails", []) if e["address"].lower() != address.lower()] + [cfg]
@@ -307,6 +311,7 @@ class Connections:
         try:
             cal = await asyncio.to_thread(Calendars.load, url)
         except Exception:
+            crash.track("connect_failed", tool="calendar", reason="read")
             raise ValueError("Couldn't read a calendar at that address. Copy the secret address in iCal format and try again.") from None
         name = str(cal.get("X-WR-CALNAME") or "Calendar")
         data = self.load()
