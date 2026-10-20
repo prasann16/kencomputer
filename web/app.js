@@ -784,7 +784,7 @@ function Settings({ onClose, toast }) {
         <textarea class="np-input feedback-text" placeholder="What's on your mind?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
         <input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>
         <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('claude')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
-        ${FOUNDER_TELEGRAM && html`<p class="np-note">Prefer to chat? <a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message me on Telegram</a></p>`}`}</div>`}
+        ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`}</div>`}
     ${tab === 'privacy' && privacy && html`<div class="set-body"><p class="np-help">Everything Ken knows and does stays on this computer.</p>
     ${row(icon('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'), 'Share anonymous crash reports and usage',
       'Helps fix bugs and shows which features get used: counts like “a job ran”. Never what you say, your files or your logins.',
@@ -796,7 +796,7 @@ function Settings({ onClose, toast }) {
     ${tab !== 'feedback' && html`<button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>`}
   <//>`;
 }
-const FOUNDER_TELEGRAM = 'prasann16';  // "Message me on Telegram" under Send feedback; empty hides it
+const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
 const JOB_HELP = { 'morning-brief': 'What matters today, sent to you each morning.', 'nightly-review': 'Files the day into Ken’s memory and tells you what it saved.' };
 
