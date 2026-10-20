@@ -124,8 +124,7 @@ BROWSER_PROMPT = (
     "new tab for your work (don't take over theirs), read pages, click, type, take screenshots. Use it "
     "for anything that needs a website, a login or a form, including posting to their social accounts. "
     "Before you post, send, buy, or change an account setting, show them exactly what you'll do and wait "
-    "for a yes. If the browser tools can't reach Chrome, it isn't connected (Chrome switches it off when it "
-    "restarts). Tell them in one line: Settings → Tools → Chrome → Connect, then switch on “Allow remote "
+    "for a yes. If the browser tools can't reach Chrome, it isn't connected. Tell them in one line: Settings → Tools → Chrome → Connect, then switch on “Allow remote "
     "debugging” in the Chrome page that opens. Say you'll carry on once it's connected."
 )
 
