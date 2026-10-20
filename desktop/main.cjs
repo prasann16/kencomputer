@@ -135,11 +135,12 @@ function watchEngine() {
 
 // Updates download in the background and install while the window is closed and Ken
 // isn't mid-task; the app then relaunches straight back into the menu bar.
-// Updates stay out of the chat. Once one has downloaded, the "Check for Updates…" item in
-// the Ken menu and the menu-bar icon becomes "Restart to update to x.y.z"; a check the user
-// asked for reports "up to date" with a quiet toast.
+// Updates stay out of the chat. Once one has downloaded, the window shows "Ken x.y.z is
+// ready" with a Restart now button, the "Check for Updates…" item in the Ken menu, the
+// menu-bar icon and Settings becomes "Restart to update to x.y.z", and quitting installs it.
+// A check the user asked for (menu or Settings) reports what it found with a quiet toast.
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
-let updateReady = false, updateVersion = '', manualCheck = false;
+let updateReady = false, updateVersion = '', manualCheck = false, installing = false;
 // If an update doesn't install, Ken must come back and say so rather than vanish and retry
 // forever: a note records the version being installed and which Ken.app was on disk, a
 // timer reopens Ken if the installer didn't, and the next start that finds the note with
@@ -168,6 +169,7 @@ async function stopService() {
   await stopOtherEngine();
 }
 async function restartIntoUpdate(quiet) {
+  installing = true;
   if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
   writeFileSync(installingNote, `${updateVersion}\n${bundleStamp()}`);
@@ -195,7 +197,7 @@ function checkForUpdates() {
   if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
   autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
   autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
-  autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); if (manualCheck) tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
+  autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
   autoUpdater.on('error', (error) => { console.error('update check failed:', error.message); if (manualCheck) tellPage({ state: 'error' }); manualCheck = false; });
   checkNow(false);
   setInterval(() => checkNow(false), 4 * 60 * 60 * 1000);
@@ -252,6 +254,19 @@ async function start() {
   ipcMain.handle('update:failed', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return failedState();
+  });
+  // Settings: this version, an update waiting to install, check now, restart into it.
+  ipcMain.handle('update:status', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    return { version: app.getVersion(), ready: updateReady && updateVersion !== updateFailed ? updateVersion : null };
+  });
+  ipcMain.handle('update:check', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    checkNow(true);
+  });
+  ipcMain.handle('update:install', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    return installNow();
   });
   // Ken on your phone: a BotFather code copied on the phone (iPhone's clipboard reaches the Mac).
   // Only something shaped like a bot token is passed to the page, never the rest of the clipboard.
@@ -333,6 +348,14 @@ else {
     try { await start(); } catch (error) { dialog.showErrorBox('Could not open Ken', error.message); app.quit(); }
   });
   app.on('activate', show);
-  // Quitting the app leaves the ken service (and Telegram) running.
-  app.on('before-quit', () => { quitting = true; });
+  // Quitting the app leaves the ken service (and Telegram) running. With an update waiting,
+  // quitting installs it: the engine has to stop for macOS to replace Ken.app, so Ken comes
+  // back quietly in the menu bar on the new version. Mid-task, the quit just goes through.
+  app.on('before-quit', (event) => {
+    quitting = true;
+    if (!updateReady || installing || updateVersion === updateFailed || process.platform !== 'darwin') return;
+    event.preventDefault();
+    installing = true;
+    engineBusy().then((busy) => busy ? app.exit(0) : restartIntoUpdate(true));
+  });
 }

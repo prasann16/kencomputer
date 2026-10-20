@@ -423,7 +423,7 @@ function RunDrawer({ rid, projects, tick, onClose, toast }) {
 
 // -------------------------------------------------------------------- modals
 
-function Modal({ title, children, onClose, wide }) {
+function Modal({ title, children, onClose, wide, className, closeX }) {
   const box = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -443,7 +443,7 @@ function Modal({ title, children, onClose, wide }) {
     return () => { removeEventListener('keydown', onKey); if (previous && previous.isConnected) previous.focus(); };
   }, []);
   return html`<div class="scrim center" onClick=${(e) => e.target === e.currentTarget && onClose()}>
-    <div ref=${box} tabindex="-1" class=${'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
+    <div ref=${box} tabindex="-1" class=${'modal' + (wide ? ' wide' : '') + (className ? ' ' + className : '')} role="dialog" aria-modal="true" aria-label=${title}>${closeX && html`<button class="modal-x" aria-label="Close" onClick=${onClose}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`}<h2>${title}</h2>${children}</div>
   </div>`;
 }
 
@@ -762,7 +762,8 @@ function JobList({ jobs, change }) {
 }
 
 function Settings({ onClose, toast }) {
-  const [error, setError] = useState(''), [reconnect, setReconnect] = useState(false);
+  const [error, setError] = useState(''), [reconnect, setReconnect] = useState(false), [update, setUpdate] = useState(null);
+  useEffect(() => { window.kenDesktop?.updateStatus?.().then(setUpdate).catch(() => {}); return window.kenDesktop?.onUpdateState?.((s) => { if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version })); }); }, []);
   const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
@@ -772,7 +773,7 @@ function Settings({ onClose, toast }) {
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
-  return html`<${Modal} title="Settings" onClose=${onClose}>
+  return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="set-tabs" role="tablist">${[['claude', 'Claude'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Ken runs on your Claude subscription.</p>
     ${reconnect ? html`<${Connect} onDone=${() => { setReconnect(false); toast('Claude is connected.'); }}/>`
@@ -793,7 +794,9 @@ function Settings({ onClose, toast }) {
     ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
     <${JobList} jobs=${jobs} change=${job}/></div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-    ${tab !== 'feedback' && html`<button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>`}
+    ${tab !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
+      ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
+      : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
   <//>`;
 }
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
@@ -846,7 +849,8 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   };
   useEffect(load, []);
   const save = async (fn) => { setBusy(true); setError(''); try { setA(await fn()); setEdit(null); } catch (e) { setError(e.message); } finally { setBusy(false); } };
-  const openNote = (name) => api(`/api/about/${pid}/memory/${encodeURIComponent(name)}`).then((n) => setEdit({ kind: 'note', name, text: n.text })).catch((e) => setError(e.message));
+  // A note opens formatted to read; Edit turns it into text to change.
+  const openNote = (name) => api(`/api/about/${pid}/memory/${encodeURIComponent(name)}`).then((n) => setEdit({ kind: 'note', name, text: n.text, saved: n.text, reading: true })).catch((e) => setError(e.message));
   const noteName = (n) => (n.trim().replace(/[^\w .-]/g, '').replace(/\.md$/i, '') || 'note') + '.md';
   const job = async (j, change) => { try { const all = await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } }); setJobs(all.filter((x) => (x.agent || 'home') === pid)); return true; } catch (e) { setError(e.message); return false; } };
   const jobName = (j) => (pid === 'home' && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
@@ -854,13 +858,17 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     ? html`<div class="knows-page"><div class="knows-inner">${title && html`<h1>${title}</h1>`}${body}</div></div>`
     : html`<${Modal} wide title=${title || `About ${a ? a.name : ''}`} onClose=${edit ? () => setEdit(null) : onClose}>${body}<//>`;
   const back = (to, label) => html`<button class="text-action brain-back" onClick=${to}>‹ ${label}</button>`;
+  if (edit?.reading) return frame(edit.name.replace(/\.md$/, ''), html`<div class="brain-section">${back(() => setEdit(null), 'Memory')}
+    <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ ...edit, reading: false })}>Edit</button></div>
+    <div class="about-context">${edit.text.trim() ? doc(edit.text) : 'Empty note.'}</div>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`);
   if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : 'Context') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
     ${edit.isNew && html`<input class="np-input" placeholder="Note name, like people" value=${edit.name} onInput=${(e) => setEdit({ ...edit, name: e.target.value })}/>`}
     <textarea class="np-input about-editor" value=${edit.text} onInput=${(e) => setEdit({ ...edit, text: e.target.value })}></textarea>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions">
       ${edit.kind === 'note' && !edit.isNew && html`<button class="btn ghost" style="margin-right:auto" disabled=${busy} onClick=${() => save(() => api(`/api/about/${pid}/memory/${encodeURIComponent(edit.name)}`, { method: 'DELETE' }))}>Delete note</button>`}
-      <button class="btn ghost" onClick=${() => setEdit(null)}>Cancel</button>
+      <button class="btn ghost" onClick=${() => setEdit(edit.kind === 'note' && !edit.isNew ? { ...edit, text: edit.saved, reading: true } : null)}>Cancel</button>
       <button class="btn primary" disabled=${busy || (edit.isNew && !edit.name.trim())} onClick=${() => save(() => edit.kind === 'context'
         ? api(`/api/about/${pid}/context`, { method: 'PUT', json: { text: edit.text } })
         : api(`/api/about/${pid}/memory/${encodeURIComponent(edit.isNew ? noteName(edit.name) : edit.name)}`, { method: 'PUT', json: { text: edit.text } }))}>Save</button>
@@ -964,16 +972,18 @@ function App() {
   // Unread: a chat whose last message is newer than when it was last open.
   const seen=()=>{try{return JSON.parse(localStorage.getItem('ken-seen')||'{}');}catch{return {};}};
   const [seenAt,setSeenAt]=useState(seen);
-  // A "Check for Updates…" the user asked for (Ken menu, menu-bar icon) answers with a quiet toast.
-  const [updateFailed,setUpdateFailed]=useState(null);
+  // A "Check for Updates…" the user asked for (Ken menu, menu-bar icon, Settings) answers with a
+  // quiet toast; a downloaded update shows a bar with Restart now until it's installed.
+  const [updateFailed,setUpdateFailed]=useState(null), [updateReady,setUpdateReady]=useState(null);
   useEffect(()=>{
     const native=window.kenDesktop; if(!native?.onUpdateState)return;
     native.updateFailed?.().then((s)=>{if(s)setUpdateFailed(s);}).catch(()=>{});
+    native.updateStatus?.().then((s)=>{if(s?.ready)setUpdateReady(s.ready);}).catch(()=>{});
     return native.onUpdateState((s)=>{
-      if(s.state==='failed')setUpdateFailed(s);
-      if(s.state==='ready')toast(`Ken ${s.version} is ready. Restart from the Ken menu when you like.`);
+      if(s.state==='failed'){setUpdateFailed(s);setUpdateReady(null);}
+      if(s.state==='ready')setUpdateReady(s.version);
       if(s.state==='none')toast(`You’re up to date (${s.version}).`);
-      if(s.state==='downloading')toast(`Downloading Ken ${s.version}…`);
+      if(s.state==='downloading')toast(`Ken ${s.version} is available. Downloading it now…`);
       if(s.state==='busy')toast('Ken is in the middle of something. It’ll restart into the update when it’s done.');
       if(s.state==='error')toast('Couldn’t check for updates. Try again later.');
     });
@@ -1161,7 +1171,7 @@ function App() {
   const opened = useRef({ pid: null, ts: 0 });
   if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${!setup || setup.claude} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${pid !== 'home' && model ? { ...model, current: projectMeta?.model || model.current } : model} onModel=${(m)=>m&&(pid !== 'home'
       ? api(`/api/agents/${pid}`,{method:'PATCH',json:{model:m}}).then(()=>loadProjectMeta(pid))
       : api('/api/command',{json:{text:'/model '+m}}).then(loadModel)).catch((e)=>toast(e.message))}/>
     ${setup && !setup.claude ? html`<${Connect} onDone=${(r)=>{setSetup(r);loadModel();warm(pid);}}/>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
