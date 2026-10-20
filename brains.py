@@ -106,6 +106,9 @@ class ClaudeSession(Session):
             cwd=self.cwd,
             model=model or None,
             resume=resume,
+            # One message can carry a browser screenshot or a page snapshot; the SDK's 1 MB default
+            # dropped the whole turn ("JSON message exceeded maximum buffer size").
+            max_buffer_size=64 * 1024 * 1024,
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
