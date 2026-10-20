@@ -28,6 +28,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+import crash
+
 from brains import ClaudeBrain
 from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
@@ -1601,6 +1603,7 @@ PHONE = Phone()
 
 async def run() -> None:
     """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
+    asyncio.get_running_loop().set_exception_handler(crash.loop_handler)
     await start_engine()
     asyncio.create_task(scheduler())
     asyncio.create_task(self_update())
@@ -1618,7 +1621,15 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    asyncio.run(run())
+    crash.setup(KEN_HOME, _current_rev())
+    try:
+        asyncio.run(run())
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        crash.report(e, handled=False, where="uncaught")  # same fingerprint as the excepthook: sent once
+        crash.flush()
+        raise
 
 
 if __name__ == "__main__":
