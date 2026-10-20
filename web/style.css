@@ -311,9 +311,8 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .phone-lead .phone-video{width:auto!important;height:190px}
 .phone-confirm{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:380px;margin:18px auto 0;padding:22px;border:1px solid #ececea;border-radius:14px;text-align:center}.phone-confirm .phone-confirm-q{margin:0!important;color:#666;font-size:14px}.phone-confirm .phone-confirm-bot{margin:0 0 6px!important;max-width:100%!important;font-size:17px;font-weight:600;color:#111;overflow-wrap:anywhere}.phone-confirm .btn{width:100%;min-width:0!important}.phone-confirm .text-action{font-size:13px}
 .privacy-more{margin:10px 0 0 44px}
-/* Jobs: a line on what each does; open one to read or edit its instructions */
+/* Jobs: a line on what each does, its time and switch */
 .job-list{display:flex;flex-direction:column}.job{border-bottom:1px solid #efefed}.job:last-child{border-bottom:0}
-.job-row{display:flex;align-items:center;gap:10px;padding:10px 0}.job-name{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:0;background:none;padding:0;text-align:left;font:inherit;cursor:pointer}
-.job-name b{font-size:14px;font-weight:600}.job-name span{font-size:12.5px;color:#777;line-height:1.4}.job-name:hover b{text-decoration:underline;text-underline-offset:3px}
-.job-detail{padding:0 0 14px}.job-detail p{margin:0 0 8px;font-size:12.5px;color:#777}.job-prompt{height:150px!important;padding:10px 12px!important;font-size:13px!important;line-height:1.5;resize:vertical}
+.job-row{display:flex;align-items:center;gap:10px;padding:10px 0}.job-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.job-name b{font-size:14px;font-weight:600}.job-name span{font-size:12.5px;color:#777;line-height:1.4}
 .modal:focus{outline:none}

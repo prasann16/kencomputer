@@ -746,30 +746,19 @@ function PhoneSetup({ onDone, toast }) {
   </div>`;
 }
 
-// Ken's jobs, the same in Settings and the Brain: what each does in a line; click to read or edit
-// its full instructions. Time and the on/off switch stay on the row.
+// Ken's jobs, the same in Settings and the Brain: what each does in a line, when, and on or off.
+// To change what a job does, tell Ken.
 function JobList({ jobs, change }) {
-  const [open, setOpen] = useState(null), [draft, setDraft] = useState(''), [busy, setBusy] = useState(false);
   const name = (j) => (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const when = (j) => j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days;
   const about = (j) => (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || j.summary || when(j));
-  const save = async (j) => { setBusy(true); if (await change(j, { prompt: draft })) setOpen(null); setBusy(false); };
-  return html`<div class="job-list">${jobs.map((j) => {
-    const key = (j.agent || '') + ':' + j.name, isOpen = open === key;
-    return html`<div class=${'job' + (isOpen ? ' open' : '')} key=${key}>
-      <div class="job-row">
-        <button class="job-name" aria-expanded=${isOpen} onClick=${() => { setOpen(isOpen ? null : key); setDraft(j.prompt || ''); }}><b>${name(j)}</b><span>${about(j)}</span></button>
-        <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && change(j, { time: e.target.value })}/>
-        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => change(j, { on: e.target.checked })}/>
-      </div>
-      ${isOpen && html`<div class="job-detail">
-        <p>${when(j)} at ${j.time}. Ken follows these instructions each time:</p>
-        <textarea class="np-input job-prompt" value=${draft} onInput=${(e) => setDraft(e.target.value)}></textarea>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen(null)}>Close</button>
-          <button class="btn primary" disabled=${busy || !draft.trim() || draft.trim() === (j.prompt || '').trim()} onClick=${() => save(j)}>${busy ? 'Saving…' : 'Save'}</button></div>
-      </div>`}
-    </div>`;
-  })}</div>`;
+  return html`<div class="job-list">${jobs.map((j) => html`<div class="job" key=${(j.agent || '') + ':' + j.name}>
+    <div class="job-row">
+      <div class="job-name"><b>${name(j)}</b><span>${about(j)}</span></div>
+      <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && change(j, { time: e.target.value })}/>
+      <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => change(j, { on: e.target.checked })}/>
+    </div>
+  </div>`)}</div>`;
 }
 
 function Settings({ onClose, toast }) {

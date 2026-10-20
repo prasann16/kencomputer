@@ -186,14 +186,12 @@ class WebApp:
         return _json(self.jobs[0]() if self.jobs else [])
 
     async def jobs_change(self, request):
-        """Switch a standing job on or off, move its time or rewrite it: {on?, time?, prompt?, agent?}."""
+        """Switch a standing job on or off, or move its time: {on?, time?, agent?}."""
         if not self.jobs:
             return _json({"error": "Jobs aren't available here."}, 400)
         b = await self._body(request)
         try:
-            prompt = b.get("prompt")
-            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time"), str(b.get("agent") or ""),
-                                      None if prompt is None else str(prompt)))
+            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time"), str(b.get("agent") or "")))
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
