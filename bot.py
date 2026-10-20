@@ -966,14 +966,23 @@ def list_jobs() -> list[dict]:
     """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
     names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
     return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
-             "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), "")}
+             "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), ""),
+             "prompt": str(j.get("prompt", "")), "summary": job_summary(str(j.get("prompt", "")))}
             for j in all_jobs() if j.get("name")]
 
 
-def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str = "") -> list[dict]:
-    """Switch a job on or off, or move its time (HH:MM, local). `agent`: whose job; Ken's own when empty."""
+def job_summary(prompt: str) -> str:
+    """A job's first sentence: what the job list says it does."""
+    first = re.split(r"(?<=[.!?])\s|\n", prompt.strip(), maxsplit=1)[0].strip()
+    return first if len(first) <= 110 else first[:107].rstrip(" ,;:—-") + "…"
+
+
+def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str = "", prompt: str | None = None) -> list[dict]:
+    """Switch a job on or off, move its time (HH:MM, local) or rewrite what it does. `agent`: whose job; Ken's own when empty."""
     if at is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
         raise ValueError("Use a time like 07:00.")
+    if prompt is not None and not prompt.strip():
+        raise ValueError("Say what the job should do.")
     try:
         path = ENGINE._adir(agent) / "jobs.json" if agent else JOBS_FILE
         jobs = json.loads(path.read_text())
@@ -986,6 +995,8 @@ def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str
         job["on"] = bool(on)
     if at is not None:
         job["time"] = at
+    if prompt is not None:
+        job["prompt"] = prompt.strip()[:8000]
     path.write_text(json.dumps(jobs, indent=1) + "\n")
     return list_jobs()
 

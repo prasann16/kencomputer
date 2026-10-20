@@ -428,8 +428,9 @@ function Modal({ title, children, onClose, wide }) {
   useEffect(() => {
     const previous = document.activeElement;
     const focusable = () => [...box.current.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), textarea, select:not(:disabled)')];
-    const first = focusable()[0];
-    if (first) first.focus();
+    // Start in the first text field, if any; otherwise on the dialog itself, so no button wears a focus ring.
+    const field = box.current.querySelector('input:not([type=checkbox]):not([type=time]):not(:disabled), textarea');
+    (field || box.current).focus();
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
       if (e.key === 'Tab') {
@@ -442,7 +443,7 @@ function Modal({ title, children, onClose, wide }) {
     return () => { removeEventListener('keydown', onKey); if (previous && previous.isConnected) previous.focus(); };
   }, []);
   return html`<div class="scrim center" onClick=${(e) => e.target === e.currentTarget && onClose()}>
-    <div ref=${box} class=${'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
+    <div ref=${box} tabindex="-1" class=${'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label=${title}><h2>${title}</h2>${children}</div>
   </div>`;
 }
 
@@ -745,13 +746,39 @@ function PhoneSetup({ onDone, toast }) {
   </div>`;
 }
 
+// Ken's jobs, the same in Settings and the Brain: what each does in a line; click to read or edit
+// its full instructions. Time and the on/off switch stay on the row.
+function JobList({ jobs, change }) {
+  const [open, setOpen] = useState(null), [draft, setDraft] = useState(''), [busy, setBusy] = useState(false);
+  const name = (j) => (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const when = (j) => j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days;
+  const about = (j) => (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || j.summary || when(j));
+  const save = async (j) => { setBusy(true); if (await change(j, { prompt: draft })) setOpen(null); setBusy(false); };
+  return html`<div class="job-list">${jobs.map((j) => {
+    const key = (j.agent || '') + ':' + j.name, isOpen = open === key;
+    return html`<div class=${'job' + (isOpen ? ' open' : '')} key=${key}>
+      <div class="job-row">
+        <button class="job-name" aria-expanded=${isOpen} onClick=${() => { setOpen(isOpen ? null : key); setDraft(j.prompt || ''); }}><b>${name(j)}</b><span>${about(j)}</span></button>
+        <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && change(j, { time: e.target.value })}/>
+        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => change(j, { on: e.target.checked })}/>
+      </div>
+      ${isOpen && html`<div class="job-detail">
+        <p>${when(j)} at ${j.time}. Ken follows these instructions each time:</p>
+        <textarea class="np-input job-prompt" value=${draft} onInput=${(e) => setDraft(e.target.value)}></textarea>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen(null)}>Close</button>
+          <button class="btn primary" disabled=${busy || !draft.trim() || draft.trim() === (j.prompt || '').trim()} onClick=${() => save(j)}>${busy ? 'Saving…' : 'Save'}</button></div>
+      </div>`}
+    </div>`;
+  })}</div>`;
+}
+
 function Settings({ onClose, toast }) {
   const [error, setError] = useState(''), [reconnect, setReconnect] = useState(false);
   const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
   const [privacy, setPrivacy] = useState(null);
   useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); api('/api/privacy').then(setPrivacy).catch(() => {}); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
-  const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); } catch (e) { setError(e.message); } };
+  const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); return true; } catch (e) { setError(e.message); return false; } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
@@ -767,10 +794,7 @@ function Settings({ onClose, toast }) {
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
     <p class="np-note privacy-more"><a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a></p></div>`}
     ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
-    ${jobs.map((j) => row(icon('M12 7v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'), (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()),
-      (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || (j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days)),
-      html`<input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j, { time: e.target.value })}/>
-        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => job(j, { on: e.target.checked })}/>`))}</div>`}
+    <${JobList} jobs=${jobs} change=${job}/></div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   <//>`;
 }
@@ -825,7 +849,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   const save = async (fn) => { setBusy(true); setError(''); try { setA(await fn()); setEdit(null); } catch (e) { setError(e.message); } finally { setBusy(false); } };
   const openNote = (name) => api(`/api/about/${pid}/memory/${encodeURIComponent(name)}`).then((n) => setEdit({ kind: 'note', name, text: n.text })).catch((e) => setError(e.message));
   const noteName = (n) => (n.trim().replace(/[^\w .-]/g, '').replace(/\.md$/i, '') || 'note') + '.md';
-  const job = async (j, change) => { try { const all = await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } }); setJobs(all.filter((x) => (x.agent || 'home') === pid)); } catch (e) { setError(e.message); } };
+  const job = async (j, change) => { try { const all = await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } }); setJobs(all.filter((x) => (x.agent || 'home') === pid)); return true; } catch (e) { setError(e.message); return false; } };
   const jobName = (j) => (pid === 'home' && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const frame = (title, body) => page
     ? html`<div class="knows-page"><div class="knows-inner">${title && html`<h1>${title}</h1>`}${body}</div></div>`
@@ -859,9 +883,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     { key: 'tools', title: 'Tools', summary: [on.join(', ') || 'Nothing connected', off.length && off.join(', ') + ' not connected'].filter(Boolean).join(' · '), body: html`
         <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
     { key: 'keys', title: 'Keys', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
-    jobs.length > 0 && { key: 'jobs', title: 'Jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: jobs.map((j) => html`<div class="about-job"><span>${jobName(j)}</span>
-        <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && job(j, { time: e.target.value })}/>
-        <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => job(j, { on: e.target.checked })}/></div>`) },
+    jobs.length > 0 && { key: 'jobs', title: 'Jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
     a.files.length > 0 && { key: 'files', title: 'Files', summary: count(a.files.length, 'file'), body: a.files.slice(0, 30).map((f) => html`<button class="about-item" onClick=${() => onPreview({ ...f, project: pid })}><b>${f.name}</b><span>${bytes(f.size)}</span></button>`) },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);

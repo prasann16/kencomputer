@@ -59,7 +59,8 @@ def test_settings_switch_and_move_a_job():
     import json
     import pytest
     bot.JOBS_FILE.write_text(json.dumps([{**BRIEF, "prompt": "brief"}]))
-    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True, "agent": "", "agent_name": ""}]
+    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True, "agent": "", "agent_name": "",
+                                "prompt": "brief", "summary": "brief"}]
     assert bot.set_job("morning-brief", on=False)[0]["on"] is False
     assert bot.set_job("morning-brief", at="06:30")[0]["time"] == "06:30"
     assert json.loads(bot.JOBS_FILE.read_text())[0]["prompt"] == "brief"  # the rest of the job is kept
@@ -148,3 +149,17 @@ def test_settings_privacy_switch_turns_both_kinds_of_sharing_off_and_on(monkeypa
     assert bot.set_privacy(True) == {"share": True} and "KEN_USAGE_STATS" not in (bot.KEN_HOME / ".env").read_text()
     monkeypatch.setenv("KEN_CRASH_REPORTS", "0")  # leave the tests' own off switch as it was
     monkeypatch.setenv("KEN_USAGE_STATS", "0")
+
+
+
+def test_a_job_says_what_it_does_and_can_be_rewritten():
+    import json
+    import pytest
+    long = "Read yesterday's errors from PostHog and fix the top ones on a branch. Then message me one line."
+    bot.JOBS_FILE.write_text(json.dumps([{"name": "crash-review", "time": "09:00", "prompt": long}]))
+    assert bot.list_jobs()[0]["summary"] == "Read yesterday's errors from PostHog and fix the top ones on a branch."
+    assert bot.job_summary("x" * 200).endswith("…") and len(bot.job_summary("x" * 200)) == 108
+    jobs = bot.set_job("crash-review", prompt="  Check PostHog for new errors.  ")
+    assert jobs[0]["prompt"] == "Check PostHog for new errors." and jobs[0]["time"] == "09:00"
+    with pytest.raises(ValueError):
+        bot.set_job("crash-review", prompt="   ")
