@@ -1580,6 +1580,8 @@ class Phone:
             drop_env(KEN_HOME / ".env", "TELEGRAM_OWNER")
         await self.stop()
         save_env(KEN_HOME / ".env", "TELEGRAM_BOT_TOKEN", token)
+        if not ALLOWED_USER_ID:  # before it listens: a Start tapped early is waiting at Telegram
+            self.pair_until = time.time() + PAIR_MINUTES * 60
         await self.start(token)
         return self.status()
 

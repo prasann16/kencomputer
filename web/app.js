@@ -701,26 +701,31 @@ function PhoneSteps({ toast, onPaired }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   if (!phone) return html`<p class="np-note">${error || 'Loading…'}</p>`;
   if (phone.paired) return html`<div class="conn-list phone-list"><div>${on(phone.owner ? `@${phone.bot} · ${phone.owner}` : '@' + phone.bot)}<button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Disconnect</button></div></div>`;
-  if (phone.handoff?.bot) return html`<div class="phone-confirm"><p>Your phone sent a bot: <b>@${phone.handoff.bot}</b>. Is that the one you just made?</p>
-    <div class="row np-actions"><button class="btn ghost" disabled=${busy} onClick=${() => act({ method: 'DELETE', path: '/api/phone/handoff' })}>No, it isn't</button>
-    <button class="btn primary" disabled=${busy} onClick=${() => act({ json: {}, path: '/api/phone/handoff/confirm' })}>${busy ? 'Connecting…' : `Connect @${phone.handoff.bot}`}</button></div></div>`;
+  if (phone.handoff?.bot) return html`<div class="phone-confirm">
+    <p class="phone-confirm-q">Is this the bot you just made?</p>
+    <p class="phone-confirm-bot">@${phone.handoff.bot}</p>
+    <button class="btn primary" disabled=${busy} onClick=${() => act({ json: {}, path: '/api/phone/handoff/confirm' })}>${busy ? 'Connecting…' : 'Connect'}</button>
+    <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE', path: '/api/phone/handoff' })}>Not mine</button></div>`;
   if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and tap <b>Start</b>.</p>
     <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Use a different bot</button></div>`;
   return html`<div class="phone-steps-box">
-    <div class="phone-how">
+    ${phone.handoff?.qr ? html`<div class="phone-lead">
+        <div class="phone-lead-qr" dangerouslySetInnerHTML=${{ __html: phone.handoff.qr }}></div>
+        <video class="phone-video" src="/media/botfather.mp4" autoplay muted loop playsinline aria-label="What you'll do in Telegram"></video>
+      </div>
+      <p class=${'phone-lead-note' + (phone.handoff.error ? ' err' : '')}>${phone.handoff.error || 'Scan with your phone\u2019s camera. It walks you through making your Telegram bot, about 2 minutes.'}</p>`
+    : html`<div class="phone-how">
       <video class="phone-video" src="/media/botfather.mp4" autoplay muted loop playsinline aria-label="What you'll do in Telegram"></video>
       <div>
         <ol class="phone-steps">
           <li>In Telegram, open <a class="text-action" href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> and tap <b>Start</b></li>
           <li>Send <code>/newbot</code>, then a name, then a username ending in <code>bot</code></li>
-          <li>Copy the long code it sends back and paste it on your phone, or below</li>
+          <li>Copy the long code it sends back and paste it below</li>
         </ol>
-        ${phone.handoff?.qr
-          ? html`<div class="phone-qr"><div class="phone-send-qr" dangerouslySetInnerHTML=${{ __html: phone.handoff.qr }}></div><span class=${phone.handoff.error ? 'err' : ''}>${phone.handoff.error || 'Scan with your phone: it opens BotFather, then sends the code back here'}</span></div>`
-          : html`<div class="phone-qr"><img src="/media/botfather-qr.svg" alt="QR code that opens @BotFather"/><span>Scan with your phone's camera to open @BotFather</span></div>`}
+        <div class="phone-qr"><img src="/media/botfather-qr.svg" alt="QR code that opens @BotFather"/><span>Scan with your phone's camera to open @BotFather</span></div>
       </div>
-    </div>
-    <div class="token-row"><input class="np-input" placeholder="Paste the code, or BotFather's whole message" value=${botToken}
+    </div>`}
+    <div class="token-row"><input class="np-input" placeholder=${phone.handoff?.qr ? "Or paste the code here" : "Paste the code, or BotFather's whole message"} value=${botToken}
           onInput=${(e) => { const v = e.target.value, code = (v.match(BOT_TOKEN) || [])[0]; setBotToken(code || v); setFound(!!code && code !== v.trim()); }}/>
           <button class="btn" onClick=${() => fromClipboard(true)}>Paste</button>
           <button class="btn primary" disabled=${busy || !botToken.trim()} onClick=${() => act({ json: { token: botToken } })}>${busy ? 'Checking…' : 'Connect'}</button></div>
