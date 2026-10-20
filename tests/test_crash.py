@@ -12,6 +12,7 @@ def sent(monkeypatch, tmp_path):
     out = []
     monkeypatch.setenv("KEN_POSTHOG_KEY", "phc_test")
     monkeypatch.delenv("KEN_CRASH_REPORTS", raising=False)
+    monkeypatch.delenv("KEN_USAGE_STATS", raising=False)  # on for these tests only; sending is replaced below
     monkeypatch.setattr(crash, "_state", {"id": "", "version": "", "sent": [], "seen": {}})
     monkeypatch.setattr(crash, "_post", out.append)
 

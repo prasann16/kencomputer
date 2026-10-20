@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 # Ken's PostHog project key. It can only write events, never read them, so it's safe to ship.
-PROJECT_KEY = ""
+PROJECT_KEY = "phc_ta99jBsDMjWzPVJzoErpARApYPzeLiJ4F6FFAQnLeMKc"  # project 676507, US Cloud
 HOST = os.environ.get("KEN_POSTHOG_HOST", "https://us.i.posthog.com")
 PER_HOUR = 30            # at most this many reports an hour; a loop that fails every second sends 30, not 3600
 SAME_AGAIN_AFTER = 3600  # the same error twice in an hour is sent once
