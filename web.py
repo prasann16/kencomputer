@@ -48,7 +48,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -58,6 +58,7 @@ class WebApp:
         self.connections = connections
         self.jobs = jobs  # (list, set): the engine's standing jobs
         self.phone = phone  # Ken on your phone (bot.py's Phone)
+        self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -193,6 +194,14 @@ class WebApp:
             return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time"), str(b.get("agent") or "")))
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
+
+    async def privacy_settings(self, request):
+        """Share anonymous crash reports and usage counts: read it, or {share: bool} to change it."""
+        if not self.privacy:
+            return _json({"share": False})
+        if request.method == "PUT":
+            return _json(self.privacy[1](bool((await self._body(request)).get("share"))))
+        return _json(self.privacy[0]())
 
     async def phone_status(self, request):
         return _json(self.phone.status() if self.phone else {})
@@ -593,6 +602,8 @@ class WebApp:
         r.add_get("/api/connections", self.connections_status)
         r.add_get("/api/jobs", self.jobs_list)
         r.add_patch("/api/jobs/{name}", self.jobs_change)
+        r.add_get("/api/privacy", self.privacy_settings)
+        r.add_put("/api/privacy", self.privacy_settings)
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)

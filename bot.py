@@ -948,6 +948,20 @@ def migrate_jobs() -> None:
         JOBS_FILE.write_text(json.dumps(keep, indent=1) + "\n")
 
 
+def privacy_status() -> dict:
+    """Settings → Privacy: does this Ken share anonymous crash reports and usage counts? On by default."""
+    return {"share": all(os.environ.get(k, "1") != "0" for k in ("KEN_CRASH_REPORTS", "KEN_USAGE_STATS"))}
+
+
+def set_privacy(share: bool) -> dict:
+    for k in ("KEN_CRASH_REPORTS", "KEN_USAGE_STATS"):
+        if share:
+            drop_env(KEN_HOME / ".env", k)
+        else:
+            save_env(KEN_HOME / ".env", k, "0")
+    return privacy_status()
+
+
 def list_jobs() -> list[dict]:
     """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
     names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
@@ -1052,7 +1066,7 @@ async def start_engine() -> None:
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:

@@ -136,3 +136,15 @@ def test_an_older_install_isnt_onboarded_again():
     bot.ensure_setup_file()
     data = json.loads(bot.SETUP_FILE.read_text())
     assert all(data[k] == "done" for k in bot.ONBOARDING_ITEMS) and data["calendar"] == "unset"
+
+
+def test_settings_privacy_switch_turns_both_kinds_of_sharing_off_and_on(monkeypatch):
+    monkeypatch.delenv("KEN_CRASH_REPORTS", raising=False)
+    monkeypatch.delenv("KEN_USAGE_STATS", raising=False)
+    assert bot.privacy_status() == {"share": True}  # on by default
+    assert bot.set_privacy(False) == {"share": False}
+    env = (bot.KEN_HOME / ".env").read_text()
+    assert "KEN_CRASH_REPORTS=0" in env and "KEN_USAGE_STATS=0" in env  # remembered across restarts
+    assert bot.set_privacy(True) == {"share": True} and "KEN_USAGE_STATS" not in (bot.KEN_HOME / ".env").read_text()
+    monkeypatch.setenv("KEN_CRASH_REPORTS", "0")  # leave the tests' own off switch as it was
+    monkeypatch.setenv("KEN_USAGE_STATS", "0")
