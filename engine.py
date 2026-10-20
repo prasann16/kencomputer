@@ -31,6 +31,10 @@ HOME = "home"  # the conversation with Ken itself
 WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
+# Ken's very first contact, the same wherever it happens (the app or the phone): Ken writes it,
+# from what it knows, following the awakening in its instructions.
+def first_contact_prompt(how: str) -> str:
+    return f"(This is your very first contact with them: they just {how}. Begin.)"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -104,6 +108,7 @@ class Engine:
         self.tools: Callable[[set], dict] = lambda only: {}
         self.tools_prompt: Callable[[set], str] = lambda only: ""
         self.history_hook: Callable[[str, str], None] | None = None
+        self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
         self._greeting: set[str] = set()
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
@@ -223,6 +228,18 @@ class Engine:
             (pid, limit),
         ).fetchall()
         return [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
+
+    async def first_contact(self) -> None:
+        """A brand-new install's Home chat was opened: Ken speaks first, exactly as it does on Telegram."""
+        if not self.new_install() or HOME in self._greeting or self.chat_busy(HOME) or self.db.execute(
+                "SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (HOME,)).fetchone():
+            return
+        self._greeting.add(HOME)
+        try:
+            await self.send_message(HOME, "", log_user=False, via="app",
+                                    prompt=first_contact_prompt("opened the Ken app on this computer for the first time"))
+        finally:
+            self._greeting.discard(HOME)
 
     def log_message(self, pid: str, role: str, text: str, **extra) -> dict:
         if pid == HOME and self.history_hook is not None and text:
@@ -431,7 +448,7 @@ class Engine:
             f"=== Your tools and keys ===\nExtra tools: {extra}. To add one, put an MCP server in \"mcp\" of "
             f"{self._tools_file(pid)} (Claude Code's mcpServers format); it's ready from the next message. A CLI "
             "installed on this computer works as is. "
-            f"Keys: {self._keys_line(pid)} They add keys in the app (click Ken at the top, then Keys). When you need a "
+            f"Keys: {self._keys_line(pid)} They add keys in the app (the Brain tab at the top, then Keys). When you need a "
             "login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole file "
             "like a service-account JSON. Never ask for a secret in chat, never print one, never copy one anywhere else."
         )
@@ -1151,7 +1168,7 @@ class Engine:
         name = "Ken" if pid == HOME else self.get_agent(pid)["name"]
         boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}")
         messages = [m for m in self.messages(pid) if m["id"] > boundary.get("after", 0)]
-        return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid),
+        return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid) or pid in self._greeting,
                 "cleared_at": boundary.get("cleared_at", 0)}
 
     # ---------------------------------------------------------------------- kv

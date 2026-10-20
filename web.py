@@ -252,6 +252,8 @@ class WebApp:
 
     async def chat(self, request):
         pid = self._pid(request)
+        if pid == HOME and self.engine.new_install():
+            self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         return _json(self.engine.chat_view(pid))
 
     async def open_chat(self, request):

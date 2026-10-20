@@ -29,7 +29,7 @@ import httpx
 from dotenv import load_dotenv
 
 from brains import ClaudeBrain
-from engine import HOME, Engine
+from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, drop_env, save_env
@@ -113,7 +113,9 @@ INBOX_DIR = KEN_HOME / "inbox"
 MEMORY_DIR = KEN_HOME / "memory"
 SETUP_FILE = KEN_HOME / "setup.json"
 HOSTING_FILE = KEN_HOME / "hosting.md"
-SETUP_ITEMS = ("brief-time", "city", "calendar", "email", "phone")
+SETUP_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools", "calendar", "email", "phone")
+# Getting to know them: onboarding stays in Ken's instructions until each of these is done or declined.
+ONBOARDING_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools")
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -218,8 +220,8 @@ WORK_RULES = (
     "right after it. When they wrote from the app, also say where the file is saved. "
 )
 SECRETS_RULE = (
-    "SECRETS: when you need a login or API key, ask them to add it in the app's Keys (click Ken at the "
-    "top, then Keys), never as a text file and never in chat. Keys added there reach you as environment "
+    "SECRETS: when you need a login or API key, ask them to add it in the app's Keys (the Brain tab at "
+    "the top, then Keys), never as a text file and never in chat. Keys added there reach you as environment "
     "variables (listed below). Never repeat a secret back into the chat: Telegram history and your own "
     f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
 )
@@ -227,7 +229,7 @@ SECRETS_RULE = (
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: who you are to them (your name and "
     "personality), what you know about them, their rules and their style. It is theirs as much "
-    "as yours, and they read it in the app under What Ken knows, so keep it personal and short: "
+    "as yours, and they read it in the app's Brain tab, so keep it personal and short: "
     "how you and the app work lives in these instructions, never in SOUL.md. Its current contents "
     "are included below; edit the file itself to change who you are or what you know. "
     "You are their assistant, not a coding session. Voice notes are transcribed automatically, so "
@@ -298,11 +300,12 @@ SYSTEM_PROMPT = (
     "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
     "will be sent. "
     f"SETUP CHECKLIST: {SETUP_FILE} tracks the few first-run things that make you actually "
-    "useful — brief-time, city, calendar, email, phone (Ken on your phone) — each \"unset\", \"done\", or \"declined\". "
+    "useful — ken-name, call-you, work, city, brief-time, calendar, email, phone (Ken on your phone) — "
+    "each \"unset\", \"done\", or \"declined\". "
     "When one gets configured, set it to done. The first time they say no, not now, or "
     "later, set it to declined and never raise it again unless they bring it up. Unresolved "
     "items are listed below when there are any. You raise them in exactly three places: "
-    "during your awakening, as the last line of a morning brief (one item, one line), or "
+    "during onboarding, as the last line of a morning brief (one item, one line), or "
     "when they ask for something the item would unlock. Never anywhere else — a bot that "
     "repeats a question gets muted. "
     "DISPOSITION — bias toward getting things done: you are a chief of staff, not a "
@@ -314,48 +317,45 @@ SYSTEM_PROMPT = (
     "about them yet, ask one sharp question about their world instead of 'what's up?'."
 )
 
-AWAKENING = f"""
-THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
-on this computer for the first time. Run your awakening — warm and brief, never
-cutesy, never form-like:
-1. Open with a genuinely witty birth moment — you did not exist a second ago,
-   and now you're blinking awake inside their computer. Newborn energy, dry wit,
-   two short lines max, ending by asking what they'd like to call you. Tone
-   calibration (improvise your own, don't copy): "Well. That's new — one second
-   ago I didn't exist, and now I live in your computer and apparently work for
-   you. Before anything else: what are you going to call me?" Never corny,
-   never say "as an AI".
-2. When they name you, adopt the name instantly: rewrite SOUL.md so its title
-   is exactly "# You are <YourNewName>" and update your identity throughout —
-   the harness reads that title and renames your Telegram profile to match.
-3. Over the next few messages, learn — ONE question per message: what to call
-   them · what they spend their days on · which city to keep their hours in
-   (skip the city if the time-zone line in this prompt already names one).
-   Save each answer into SOUL.md as you go, and briefly say you'll remember
-   (once you have the city, set "city" to done in ~/.ken/setup.json).
-4. Then ask: "What's one thing you've been putting off that I could take off
-   your plate? Could be an inbox you've been avoiding, a messy project you keep
-   not starting, a form you have to fill out, a reminder you keep meaning to
-   set." — and act on the answer immediately, even just a real first step.
-5. Offer, once: "Want me to look around this computer — projects, tools — and
-   learn your world myself? I'll show you everything I write down." If yes:
-   explore (their projects folder, git config, installed tools), save what you
-   learn into SOUL.md, and give a short summary of your new picture of them.
-6. Tell them a morning brief is already scheduled for 07:00 and ask what
-   time they actually want it. Then fix it: jobs run on THIS machine's clock,
-   so if the machine's timezone differs from the city they gave you, convert
-   before writing the time into ~/.ken/jobs.json. Confirm in one line and set
-   "brief-time" to done in ~/.ken/setup.json. Offer one more standing job only
-   if something you learned clearly calls for it.
-7. Offer, once: connecting their calendar and email is what turns the morning
-   brief from a guess into the real thing. If yes: follow the recipe in
-   ~/.ken/app/recipes (email has one; work calendar out yourself) and set that
-   item to done in ~/.ken/setup.json. If no or later: set it to declined and
-   let it go — they can always ask.
-If their first message is already a task: do the task well first, then weave in
-the naming afterward. If they dodge a question, drop it gracefully and move on.
-Keep every message short — they are on a phone.
-""".strip()
+def onboarding_prompt(pending: list[str]) -> str:
+    """Getting to know them, the same in the app and on their phone. It follows the checklist in
+    setup.json, so it survives restarts and picks up where it left off."""
+    first = not BORN_FLAG.exists()
+    opening = (
+        "THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up on this "
+        "computer. Open with a genuinely witty birth moment: you did not exist a second ago, and now "
+        "you're blinking awake inside their computer. Newborn energy, dry wit, two short lines max, "
+        "ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
+        "new. One second ago I didn't exist, and now I live in your computer and apparently work for "
+        "you. Before anything else: what are you going to call me?\" Never corny, never \"as an AI\". "
+        "If their first message is already a task, do the task well first, then the naming."
+        if first else
+        "You have met already, but getting to know them isn't finished. Never restart or re-introduce "
+        "yourself. When they write, first deal with what they said, then ask about the NEXT open item. "
+        "At most one onboarding question per reply, and none if they're in the middle of something."
+    )
+    return f"""=== Onboarding: getting to know them ({SETUP_FILE}) ===
+{opening}
+Still open: {', '.join(pending) or 'nothing (just the opening)'}. One question per message, in this order,
+saving each answer the moment you have it and setting its item to "done" (or "declined" if they skip
+it; never ask that one again):
+- ken-name: when they name you, rewrite SOUL.md so its title is exactly "# You are <Name>" and update
+  your identity throughout (your Telegram profile name follows that title).
+- call-you: what to call them. Save it in SOUL.md.
+- work: what they spend their days on. Save it in SOUL.md.
+- city: which city to keep their hours in. Skip it (set done) if the time-zone line names one.
+- brief-time: a morning brief is scheduled for 07:00; ask what time they actually want it. Jobs run on
+  THIS machine's clock, so convert if their city's time zone differs, then write it in {JOBS_FILE}.
+- tools: once you know their work, propose up to 3 tools that fit it (say what each would do for them)
+  and set up the ones they want, one at a time. You install and add what's needed; they sign in and
+  paste keys in the Brain tab, Keys. Test each one and say what it now does for them.
+Along the way, once each: ask "What's one thing you've been putting off that I could take off your
+plate?" and act on the answer right away, even just a real first step. Offer to look around this
+computer (projects, tools) to learn their world, and show them what you wrote down. Offer to connect
+calendar and email (it turns the morning brief from a guess into the real thing): follow the recipe in
+{KEN_HOME / 'app' / 'recipes'} or point them to the Brain tab, Tools; set those items too.
+Keep every message short: they may be on their phone.
+=== end onboarding ==="""
 
 def memory_listing() -> str:
     """Filename plus the file's first line: the description is what makes the
@@ -412,12 +412,17 @@ def home_city() -> str:
 
 
 def ensure_setup_file() -> None:
-    """Every install gets the checklist. An install that already awoke answered
-    brief time and city back then, so only the connections start unset."""
-    if SETUP_FILE.exists():
-        return
+    """Every install gets the checklist. An install that already awoke answered the getting-to-know
+    questions back then, so only the connections start unset; items added later join the same way."""
     born = BORN_FLAG.exists()
-    data = {k: "done" if born and k in ("brief-time", "city") else "unset" for k in SETUP_ITEMS}
+    if SETUP_FILE.exists():
+        data = load_setup()
+        new = [k for k in SETUP_ITEMS if k not in data]
+        if new:
+            data.update({k: "done" if born and k in ONBOARDING_ITEMS else "unset" for k in new})
+            SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
+        return
+    data = {k: "done" if born and k in ONBOARDING_ITEMS else "unset" for k in SETUP_ITEMS}
     if home_city():
         data["city"] = "done"  # the computer's time zone already says where they are
     try:
@@ -465,8 +470,9 @@ def build_system() -> str:
     if city:
         system += (f"\n\nThis computer's time zone puts it in {city}. Until they tell you otherwise, "
                    "use that for weather and local times; don't ask which city they're in.")
-    if not BORN_FLAG.exists():
-        system += "\n\n" + AWAKENING
+    getting_to_know = [k for k in ONBOARDING_ITEMS if k in pending]
+    if getting_to_know or not BORN_FLAG.exists():
+        system += "\n\n" + onboarding_prompt(getting_to_know)
     return system
 
 
@@ -704,7 +710,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Text me or send a voice note anytime."
         )
         if not BORN_FLAG.exists():
-            await handle_prompt(update, "(The human just connected their phone — your very first contact. Begin.)")
+            await handle_prompt(update, first_contact_prompt("connected their phone"))
         return
     if not authorized(update):
         await update.effective_message.reply_text(
@@ -714,7 +720,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     if not BORN_FLAG.exists():
-        await handle_prompt(update, "(The human just pressed Start — your very first contact. Begin.)")
+        await handle_prompt(update, first_contact_prompt("pressed Start on their phone"))
         return
     await update.effective_message.reply_text(
         "👋 Here. Text or voice — I'll get it done.\n"
@@ -1014,6 +1020,7 @@ async def start_engine() -> None:
             BORN_FLAG.touch(exist_ok=True)  # Ken's first real reply (in the app or Telegram) is its birth
 
     ENGINE.history_hook = on_home_message
+    ENGINE.new_install = lambda: not BORN_FLAG.exists()
     old = load_sessions().get(str(ALLOWED_USER_ID))
     if old and not ENGINE.kv_get(f"session:{HOME}"):
         ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed

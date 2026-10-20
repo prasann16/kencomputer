@@ -110,3 +110,29 @@ def test_old_soul_files_lose_the_app_manual_but_keep_whats_personal(tmp_path):
     assert (tmp_path / f"SOUL.before-{time.strftime('%Y%m%d')}.md").exists()
     bot.tidy_soul(soul)  # nothing left to tidy: untouched
     assert soul.read_text() == text
+
+
+def test_onboarding_follows_the_checklist_until_its_done():
+    import json
+    bot.BORN_FLAG.unlink(missing_ok=True)
+    bot.SETUP_FILE.unlink(missing_ok=True)
+    bot.ensure_setup_file()
+    assert "FIRST CONVERSATION EVER" in bot.build_system()  # a new install: Ken opens
+    bot.BORN_FLAG.touch()
+    data = json.loads(bot.SETUP_FILE.read_text())
+    data.update({"ken-name": "done", "call-you": "done"})
+    bot.SETUP_FILE.write_text(json.dumps(data))
+    system = bot.build_system()
+    assert "You have met already" in system and "Still open: work" in system  # picks up where it left off
+    data.update({k: "declined" for k in bot.ONBOARDING_ITEMS if data.get(k) == "unset"})
+    bot.SETUP_FILE.write_text(json.dumps(data))
+    assert "=== Onboarding" not in bot.build_system()  # finished: no more onboarding
+
+
+def test_an_older_install_isnt_onboarded_again():
+    import json
+    bot.BORN_FLAG.touch()
+    bot.SETUP_FILE.write_text(json.dumps({"brief-time": "done", "city": "done", "calendar": "unset", "email": "unset", "phone": "unset"}))
+    bot.ensure_setup_file()
+    data = json.loads(bot.SETUP_FILE.read_text())
+    assert all(data[k] == "done" for k in bot.ONBOARDING_ITEMS) and data["calendar"] == "unset"

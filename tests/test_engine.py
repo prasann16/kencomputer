@@ -382,3 +382,13 @@ def test_share_an_agent_without_its_keys(engine):
     assert copy["id"] == "brand-2" and "Grow my X following." in engine.get_context("brand-2")
     assert engine.read_note("brand-2", "voice.md").startswith("Short and dry.") and engine.list_keys("brand-2") == []
 
+
+
+async def test_a_new_install_gets_kens_first_contact_once(engine):
+    await engine.first_contact()
+    assert engine.brain.asks == []  # not a new install: Ken waits for them
+    engine.new_install = lambda: True
+    await engine.first_contact()
+    await engine.first_contact()  # it already spoke
+    assert len(engine.brain.asks) == 1 and "very first contact" in engine.brain.asks[0]["prompt"]
+    assert [m["role"] for m in engine.messages(HOME)] == ["ken"]
