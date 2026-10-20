@@ -48,7 +48,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -58,6 +58,7 @@ class WebApp:
         self.connections = connections
         self.jobs = jobs  # (list, set): the engine's standing jobs
         self.phone = phone  # Ken on your phone (bot.py's Phone)
+        self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
 
@@ -113,7 +114,7 @@ class WebApp:
         pid = request.match_info["pid"]
         if pid != HOME:
             try:
-                self.engine.get_project(pid)
+                self.engine.get_agent(pid)
             except KeyError:
                 raise web.HTTPNotFound(text="no such chat")
         return pid
@@ -141,7 +142,7 @@ class WebApp:
                       "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {"claude": True, "voice": {"state": "ready"}})
+        return _json(self.setup.status() if self.setup else {"claude": True, "phone": "done", "voice": {"state": "ready"}})
 
     async def setup_action(self, request):
         """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
@@ -149,6 +150,8 @@ class WebApp:
         try:
             if b.get("action") == "start":
                 return _json(await self.setup.start())
+            if b.get("action") == "skip-phone":
+                return _json(self.setup.skip_phone())
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"])))
         except RuntimeError as exc:
@@ -183,14 +186,33 @@ class WebApp:
         return _json(self.jobs[0]() if self.jobs else [])
 
     async def jobs_change(self, request):
-        """Switch a standing job on or off, or move its time: {on?, time?}."""
+        """Switch a standing job on or off, or move its time: {on?, time?, agent?}."""
         if not self.jobs:
             return _json({"error": "Jobs aren't available here."}, 400)
         b = await self._body(request)
         try:
-            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time")))
+            return _json(self.jobs[1](request.match_info["name"], b.get("on"), b.get("time"), str(b.get("agent") or "")))
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
+
+    async def send_feedback(self, request):
+        """Settings → Send feedback: {text, email?} to the people who make Ken."""
+        import crash
+
+        b = await self._body(request)
+        if not str(b.get("text", "")).strip():
+            return _json({"error": "Write something first."}, 400)
+        if not crash.feedback(str(b.get("text", "")), str(b.get("email", ""))):
+            return _json({"error": "Couldn't send it from this Ken. Try again later."}, 400)
+        return _json({"ok": True})
+
+    async def privacy_settings(self, request):
+        """Share anonymous crash reports and usage counts: read it, or {share: bool} to change it."""
+        if not self.privacy:
+            return _json({"share": False})
+        if request.method == "PUT":
+            return _json(self.privacy[1](bool((await self._body(request)).get("share"))))
+        return _json(self.privacy[0]())
 
     async def phone_status(self, request):
         return _json(self.phone.status() if self.phone else {})
@@ -203,6 +225,19 @@ class WebApp:
             return _json(await self.phone.disconnect())
         try:
             return _json(await self.phone.connect(str((await self._body(request)).get("token", ""))))
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+
+    async def phone_handoff(self, request):
+        """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
+        if not self.phone:
+            return _json({"error": "Ken on your phone isn't available here."}, 400)
+        try:
+            if request.method == "DELETE":
+                return _json(await self.phone.handoff.stop())
+            if request.path.endswith("/confirm"):
+                return _json(await self.phone.handoff.confirm())
+            return _json(await self.phone.handoff.start())
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
@@ -223,7 +258,7 @@ class WebApp:
 
     async def library(self, request):
         items = []
-        for pid, name in [(HOME, "Ken"), *[(p["id"], p["name"]) for p in self.engine.list_projects()]]:
+        for pid, name in [(HOME, "Ken"), *[(p["id"], p["name"]) for p in self.engine.list_agents()]]:
             items.extend({**f, "project": pid, "project_name": name} for f in self.engine.list_files(pid))
         return _json(sorted(items, key=lambda f: -f["mtime"])[:100])
 
@@ -241,16 +276,22 @@ class WebApp:
     async def new_chat(self, request):
         b = await self._body(request)
         try:
-            p = self.engine.create_project(
+            p = self.engine.create_agent(
                 str(b.get("name", "")), str(b.get("path", "")), str(b.get("context", "")), str(b.get("blurb", ""))
             )
         except ValueError as e:
             return _json({"error": str(e)}, 400)
+        if b.get("setup"):
+            self._spawn(self.engine.setup_agent(p["id"]))  # it reads what it's for and sets itself up
         return _json(p)
 
     async def chat(self, request):
         pid = self._pid(request)
-        self.engine.welcome(pid)
+        # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
+        # greets on Start), here when the phone step was skipped. Quiet during setup.
+        phone_skipped = not self.setup or self.setup.phone_step() == "declined"
+        if pid == HOME and self.engine.new_install() and phone_skipped:
+            self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         return _json(self.engine.chat_view(pid))
 
     async def open_chat(self, request):
@@ -352,51 +393,111 @@ class WebApp:
             return _json({"error": str(exc)}, 409)
         return _json(self.engine.chat_view(pid))
 
-    def _project(self, request) -> str:
+    def _agent(self, request) -> str:
         pid = request.match_info["pid"]
         try:
-            self.engine.get_project(pid)
+            self.engine.get_agent(pid)
         except KeyError:
-            raise web.HTTPNotFound(text="no such project")
+            raise web.HTTPNotFound(text="no such agent")
         return pid
 
     async def today(self, request):
         return _json(self.engine.today())
 
-    async def project(self, request):
-        return _json(self.engine.project_view(self._project(request)))
+    async def agent(self, request):
+        return _json(self.engine.agent_view(self._agent(request)))
 
-    async def update_project(self, request):
+    async def update_agent(self, request):
         b = await self._body(request)
         try:
-            return _json(self.engine.update_project(self._project(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
+            return _json(self.engine.update_agent(self._agent(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
         except ValueError as e:
             return _json({"error": str(e)}, 400)
 
-    async def remove_project(self, request):
+    async def remove_agent(self, request):
         try:
-            await self.engine.remove_project(self._project(request))
+            await self.engine.remove_agent(self._agent(request))
         except ValueError as e:
             return _json({"error": str(e)}, 400)
         return _json({"ok": True})
 
     async def put_context(self, request):
-        pid = self._project(request)
+        pid = self._agent(request)
         self.engine.set_context(pid, str((await self._body(request)).get("text", "")))
         return _json({"ok": True})
 
+    async def about(self, request):
+        return _json(self.engine.about(self._pid(request)))
+
+    async def put_about_context(self, request):
+        pid = self._pid(request)
+        self.engine.set_about_context(pid, str((await self._body(request)).get("text", "")))
+        return _json(self.engine.about(pid))
+
+    async def note(self, request):
+        pid, name = self._pid(request), request.match_info["name"]
+        try:
+            if request.method == "GET":
+                return _json({"name": name, "text": self.engine.read_note(pid, name)})
+            if request.method == "DELETE":
+                self.engine.remove_note(pid, name)
+            else:
+                self.engine.write_note(pid, name, str((await self._body(request)).get("text", "")))
+        except KeyError:
+            raise web.HTTPNotFound()
+        return _json(self.engine.about(pid))
+
+    async def put_tools(self, request):
+        pid = self._pid(request)
+        self.engine.set_tools_use(pid, list((await self._body(request)).get("use", [])))
+        return _json(self.engine.about(pid))
+
+    async def export_agent(self, request):
+        from urllib.parse import quote
+
+        pid = self._agent(request)
+        name = self.engine.get_agent(pid)["name"]
+        return web.Response(body=self.engine.export_agent(pid), content_type="application/zip", headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name + '.ken-agent.zip')}"})
+
+    async def import_agent(self, request):
+        try:
+            return _json(self.engine.import_agent(await request.content.read(5 << 20)))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+
+    async def keys(self, request):
+        return _json(self.engine.list_keys(self._pid(request)))
+
+    async def put_key(self, request):
+        """A named value ({value}), or a whole file sent as the raw body (?file=1)."""
+        pid = self._pid(request)
+        try:
+            if request.query.get("file") == "1":
+                data = await request.content.read(1 << 20)
+                return _json(self.engine.set_key_file(pid, request.match_info["name"], data))
+            return _json(self.engine.set_key(pid, request.match_info["name"], str((await self._body(request)).get("value", ""))))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+
+    async def remove_key(self, request):
+        try:
+            return _json(self.engine.remove_key(self._pid(request), request.match_info["name"]))
+        except KeyError:
+            raise web.HTTPNotFound()
+
     async def put_autonomy(self, request):
-        pid = self._project(request)
+        pid = self._agent(request)
         b = await self._body(request)
         self.engine.set_autonomy(pid, b.get("alone", []), b.get("ask", []))
         return _json(self.engine.get_autonomy(pid))
 
     async def start_run(self, request):
         b = await self._body(request)
-        pid = self.engine.find_project(str(b.get("project", "")))
+        pid = self.engine.find_agent(str(b.get("agent") or b.get("project", "")))
         prompt = str(b.get("prompt", "")).strip()
         if not pid or not prompt:
-            return _json({"error": "need a project and what to do"}, 400)
+            return _json({"error": "need an agent and what to do"}, 400)
         return _json(self.engine.start_run(pid, str(b.get("title") or prompt.splitlines()[0])[:80], prompt))
 
     async def get_run(self, request):
@@ -488,11 +589,20 @@ class WebApp:
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_get("/api/today", self.today)
-        r.add_get("/api/projects/{pid}", self.project)
-        r.add_patch("/api/projects/{pid}", self.update_project)
-        r.add_delete("/api/projects/{pid}", self.remove_project)
-        r.add_put("/api/projects/{pid}/context", self.put_context)
-        r.add_put("/api/projects/{pid}/autonomy", self.put_autonomy)
+        r.add_get("/api/agents/{pid}", self.agent)
+        r.add_patch("/api/agents/{pid}", self.update_agent)
+        r.add_delete("/api/agents/{pid}", self.remove_agent)
+        r.add_put("/api/agents/{pid}/context", self.put_context)
+        r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
+        r.add_get("/api/agents/{pid}/keys", self.keys)
+        r.add_put("/api/agents/{pid}/tools", self.put_tools)
+        r.add_get("/api/agents/{pid}/export", self.export_agent)
+        r.add_post("/api/agents/import", self.import_agent)
+        r.add_get("/api/about/{pid}", self.about)
+        r.add_put("/api/about/{pid}/context", self.put_about_context)
+        r.add_route("*", "/api/about/{pid}/memory/{name}", self.note)
+        r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
+        r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
         r.add_get("/api/runs/{rid}", self.get_run)
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
@@ -503,9 +613,15 @@ class WebApp:
         r.add_get("/api/connections", self.connections_status)
         r.add_get("/api/jobs", self.jobs_list)
         r.add_patch("/api/jobs/{name}", self.jobs_change)
+        r.add_post("/api/feedback", self.send_feedback)
+        r.add_get("/api/privacy", self.privacy_settings)
+        r.add_put("/api/privacy", self.privacy_settings)
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
+        r.add_post("/api/phone/handoff", self.phone_handoff)
+        r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
+        r.add_delete("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/connections/{kind}", self.connections_change)
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)

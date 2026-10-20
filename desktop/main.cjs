@@ -1,6 +1,6 @@
 // Ken for Mac: a window onto the local `ken` service (bot.py). The service owns
 // the engine, Telegram, voice and schedules; this app only shows its chat.
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences, clipboard } = require('electron');
 const { execFile } = require('node:child_process');
 const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } = require('node:fs');
 const path = require('node:path');
@@ -252,6 +252,13 @@ async function start() {
   ipcMain.handle('update:failed', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return failedState();
+  });
+  // Ken on your phone: a BotFather code copied on the phone (iPhone's clipboard reaches the Mac).
+  // Only something shaped like a bot token is passed to the page, never the rest of the clipboard.
+  ipcMain.handle('clipboard:bot-token', (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    const found = clipboard.readText().match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
+    return found ? found[0] : null;
   });
   ipcMain.handle('microphone:permission', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');

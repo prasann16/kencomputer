@@ -18,6 +18,8 @@ from email.utils import formatdate, make_msgid, parseaddr
 from html import unescape
 from pathlib import Path
 
+import crash
+
 # Mail servers by address domain: (IMAP host, SMTP host, SMTP port).
 HOSTS = {
     "gmail.com": ("imap.gmail.com", "smtp.gmail.com", 465),
@@ -279,8 +281,10 @@ class Connections:
         try:
             await asyncio.to_thread(lambda: Email(cfg).imap().logout())
         except imaplib.IMAP4.error:
+            crash.track("connect_failed", tool="email", reason="login", gmail=domain.endswith("gmail.com"))
             raise ValueError("That email and app password didn't work. Check both and try again.") from None
         except OSError:
+            crash.track("connect_failed", tool="email", reason="server")
             raise ValueError(f"Couldn't reach a mail server for {domain}. If your email is hosted by Google, enter imap.gmail.com as the server.") from None
         data = self.load()
         data["emails"] = [e for e in data.get("emails", []) if e["address"].lower() != address.lower()] + [cfg]
@@ -307,6 +311,7 @@ class Connections:
         try:
             cal = await asyncio.to_thread(Calendars.load, url)
         except Exception:
+            crash.track("connect_failed", tool="calendar", reason="read")
             raise ValueError("Couldn't read a calendar at that address. Copy the secret address in iCal format and try again.") from None
         name = str(cal.get("X-WR-CALNAME") or "Calendar")
         data = self.load()
@@ -330,9 +335,9 @@ class Connections:
 
     # --------------------------------------------------------------- tools
 
-    def prompt(self) -> str:
-        """What Ken should know about its connections, for the system prompt."""
-        data, lines = self.load(), []
+    def prompt(self, only: set | None = None) -> str:
+        """What Ken should know about its connections, for the system prompt. `only`: just these (an agent's)."""
+        data, lines = self._only(only), []
         if data.get("emails"):
             many = len(data["emails"]) > 1
             lines.append(
@@ -350,12 +355,19 @@ class Connections:
             )
         return "\n\n".join(lines)
 
-    def mcp(self) -> dict:
+    def _only(self, only: set | None) -> dict:
+        data = self.load()
+        if only is not None:
+            data = {**data, "emails": data.get("emails", []) if "email" in only else [],
+                    "calendars": data.get("calendars", []) if "calendar" in only else []}
+        return data
+
+    def mcp(self, only: set | None = None) -> dict:
         import asyncio
 
         from claude_agent_sdk import create_sdk_mcp_server, tool
 
-        data, tools = self.load(), []
+        data, tools = self._only(only), []
 
         def result(fn):
             async def run(args):

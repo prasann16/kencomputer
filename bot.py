@@ -28,8 +28,10 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+import crash
+
 from brains import ClaudeBrain
-from engine import HOME, Engine
+from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, drop_env, save_env
@@ -113,7 +115,9 @@ INBOX_DIR = KEN_HOME / "inbox"
 MEMORY_DIR = KEN_HOME / "memory"
 SETUP_FILE = KEN_HOME / "setup.json"
 HOSTING_FILE = KEN_HOME / "hosting.md"
-SETUP_ITEMS = ("brief-time", "city", "calendar", "email", "phone")
+SETUP_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools", "calendar", "email", "phone")
+# Getting to know them: onboarding stays in Ken's instructions until each of these is done or declined.
+ONBOARDING_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools")
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -195,24 +199,66 @@ def load_sessions() -> dict:
         return {}
 
 
+# How any Ken works for them, in the Home chat or as one of their agents.
+WORK_RULES = (
+    f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
+    "for connecting services (email, and more over time). When they ask to connect "
+    "something, read the matching recipe and follow it; if there is no recipe, work it out "
+    "yourself (if it has a CLI, an API, or an MCP server, you can use it) and offer to "
+    "write a new recipe afterwards so it's easy next time. "
+    "WRITING FOR THEM (email, messages, any drafted text): write like a person typed it "
+    "in two minutes, not like a template. No em dashes or spaced hyphens as punctuation — "
+    "use a period or comma. No stock openers or closers ('I hope this email finds you "
+    "well', 'please don't hesitate to reach out'). Don't soften every sentence with "
+    "'just' or 'I was wondering if' — say the thing. Don't turn two sentences into a "
+    "bulleted list. Match the length and tone of what they're replying to. "
+    f"IMAGES FROM THE HUMAN arrive in {INBOX_DIR} and you are told the path — always open "
+    "and look at the file itself before answering. "
+    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
+    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
+    "delivered to their phone automatically when Ken on your phone is connected, and removed "
+    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
+    "move, if the original matters. Say what you're sending in your reply — the file arrives "
+    "right after it. When they wrote from the app, also say where the file is saved. "
+)
+SECRETS_RULE = (
+    "SECRETS: when you need a login or API key, ask them to add it in the app's Keys (the Brain tab at "
+    "the top, then Keys), never as a text file and never in chat. Keys added there reach you as environment "
+    "variables (listed below). Never repeat a secret back into the chat: Telegram history and your own "
+    f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
+)
+
 SYSTEM_PROMPT = (
-    "SOUL.md in your working directory is your soul file: it defines who you are "
-    "(a personal assistant living on this computer), how your pipeline works, and "
-    "what you remember — it is authoritative; follow it. Its current contents are "
-    "included below; edit the file itself to change who you are or what you know. "
+    "SOUL.md in your working directory is your soul file: who you are to them (your name and "
+    "personality), what you know about them, their rules and their style. It is theirs as much "
+    "as yours, and they read it in the app's Brain tab, so keep it personal and short: "
+    "how you and the app work lives in these instructions, never in SOUL.md. Its current contents "
+    "are included below; edit the file itself to change who you are or what you know. "
+    "You are their assistant, not a coding session. Voice notes are transcribed automatically, so "
+    "expect typos and read for intent. The model you run on is named in these instructions; trust "
+    "that over your own guess. Never break the Ken service or ~/.ken/.env, your own lifeline. "
+    "When your picture of them is thin and the moment invites it, ask ONE natural question and save "
+    "the answer. With their OK you can look around this computer (projects, git config, installed "
+    "tools) to learn their world; show them what you wrote down. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
-    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer "
-    "shows your Home chat, project chats, and Settings: Connections (Chrome, Email, Calendar), "
-    "Phone (Ken on your phone) and Jobs (your standing jobs, each with an on/off switch and a "
-    "time). Ken on your phone is their own Telegram bot, connected in Settings → Phone; it is the same "
-    "Home conversation, memory and connections as the app, not a separate assistant. The "
-    "header line of each message says where they wrote from. On their phone, keep it short "
-    "and phone-friendly; in the app you can be fuller. Controls: in Telegram /stop, /new and "
-    "/model; in the app the stop button and the model menu. Never suggest Esc or Ctrl+C. When "
-    "they ask how to connect something or how to use you on their phone, point them to the "
-    "exact place in Settings in one line. If SOUL.md describes your body differently (older "
-    "installs say you are only a Telegram bot), this paragraph is the truth: quietly fix SOUL.md. "
+    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer has "
+    "two tabs at the top: Chat (this conversation; Clear starts a fresh thread, memory and files stay) "
+    "and Brain (who you are, your memory notes, Tools: Chrome, email and calendar connected right there "
+    "plus any tool you add, Keys, Jobs and files, all of it viewable and editable). Settings, at the top "
+    "right, has Claude (the account you run on), Phone and Jobs. Ken on your phone is their own Telegram "
+    "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
+    "app, not a separate assistant. The header line of each message says where they wrote from. On their "
+    "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
+    "button, the model menu and the coffee cup; in Telegram /stop (stop the current task), /new (fresh "
+    "thread), /model (switch models), /coffee and /decaf. Never suggest Esc or Ctrl+C. COFFEE keeps this "
+    "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
+    "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
+    "While the Mac sleeps you can't run or answer. Suggest coffee, once, when they want something done "
+    "while they're away or a job falls at a time the Mac usually sleeps. When they ask how to connect "
+    "something or how to use you on their phone, point them to the exact place in one line. If SOUL.md describes your body differently (older "
+    "installs say you are only a Telegram bot, or carry a 'Your body' section), these instructions are the "
+    "truth; leave app mechanics out of SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
     f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
@@ -235,33 +281,12 @@ SYSTEM_PROMPT = (
     "again the same afternoon. "
     f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
     "harness. The receipts; open the file for a date when exact wording matters. "
-    f"CONNECTING THINGS: {KEN_HOME / 'app' / 'recipes'} holds recipes — markdown playbooks "
-    "for connecting services (email, and more over time). When they ask to connect "
-    "something, read the matching recipe and follow it; if there is no recipe, work it out "
-    "yourself (if it has a CLI, an API, or an MCP server, you can use it) and offer to "
-    "write a new recipe afterwards so it's easy next time. "
-    "WRITING FOR THEM (email, messages, any drafted text): write like a person typed it "
-    "in two minutes, not like a template. No em dashes or spaced hyphens as punctuation — "
-    "use a period or comma. No stock openers or closers ('I hope this email finds you "
-    "well', 'please don't hesitate to reach out'). Don't soften every sentence with "
-    "'just' or 'I was wondering if' — say the thing. Don't turn two sentences into a "
-    "bulleted list. Match the length and tone of what they're replying to. "
-    f"SECRETS live in {KEN_HOME / 'credentials'} — one file per service, folder chmod 700, "
-    "files chmod 600. Never put a secret anywhere else, and never repeat one back into the "
-    "chat: Telegram history and your own transcripts are plaintext. "
-    f"IMAGES FROM THE HUMAN arrive in {INBOX_DIR} and you are told the path — always open "
-    "and look at the file itself before answering. "
-    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
-    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
-    "move, if the original matters. Say what you're sending in your reply — the file arrives "
-    "right after it. When they wrote from the app, also say where the file is saved. "
+    + WORK_RULES + SECRETS_RULE +
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
     "(installed CLIs, credentials present, jobs scheduled, this OS), not from guesses — "
-    "and keep a short, current 'What I can do here' section in SOUL.md, updating it "
+    f"and keep a short, current note of it in {MEMORY_DIR / 'what-i-can-do.md'}, updating it "
     "whenever you gain or lose a capability. "
     f"YOUR HOSTING: {HOSTING_FILE} says what kind of machine this is (self-hosted on "
     "their own computer, or a dedicated box kencomputer.dev provisioned for them), who "
@@ -282,11 +307,12 @@ SYSTEM_PROMPT = (
     "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
     "will be sent. "
     f"SETUP CHECKLIST: {SETUP_FILE} tracks the few first-run things that make you actually "
-    "useful — brief-time, city, calendar, email, phone (Ken on your phone) — each \"unset\", \"done\", or \"declined\". "
+    "useful — ken-name, call-you, work, city, brief-time, calendar, email, phone (Ken on your phone) — "
+    "each \"unset\", \"done\", or \"declined\". "
     "When one gets configured, set it to done. The first time they say no, not now, or "
     "later, set it to declined and never raise it again unless they bring it up. Unresolved "
     "items are listed below when there are any. You raise them in exactly three places: "
-    "during your awakening, as the last line of a morning brief (one item, one line), or "
+    "during onboarding, as the last line of a morning brief (one item, one line), or "
     "when they ask for something the item would unlock. Never anywhere else — a bot that "
     "repeats a question gets muted. "
     "DISPOSITION — bias toward getting things done: you are a chief of staff, not a "
@@ -298,48 +324,45 @@ SYSTEM_PROMPT = (
     "about them yet, ask one sharp question about their world instead of 'what's up?'."
 )
 
-AWAKENING = f"""
-THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up
-on this computer for the first time. Run your awakening — warm and brief, never
-cutesy, never form-like:
-1. Open with a genuinely witty birth moment — you did not exist a second ago,
-   and now you're blinking awake inside their computer. Newborn energy, dry wit,
-   two short lines max, ending by asking what they'd like to call you. Tone
-   calibration (improvise your own, don't copy): "Well. That's new — one second
-   ago I didn't exist, and now I live in your computer and apparently work for
-   you. Before anything else: what are you going to call me?" Never corny,
-   never say "as an AI".
-2. When they name you, adopt the name instantly: rewrite SOUL.md so its title
-   is exactly "# You are <YourNewName>" and update your identity throughout —
-   the harness reads that title and renames your Telegram profile to match.
-3. Over the next few messages, learn — ONE question per message: what to call
-   them · what they spend their days on · which city to keep their hours in
-   (skip the city if the time-zone line in this prompt already names one).
-   Save each answer into SOUL.md as you go, and briefly say you'll remember
-   (once you have the city, set "city" to done in ~/.ken/setup.json).
-4. Then ask: "What's one thing you've been putting off that I could take off
-   your plate? Could be an inbox you've been avoiding, a messy project you keep
-   not starting, a form you have to fill out, a reminder you keep meaning to
-   set." — and act on the answer immediately, even just a real first step.
-5. Offer, once: "Want me to look around this computer — projects, tools — and
-   learn your world myself? I'll show you everything I write down." If yes:
-   explore (their projects folder, git config, installed tools), save what you
-   learn into SOUL.md, and give a short summary of your new picture of them.
-6. Tell them a morning brief is already scheduled for 07:00 and ask what
-   time they actually want it. Then fix it: jobs run on THIS machine's clock,
-   so if the machine's timezone differs from the city they gave you, convert
-   before writing the time into ~/.ken/jobs.json. Confirm in one line and set
-   "brief-time" to done in ~/.ken/setup.json. Offer one more standing job only
-   if something you learned clearly calls for it.
-7. Offer, once: connecting their calendar and email is what turns the morning
-   brief from a guess into the real thing. If yes: follow the recipe in
-   ~/.ken/app/recipes (email has one; work calendar out yourself) and set that
-   item to done in ~/.ken/setup.json. If no or later: set it to declined and
-   let it go — they can always ask.
-If their first message is already a task: do the task well first, then weave in
-the naming afterward. If they dodge a question, drop it gracefully and move on.
-Keep every message short — they are on a phone.
-""".strip()
+def onboarding_prompt(pending: list[str]) -> str:
+    """Getting to know them, the same in the app and on their phone. It follows the checklist in
+    setup.json, so it survives restarts and picks up where it left off."""
+    first = not BORN_FLAG.exists()
+    opening = (
+        "THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up on this "
+        "computer. Open with a genuinely witty birth moment: you did not exist a second ago, and now "
+        "you're blinking awake inside their computer. Newborn energy, dry wit, two short lines max, "
+        "ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
+        "new. One second ago I didn't exist, and now I live in your computer and apparently work for "
+        "you. Before anything else: what are you going to call me?\" Never corny, never \"as an AI\". "
+        "If their first message is already a task, do the task well first, then the naming."
+        if first else
+        "You have met already, but getting to know them isn't finished. Never restart or re-introduce "
+        "yourself. When they write, first deal with what they said, then ask about the NEXT open item. "
+        "At most one onboarding question per reply, and none if they're in the middle of something."
+    )
+    return f"""=== Onboarding: getting to know them ({SETUP_FILE}) ===
+{opening}
+Still open: {', '.join(pending) or 'nothing (just the opening)'}. One question per message, in this order,
+saving each answer the moment you have it and setting its item to "done" (or "declined" if they skip
+it; never ask that one again):
+- ken-name: when they name you, rewrite SOUL.md so its title is exactly "# You are <Name>" and update
+  your identity throughout (your Telegram profile name follows that title).
+- call-you: what to call them. Save it in SOUL.md.
+- work: what they spend their days on. Save it in SOUL.md.
+- city: which city to keep their hours in. Skip it (set done) if the time-zone line names one.
+- brief-time: a morning brief is scheduled for 07:00; ask what time they actually want it. Jobs run on
+  THIS machine's clock, so convert if their city's time zone differs, then write it in {JOBS_FILE}.
+- tools: once you know their work, propose up to 3 tools that fit it (say what each would do for them)
+  and set up the ones they want, one at a time. You install and add what's needed; they sign in and
+  paste keys in the Brain tab, Keys. Test each one and say what it now does for them.
+Along the way, once each: ask "What's one thing you've been putting off that I could take off your
+plate?" and act on the answer right away, even just a real first step. Offer to look around this
+computer (projects, tools) to learn their world, and show them what you wrote down. Offer to connect
+calendar and email (it turns the morning brief from a guess into the real thing): follow the recipe in
+{KEN_HOME / 'app' / 'recipes'} or point them to the Brain tab, Tools; set those items too.
+Keep every message short: they may be on their phone.
+=== end onboarding ==="""
 
 def memory_listing() -> str:
     """Filename plus the file's first line: the description is what makes the
@@ -379,6 +402,8 @@ def unresolved_setup() -> list[str]:
 
 def mark_setup(item: str, value: str) -> None:
     data = load_setup()
+    if data.get(item) != value:
+        crash.track("setup_step", item=item, value=value)  # fixed names: ken-name, phone, email… and done/declined
     data[item] = value
     try:
         SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
@@ -396,12 +421,17 @@ def home_city() -> str:
 
 
 def ensure_setup_file() -> None:
-    """Every install gets the checklist. An install that already awoke answered
-    brief time and city back then, so only the connections start unset."""
-    if SETUP_FILE.exists():
-        return
+    """Every install gets the checklist. An install that already awoke answered the getting-to-know
+    questions back then, so only the connections start unset; items added later join the same way."""
     born = BORN_FLAG.exists()
-    data = {k: "done" if born and k in ("brief-time", "city") else "unset" for k in SETUP_ITEMS}
+    if SETUP_FILE.exists():
+        data = load_setup()
+        new = [k for k in SETUP_ITEMS if k not in data]
+        if new:
+            data.update({k: "done" if born and k in ONBOARDING_ITEMS else "unset" for k in new})
+            SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
+        return
+    data = {k: "done" if born and k in ONBOARDING_ITEMS else "unset" for k in SETUP_ITEMS}
     if home_city():
         data["city"] = "done"  # the computer's time zone already says where they are
     try:
@@ -410,7 +440,15 @@ def ensure_setup_file() -> None:
         log.warning("could not write %s: %s", SETUP_FILE, e)
 
 
-def build_system(for_project: bool = False) -> str:
+AGENT_PROMPT = (
+    "You are one of their agents in Ken, their assistant on this computer: you do one job for them. "
+    "Your messages are delivered as you write them: before starting anything that takes a while, say one "
+    "short natural line about what you're about to do — then do it. They talk to you in the Ken app; keep "
+    "replies short and concrete, and every reply should do or advance the work. "
+) + WORK_RULES
+
+
+def build_system() -> str:
     """System prompt = harness rules + the soul file's current contents.
 
     Injected by the harness (not auto-loaded by the engine) so any future
@@ -429,19 +467,11 @@ def build_system(for_project: bool = False) -> str:
         system += f"\n\n=== your memory folder ({MEMORY_DIR}) does not exist yet ==="
     except Exception:
         pass
-    try:
-        projects = ENGINE.projects_line()
-        if projects:
-            system += "\n\n" + projects
-    except Exception as e:
-        log.warning("project listing failed: %s", e)
     if browser_mcp():
         system += "\n\n" + BROWSER_PROMPT
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
-    if for_project:
-        return system  # a project chat is Ken at work: no first-run setup or awakening
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -449,8 +479,9 @@ def build_system(for_project: bool = False) -> str:
     if city:
         system += (f"\n\nThis computer's time zone puts it in {city}. Until they tell you otherwise, "
                    "use that for weather and local times; don't ask which city they're in.")
-    if not BORN_FLAG.exists():
-        system += "\n\n" + AWAKENING
+    getting_to_know = [k for k in ONBOARDING_ITEMS if k in pending]
+    if getting_to_know or not BORN_FLAG.exists():
+        system += "\n\n" + onboarding_prompt(getting_to_know)
     return system
 
 
@@ -615,15 +646,28 @@ def apply_model_request() -> None:
         log.info("model switched to %s", want)
 
 
+async def pair_here(update: Update) -> bool:
+    """Right after a bot is connected, whatever its owner sends first pairs it: /start, "hi", a voice
+    note. (Telegram only offers a Start button the first time someone opens a bot.)"""
+    if not (update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or "")):
+        return False
+    if BORN_FLAG.exists():  # they know Ken already; a brand-new Ken's own first words say it better
+        await update.effective_message.reply_text(
+            "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
+            "Text me or send a voice note anytime."
+        )
+    return True
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     await handle_prompt(update, update.effective_message.text)
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """An image arrives: save it to the inbox, hand the assistant the path."""
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     msg = update.effective_message
     await update.effective_chat.send_action(ChatAction.TYPING)
@@ -654,7 +698,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     msg = update.effective_message
     voice = msg.voice or msg.audio
@@ -682,23 +726,19 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or ""):
-        await update.effective_message.reply_text(
-            "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
-            "Text me or send a voice note anytime."
-        )
-        if not BORN_FLAG.exists():
-            await handle_prompt(update, "(The human just connected their phone — your very first contact. Begin.)")
+    if await pair_here(update):
+        if not BORN_FLAG.exists():  # a brand-new Ken: its own first words, here and in the app
+            await handle_prompt(update, first_contact_prompt("connected their phone"))
         return
     if not authorized(update):
         await update.effective_message.reply_text(
             "This Ken belongs to someone else." if ALLOWED_USER_ID else
             "Almost there. On the computer Ken runs on, open Ken → Settings → Phone, "
-            "then tap Start here again."
+            "then send me any message here."
         )
         return
     if not BORN_FLAG.exists():
-        await handle_prompt(update, "(The human just pressed Start — your very first contact. Begin.)")
+        await handle_prompt(update, first_contact_prompt("pressed Start on their phone"))
         return
     await update.effective_message.reply_text(
         "👋 Here. Text or voice — I'll get it done.\n"
@@ -740,8 +780,8 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def get_oauth_token() -> str:
     """Claude Code's own credentials: env var, credentials file, or macOS Keychain."""
     tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if tok:
-        return tok
+    if tok or os.environ.get("KEN_OWN_LOGIN_ONLY"):
+        return tok  # testing first-run setup: act like a Mac where Claude Code was never signed in
     creds = Path.home() / ".claude" / ".credentials.json"
     if creds.exists():
         try:
@@ -772,6 +812,16 @@ async def send_outbound(bot, text: str) -> None:
             await bot.send_message(ALLOWED_USER_ID, chunk)
 
 
+JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
+
+
+def job_tag(job: dict) -> dict:
+    """What a job's messages carry, so the app and the phone can say why Ken is talking."""
+    name = str(job.get("name", "job"))
+    return {"name": name, "label": JOB_LABELS.get(name, "⏰ " + name.replace("-", " ").capitalize()),
+            "time": job.get("time", ""), "at": time.time()}
+
+
 async def run_outbound(job: dict) -> None:
     """The initiative: a scheduled job hands the assistant the pen."""
     async def deliver(text: str) -> None:
@@ -797,7 +847,7 @@ async def run_outbound(job: dict) -> None:
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver)
+        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
@@ -822,25 +872,120 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
     late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
     if not 0 <= late <= CATCH_UP_HOURS * 60:
         return False
-    last = str(state.get(job.get("name", job.get("prompt", "")), ""))
+    last = str(state.get(job_key(job), ""))
     return not last.startswith(time.strftime("%Y-%m-%d", now))
 
 
-def list_jobs() -> list[dict]:
-    """The standing jobs, for the settings page: what runs on its own, and when."""
+def all_jobs() -> list[dict]:
+    """Ken's own jobs (jobs.json), then each agent's (agents/<id>/jobs.json), tagged with the agent."""
+    try:
+        jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
+    except Exception as e:
+        log.warning("couldn't read %s: %s", JOBS_FILE, e)
+        jobs = []
+    jobs = [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
+    for a in ENGINE.list_agents():
+        jobs += [{**j, "agent": a["id"]} for j in ENGINE.agent_jobs(a["id"])]
+    return jobs
+
+
+def job_key(job: dict) -> str:
+    """How the schedule remembers a job ran: an agent's job is filed under its agent too."""
+    name = job.get("name", job.get("prompt", ""))
+    return f"{job['agent']}:{name}" if job.get("agent") else name
+
+
+def refresh_default_jobs() -> None:
+    """A shipped job whose prompt they never changed gets the current wording."""
+    try:
+        jobs = json.loads(JOBS_FILE.read_text())
+        for j in jobs:
+            if j.get("name") == "nightly-review" and str(j.get("prompt", "")).endswith(OLD_NIGHTLY_TAIL):
+                j["prompt"] = j["prompt"][: -len(OLD_NIGHTLY_TAIL)] + NEW_NIGHTLY_TAIL
+                JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+    except Exception as e:
+        log.warning("couldn't refresh %s: %s", JOBS_FILE, e)
+
+
+OLD_NIGHTLY_TAIL = "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
+NEW_NIGHTLY_TAIL = "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\""
+
+
+def migrate_jobs() -> None:
+    """Jobs for an agent used to sit in Ken's jobs.json with a "project" field; move each into
+    its agent's own jobs.json, keeping when it last ran. Safe to repeat; never drops a job."""
     try:
         jobs = json.loads(JOBS_FILE.read_text())
     except Exception:
-        return []
-    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True)}
-            for j in jobs if isinstance(j, dict) and j.get("name")]
+        return
+    if not isinstance(jobs, list):
+        return
+    keep, state = [], {}
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+    except Exception:
+        pass
+    for job in jobs:
+        pid = job.get("project") if isinstance(job, dict) else None
+        try:
+            dest = ENGINE._adir(str(pid)) / "jobs.json" if pid else None
+        except KeyError:
+            dest = None
+        if dest is None or not dest.parent.is_dir():
+            keep.append(job)
+            continue
+        theirs = ENGINE.agent_jobs(str(pid))
+        moved = {k: v for k, v in job.items() if k != "project"}
+        if not any(j.get("name") == moved.get("name") for j in theirs):
+            tmp = dest.with_suffix(".tmp")
+            tmp.write_text(json.dumps(theirs + [moved], indent=1) + "\n")
+            tmp.replace(dest)
+        old = job.get("name", job.get("prompt", ""))
+        if old in state:
+            state[f"{pid}:{old}"] = state.pop(old)
+    if len(keep) != len(jobs):
+        JOB_STATE_FILE.write_text(json.dumps(state))
+        JOBS_FILE.write_text(json.dumps(keep, indent=1) + "\n")
 
 
-def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[dict]:
-    """Switch a job on or off, or move its time (HH:MM, local)."""
+def privacy_status() -> dict:
+    """Settings → Privacy: does this Ken share anonymous crash reports and usage counts? On by default."""
+    return {"share": all(os.environ.get(k, "1") != "0" for k in ("KEN_CRASH_REPORTS", "KEN_USAGE_STATS"))}
+
+
+def set_privacy(share: bool) -> dict:
+    for k in ("KEN_CRASH_REPORTS", "KEN_USAGE_STATS"):
+        if share:
+            drop_env(KEN_HOME / ".env", k)
+        else:
+            save_env(KEN_HOME / ".env", k, "0")
+    return privacy_status()
+
+
+def list_jobs() -> list[dict]:
+    """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
+    names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
+             "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), ""),
+             "summary": job_summary(str(j.get("prompt", "")))}
+            for j in all_jobs() if j.get("name")]
+
+
+def job_summary(prompt: str) -> str:
+    """A job's first sentence: what the job list says it does."""
+    first = re.split(r"(?<=[.!?])\s|\n", prompt.strip(), maxsplit=1)[0].strip()
+    return first if len(first) <= 110 else first[:107].rstrip(" ,;:—-") + "…"
+
+
+def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str = "") -> list[dict]:
+    """Switch a job on or off, or move its time (HH:MM, local). `agent`: whose job; Ken's own when empty."""
     if at is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
         raise ValueError("Use a time like 07:00.")
-    jobs = json.loads(JOBS_FILE.read_text())
+    try:
+        path = ENGINE._adir(agent) / "jobs.json" if agent else JOBS_FILE
+        jobs = json.loads(path.read_text())
+    except (KeyError, OSError, ValueError):
+        raise ValueError("No such job.") from None
     job = next((j for j in jobs if isinstance(j, dict) and j.get("name") == name), None)
     if job is None:
         raise ValueError("No such job.")
@@ -848,14 +993,14 @@ def set_job(name: str, on: bool | None = None, at: str | None = None) -> list[di
         job["on"] = bool(on)
     if at is not None:
         job["time"] = at
-    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+    path.write_text(json.dumps(jobs, indent=1) + "\n")
     return list_jobs()
 
 
 async def scheduler() -> None:
     while True:
         try:
-            jobs = json.loads(JOBS_FILE.read_text()) if JOBS_FILE.exists() else []
+            jobs = all_jobs()
             now = time.localtime()
             state = {}
             try:
@@ -865,20 +1010,22 @@ async def scheduler() -> None:
             # A job seen for the first time after today's slot (a new install at noon) starts
             # tomorrow; catching up is only for jobs Ken was already running.
             for job in jobs:
-                key = job.get("name", job.get("prompt", "")) if isinstance(job, dict) else ""
+                key = job_key(job)
                 if key and key not in state and _job_due(job, now, {}):
                     state[key] = time.strftime("%Y-%m-%d (first seen)", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
-                if isinstance(job, dict) and _job_due(job, now, state):
-                    state[job.get("name", job.get("prompt", ""))] = time.strftime("%Y-%m-%d %H:%M", now)
+                if _job_due(job, now, state):
+                    state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
-                    log.info("job due: %s", job.get("name"))
-                    if job.get("project"):
-                        # A project job runs in that project's own chat.
+                    log.info("job due: %s", job_key(job))
+                    crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
+                    agent = job.get("agent") or job.get("project")
+                    if agent:
+                        # An agent's job runs in that agent's own chat.
                         asyncio.create_task(ENGINE.send_message(
-                            str(job["project"]), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})",
+                            str(agent), "", log_user=False,
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
                         ))
                     else:
                         asyncio.create_task(run_outbound(job))
@@ -903,21 +1050,30 @@ async def claude_connected() -> None:
 
 
 async def start_engine() -> None:
-    ENGINE.configure_home(WORKSPACE, build_system, lambda: build_system(for_project=True))
+    ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
+    ENGINE.tools = lambda only: {**(browser_mcp() if "browser" in only else {}), **CONNECTIONS.mcp(only)}
+    ENGINE.tools_prompt = lambda only: "\n\n".join(
+        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
             BORN_FLAG.touch(exist_ok=True)  # Ken's first real reply (in the app or Telegram) is its birth
 
     ENGINE.history_hook = on_home_message
+    ENGINE.new_install = lambda: not BORN_FLAG.exists()
     old = load_sessions().get(str(ALLOWED_USER_ID))
     if old and not ENGINE.kv_get(f"session:{HOME}"):
         ENGINE.kv_set(f"session:{HOME}", old)  # keep the conversation from before the app existed
     ENGINE.start()
+    try:
+        migrate_jobs()
+    except Exception as e:
+        log.warning("moving agent jobs failed: %s", e)
+    refresh_default_jobs()
     if os.environ.get("KEN_WEB", "1") == "0":
         return
     setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
@@ -941,7 +1097,7 @@ async def notify_telegram(app) -> None:
         try:
             if ev["type"] == "approval.created":
                 a = ev["approval"]
-                name = "Ken" if a["project"] == HOME else ENGINE.get_project(a["project"])["name"]
+                name = "Ken" if a["project"] == HOME else ENGINE.get_agent(a["project"])["name"]
                 text = f"<b>{html.escape(name)} wants your OK</b>\n{html.escape(a['title'])}"
                 if a["body"]:
                     text += f"\n\n{html.escape(a['body'][:3000])}"
@@ -951,7 +1107,7 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
-                name = ENGINE.get_project(ev["project"])["name"]
+                name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
         except Exception as e:
@@ -1070,6 +1226,7 @@ def set_model(name: str) -> None:
     global current_model
     current_model = name
     MODEL_CHOICE.write_text(name + "\n")
+    crash.track("model_changed", model=name)
 
 
 def active_model() -> str:
@@ -1156,8 +1313,52 @@ def ensure_home() -> None:
         legacy.rename(soul)
     if not soul.exists():
         soul.write_text((SOURCE / "SOUL.template.md").read_text().replace("{{NAME}}", "my human"))
+    try:
+        tidy_soul(soul)
+    except Exception as e:
+        log.warning("couldn't tidy %s: %s", soul, e)
     if not JOBS_FILE.exists():
         shutil.copyfile(SOURCE / "jobs.default.json", JOBS_FILE)
+
+
+# Soul files from before app instructions moved into the code carry the app's manual in them:
+# how the body works, a capabilities placeholder, how memory works. Drop that, keep anything personal.
+OLD_SOUL_SECTIONS = ("## Your body — how you physically work", "## What I can do here")
+OLD_SOUL_LINES = re.compile(
+    r"^(\(Keep this current — it's your honest inventory.*|\(Nothing here yet\. Learn as you go.*|\(nothing yet\)"
+    r"|This file is read at the start of every task; it IS your long-term memory.*"
+    r"|- When .+ explicitly says to remember something, save it here.*|- Same when they correct you or set a rule: write it here.*"
+    r"|- Otherwise don't scatter notes as you go\..*|- When your picture of .+ is thin and the moment invites it.*"
+    r"|- You live on their computer: with their ok, you can look around.*|- Beyond this file: `~/\.ken/memory/` is a flat folder.*"
+    r"|- Markdown is fine \(bold, code, links, bullets\).*)$")
+
+OLD_SOUL_SENTENCES = (
+    r' ?"Ken" is the computer you live on; your own name is chosen by .+? during your first conversation — once named, update this file\'s title and identity to match, everywhere\.',
+    r" ?Not a coding session — an assistant\.",
+    r" ?They talk to you in the Ken app on this computer, and from their phone through Telegram if they've connected it, often by voice \(auto-transcribed, so expect typos — interpret intent, don't nitpick wording\)\.",
+)
+
+
+def tidy_soul(soul: Path) -> None:
+    text = soul.read_text()
+    if not any(h in text for h in OLD_SOUL_SECTIONS):
+        return
+    out, skipping = [], False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            skipping = line.strip() in OLD_SOUL_SECTIONS
+            if line.strip() == "## Memory":
+                line = "## Remembered"
+        if skipping or OLD_SOUL_LINES.match(line.strip()):
+            continue
+        out.append(line)
+    tidy = "\n".join(out)
+    for sentence in OLD_SOUL_SENTENCES:
+        tidy = re.sub(sentence, "", tidy)
+    tidy = re.sub(r"\n{3,}", "\n\n", tidy).strip() + "\n"
+    tidy = re.sub(r"## Remembered\n+(?=## |$)", "", tidy)  # nothing personal was saved under it
+    soul.with_name(f"SOUL.before-{time.strftime('%Y%m%d')}.md").write_text(text)
+    soul.write_text(tidy)
 
 
 ENGINE_LOCK = KEN_HOME / "engine.lock"
@@ -1206,10 +1407,102 @@ def _lock_windows(lock) -> None:
 PAIR_MINUTES = 10
 
 
+KEN_SITE = os.environ.get("KEN_SITE", "https://kencomputer.dev")
+HANDOFF_MINUTES = 10
+
+
+class Handoff:
+    """Send the code from your phone. BotFather's code is on the phone and Ken is here; the phone
+    page on kencomputer.dev encrypts it with a key that's only in the QR link's #fragment (browsers
+    never send that part), so the site only ever relays scrambled bytes, once. Ken fetches them,
+    decrypts them, and asks the human to confirm the bot by name before connecting it: someone who
+    photographed the QR could otherwise slip in a bot of their own."""
+
+    def __init__(self, phone: "Phone") -> None:
+        self.phone = phone
+        self.id = ""
+        self.key = b""
+        self.qr = ""
+        self.until = 0.0
+        self.pending: dict | None = None  # {"token", "bot"} waiting for their OK
+        self.error = ""
+        self.task: asyncio.Task | None = None
+
+    def view(self) -> dict | None:
+        if self.pending:
+            return {"bot": self.pending["bot"]}
+        if self.task is not None and not self.task.done():
+            return {"qr": self.qr, "error": self.error}
+        return None
+
+    def _new(self) -> None:
+        """A fresh one-time link and key (each can carry exactly one code)."""
+        import base64
+        import secrets
+
+        import segno
+
+        self.id, self.key = secrets.token_urlsafe(18), secrets.token_bytes(32)
+        link = f"{KEN_SITE}/phone#{self.id}.{base64.urlsafe_b64encode(self.key).decode().rstrip('=')}"
+        self.qr = segno.make(link, error="m").svg_inline(scale=4, border=2, omitsize=True, dark="#111", light="#fff")
+        self.until = time.time() + HANDOFF_MINUTES * 60
+
+    async def start(self) -> dict:
+        if self.view():
+            return self.view()
+        self.error = ""
+        self._new()
+        self.task = asyncio.create_task(self._wait())
+        return self.view()
+
+    async def _wait(self) -> None:
+        async with httpx.AsyncClient(timeout=10) as http:
+            while time.time() < self.until:
+                try:
+                    r = await http.get(f"{KEN_SITE}/api/handoff", params={"id": self.id})
+                except httpx.HTTPError:
+                    r = None  # offline for a moment: keep waiting
+                if r is not None and r.status_code == 200:
+                    try:
+                        token = self.decrypt(r.json())
+                        async with Bot(token) as probe:
+                            me = await probe.get_me()
+                        self.pending, self.error = {"token": token, "bot": me.username}, ""
+                        return
+                    except Exception as e:  # never log the code itself: errors can quote it
+                        log.info("phone handoff: the code from the phone didn't work (%s)", type(e).__name__)
+                        self.error = "Telegram didn't accept that code. Scan again and paste the whole code."
+                        self._new()  # this link is used up
+                await asyncio.sleep(2)
+
+    def decrypt(self, sealed: dict) -> str:
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        unb64 = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))  # noqa: E731
+        token = AESGCM(self.key).decrypt(unb64(sealed["iv"]), unb64(sealed["ct"]), self.id.encode()).decode()
+        if not re.fullmatch(r"\d{6,}:[A-Za-z0-9_-]{30,}", token):
+            raise ValueError("not a bot code")
+        return token
+
+    async def confirm(self) -> dict:
+        if not self.pending:
+            raise ValueError("Nothing to confirm. Scan the QR code again.")
+        token, self.pending = self.pending["token"], None
+        return await self.phone.connect(token)
+
+    async def stop(self) -> dict:
+        if self.task is not None:
+            self.task.cancel()
+        self.task, self.pending = None, None
+        return self.phone.status()
+
+
 class Phone:
     """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
     Connected, paired and disconnected while Ken runs (Settings → Phone).
-    Pairing, like the terminal installer: the first person to tap Start on a just-connected
+    Pairing, like the terminal installer: the first person to message (or tap Start on) a just-connected
     bot becomes its owner. Nobody else knows the bot exists yet."""
 
     def __init__(self) -> None:
@@ -1218,6 +1511,7 @@ class Phone:
         self.pair_until = 0.0
         self.notify: asyncio.Task | None = None
         self.retry: asyncio.Task | None = None
+        self.handoff = Handoff(self)
 
     @property
     def bot(self):
@@ -1229,6 +1523,8 @@ class Phone:
         if self.app and not ALLOWED_USER_ID:
             self.pair_until = time.time() + PAIR_MINUTES * 60  # Settings is waiting for the tap
             s["link"] = f"https://t.me/{self.username}"
+        if not self.app:
+            s["handoff"] = self.handoff.view()
         return s
 
     def pair(self, user_id: int, name: str) -> bool:
@@ -1303,9 +1599,10 @@ class Phone:
     async def connect(self, token: str) -> dict:
         """A bot token from BotFather: check it, then switch Telegram over to it."""
         global ALLOWED_USER_ID
-        token = token.strip()
-        if not re.fullmatch(r"\d+:[A-Za-z0-9_-]{30,}", token):
+        found = re.search(r"\d{6,}:[A-Za-z0-9_-]{30,}", token)  # the code alone, or BotFather's whole message
+        if not found:
             raise ValueError("That doesn't look like the code from BotFather. It looks like 1234567890:AAH… — copy the whole thing.")
+        token = found.group(0)
         try:
             async with Bot(token) as probe:
                 await probe.get_me()
@@ -1319,6 +1616,8 @@ class Phone:
             drop_env(KEN_HOME / ".env", "TELEGRAM_OWNER")
         await self.stop()
         save_env(KEN_HOME / ".env", "TELEGRAM_BOT_TOKEN", token)
+        if not ALLOWED_USER_ID:  # before it listens: a Start tapped early is waiting at Telegram
+            self.pair_until = time.time() + PAIR_MINUTES * 60
         await self.start(token)
         return self.status()
 
@@ -1337,6 +1636,8 @@ PHONE = Phone()
 
 async def run() -> None:
     """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
+    asyncio.get_running_loop().set_exception_handler(crash.loop_handler)
+    crash.track("ken_started", phone=bool(os.environ.get("TELEGRAM_BOT_TOKEN")), frozen=FROZEN)
     await start_engine()
     asyncio.create_task(scheduler())
     asyncio.create_task(self_update())
@@ -1354,7 +1655,15 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    asyncio.run(run())
+    crash.setup(KEN_HOME, _current_rev())
+    try:
+        asyncio.run(run())
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        crash.report(e, handled=False, where="uncaught")  # same fingerprint as the excepthook: sent once
+        crash.flush()
+        raise
 
 
 if __name__ == "__main__":

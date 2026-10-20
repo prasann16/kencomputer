@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ROOT = Path(__file__).resolve().parent.parent
 # Deliberate allowlist: never upload .env, SSH keys, local memory, or arbitrary untracked files.
 FILES = (
-    "bot.py", "brains.py", "engine.py", "voice.py", "web.py", "install.sh", "ken", "ken.service.template", "ken.plist.template",
+    "bot.py", "brains.py", "crash.py", "engine.py", "voice.py", "web.py", "install.sh", "ken", "ken.service.template", "ken.plist.template",
     "web/index.html", "web/app.js", "web/style.css", "web/manifest.webmanifest", "web/icon.svg",
     "web/vendor/preact-htm.js",
     "requirements.txt", "jobs.default.json", "SOUL.template.md", "README.md", "LICENSE",

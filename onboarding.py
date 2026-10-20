@@ -8,6 +8,7 @@ instead, the user pastes it. Either way the long-lived token lands in ~/.ken/.en
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -59,6 +60,7 @@ def drop_env(env_file: Path, key: str) -> None:
 class Onboarding:
     def __init__(self, home: Path, connected: Callable[[], bool], on_connected: Callable, voice_ready: Callable[[], bool]) -> None:
         self.env_file = home / ".env"
+        self.setup_file = home / "setup.json"
         self.connected = connected
         self.on_connected = on_connected
         self.voice_ready = voice_ready
@@ -76,7 +78,26 @@ class Onboarding:
         return self.pid is not None and not self.exited and time.time() - self.started < 1800
 
     def status(self) -> dict:
-        return {"claude": self.connected(), "voice": self.voice_status()}
+        return {"claude": self.connected(), "phone": self.phone_step(), "voice": self.voice_status()}
+
+    # The second fixed step: Ken on your phone, which they can skip. "unset" until done or skipped.
+    def _setup(self) -> dict:
+        try:
+            data = json.loads(self.setup_file.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def phone_step(self) -> str:
+        if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("ALLOWED_USER_ID"):
+            return "done"  # paired, perhaps before this step existed
+        return self._setup().get("phone", "unset")
+
+    def skip_phone(self) -> dict:
+        data = self._setup()
+        data["phone"] = "declined"  # Settings, Phone still works any time
+        self.setup_file.write_text(json.dumps(data, indent=1) + "\n")
+        return self.status()
 
     def voice_status(self) -> dict:
         if self.voice_ready():
