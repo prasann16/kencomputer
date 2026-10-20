@@ -7,6 +7,8 @@ import time
 log = logging.getLogger("ken.voice")
 _model = None
 _lock = threading.RLock()
+SURE = 0.6  # below this the language guess is noise
+FALLBACK = os.environ.get("KEN_VOICE_LANGUAGE", "en")
 
 
 def get_whisper():
@@ -32,7 +34,14 @@ def transcribe(path: str) -> str:
     # Keep Telegram's no-VAD behavior: filtering discarded quiet speech.
     with _lock:
         started = time.monotonic()
-        segments, info = get_whisper().transcribe(path, vad_filter=False)
+        model = get_whisper()
+        # Segments decode lazily, so the language guess is free to check before any real work.
+        segments, info = model.transcribe(path, vad_filter=False, condition_on_previous_text=False)
+        if info.language != "en" and info.language_probability < SURE:
+            # A short or accented note can read as Norwegian at 31%; decoding as that came back
+            # empty after 78s. An unsure guess means English (or KEN_VOICE_LANGUAGE).
+            log.info("unsure language guess %s (%.2f); transcribing as %s", info.language, info.language_probability, FALLBACK)
+            segments, info = model.transcribe(path, vad_filter=False, condition_on_previous_text=False, language=FALLBACK)
         segments = list(segments)
         text = " ".join(s.text.strip() for s in segments).strip()
         log.info("transcribed %.1fs audio in %.2fs -> %d segments, %.1fs speech, %d chars",
