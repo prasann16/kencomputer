@@ -28,6 +28,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+import crash
+
 from brains import ClaudeBrain
 from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
@@ -400,6 +402,8 @@ def unresolved_setup() -> list[str]:
 
 def mark_setup(item: str, value: str) -> None:
     data = load_setup()
+    if data.get(item) != value:
+        crash.track("setup_step", item=item, value=value)  # fixed names: ken-name, phone, email… and done/declined
     data[item] = value
     try:
         SETUP_FILE.write_text(json.dumps(data, indent=1) + "\n")
@@ -994,6 +998,7 @@ async def scheduler() -> None:
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job_key(job))
+                    crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
                     agent = job.get("agent") or job.get("project")
                     if agent:
                         # An agent's job runs in that agent's own chat.
@@ -1200,6 +1205,7 @@ def set_model(name: str) -> None:
     global current_model
     current_model = name
     MODEL_CHOICE.write_text(name + "\n")
+    crash.track("model_changed", model=name)
 
 
 def active_model() -> str:
@@ -1609,6 +1615,8 @@ PHONE = Phone()
 
 async def run() -> None:
     """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
+    asyncio.get_running_loop().set_exception_handler(crash.loop_handler)
+    crash.track("ken_started", phone=bool(os.environ.get("TELEGRAM_BOT_TOKEN")), frozen=FROZEN)
     await start_engine()
     asyncio.create_task(scheduler())
     asyncio.create_task(self_update())
@@ -1626,7 +1634,15 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    asyncio.run(run())
+    crash.setup(KEN_HOME, _current_rev())
+    try:
+        asyncio.run(run())
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        crash.report(e, handled=False, where="uncaught")  # same fingerprint as the excepthook: sent once
+        crash.flush()
+        raise
 
 
 if __name__ == "__main__":
