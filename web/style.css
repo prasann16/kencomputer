@@ -232,6 +232,11 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .mono-area { min-height: 320px !important; font-family: var(--mono) !important; font-size: 13px !important; }
 .update-failed { background: var(--ask-soft); color: var(--ask-ink); padding: 10px 16px; font-size: 14px; }
 .update-failed a { color: inherit; font-weight: 600; }
+.update-ready { display: flex; align-items: center; justify-content: center; gap: 14px; background: #f4f4f3; padding: 8px 16px; font-size: 13px; }
+.update-ready .btn { padding: 5px 12px; font-size: 12.5px; }
+.settings-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.settings-version { font-size: 12.5px; color: #999; }
+.settings-version .text-action { font-size: 12.5px; }
 .toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: var(--primary); color: var(--primary-ink); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 40; box-shadow: var(--shadow); }
 .offline { background: var(--ask-soft); color: var(--ask-ink); font-size: 13px; padding: 6px 16px; text-align: center; }
 
