@@ -605,7 +605,7 @@ const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords',
 
 // What Ken can use, connected right here: Chrome, email, calendar, plus any tool Ken adds itself.
 // A connected tool has a switch (does Ken use it); one that isn't connected has Connect.
-function ToolList({ tools, onUse, onAddTool }) {
+function ToolList({ tools, onUse, onAddTool, switches = true }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
@@ -628,14 +628,14 @@ function ToolList({ tools, onUse, onAddTool }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   const use = (t, connected, connect) => connected
-    ? html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
+    ? switches && html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
     : connect;
   return html`<div class="tool-list">
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
       use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
       state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
         ${open === 'chrome' && html`<p class="conn-steps">The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`}
-        ${open === 'chrome-off' && html`<p class="conn-steps">${window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. To keep Chrome connected but stop Ken using it, turn off the switch instead. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
+        ${open === 'chrome-off' && html`<p class="conn-steps">${window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
       : open === 'chrome' && html`<div class="conn-form"><ol class="conn-steps">
             <li>${window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
@@ -783,7 +783,6 @@ function Settings({ onClose, toast, onAddTool }) {
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
   useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch(() => {}); }, []);
-  const useTool = async (t, yes) => { setError(''); try { setTools((await api('/api/agents/home/tools', { method: 'PUT', json: { use: yes ? [...tools.use, t] : tools.use.filter((x) => x !== t) } })).tools); } catch (e) { setError(e.message); } };
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); return true; } catch (e) { setError(e.message); return false; } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
@@ -794,7 +793,7 @@ function Settings({ onClose, toast, onAddTool }) {
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Ken runs on your Claude subscription.</p>
     ${reconnect ? html`<${Connect} onDone=${() => { setReconnect(false); toast('Claude is connected.'); }}/>`
       : html`<div class="conn-list"><div>${on('Connected to your Claude account')}<button class="text-action" onClick=${() => setReconnect(true)}>Reconnect</button></div></div>`}</div>`}
-    ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools ? html`<${ToolList} tools=${tools} onUse=${useTool} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
+    ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
     ${tab === 'phone' && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`}
     ${tab === 'feedback' && html`<div class="set-body feedback">${sent
       ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p><button class="text-action" onClick=${() => { setSent(false); setTab('claude'); }}>Back to Settings</button>`

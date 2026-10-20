@@ -513,12 +513,13 @@ class Engine:
         return self.home / "tools.json" if pid == HOME else self._adir(pid) / "tools.json"
 
     def tools_config(self, pid: str) -> dict:
-        """Its tools.json (Ken's is ~/.ken/tools.json). Without one it gets every built-in tool."""
+        """Its tools.json (Ken's is ~/.ken/tools.json). Without one it gets every built-in tool, and Ken
+        itself always does: connecting a tool in Settings is the only switch it has."""
         try:
             data = json.loads(self._tools_file(pid).read_text())
         except (OSError, ValueError):
             data = {}
-        use = data.get("use", list(BUILTIN_TOOLS)) if isinstance(data, dict) else list(BUILTIN_TOOLS)
+        use = data.get("use", list(BUILTIN_TOOLS)) if isinstance(data, dict) and pid != HOME else list(BUILTIN_TOOLS)
         mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
         return {"use": [t for t in use if t in BUILTIN_TOOLS], "mcp": mcp if isinstance(mcp, dict) else {}}
 
