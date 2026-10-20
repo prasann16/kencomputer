@@ -706,7 +706,7 @@ function PhoneSteps({ toast, onPaired }) {
     <p class="phone-confirm-bot">@${phone.handoff.bot}</p>
     <button class="btn primary" disabled=${busy} onClick=${() => act({ json: {}, path: '/api/phone/handoff/confirm' })}>${busy ? 'Connecting…' : 'Connect'}</button>
     <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE', path: '/api/phone/handoff' })}>Not mine</button></div>`;
-  if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and tap <b>Start</b>.</p>
+  if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and say hi.</p>
     <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Use a different bot</button></div>`;
   return html`<div class="phone-steps-box">
     ${phone.handoff?.qr ? html`<div class="phone-lead">

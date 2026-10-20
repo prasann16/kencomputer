@@ -107,3 +107,28 @@ async def test_the_code_sent_from_the_phone_waits_for_their_ok(aiohttp_server, m
     assert phone.status()["handoff"] == {"bot": "my_ken_bot"} and connected == []  # nothing until they say yes
     await phone.handoff.confirm()
     assert connected == [token] and phone.status()["handoff"] is None
+
+
+async def test_saying_hi_pairs_a_just_connected_bot(phone, monkeypatch):
+    monkeypatch.setattr(bot, "PHONE", phone)
+    replies, prompts = [], []
+
+    async def handle(update, text):
+        prompts.append(text)
+
+    monkeypatch.setattr(bot, "handle_prompt", handle)
+
+    class Msg:
+        text = "hi"
+        async def reply_text(self, text, **kw):
+            replies.append(text)
+
+    def update(uid):
+        return type("U", (), {"effective_user": type("User", (), {"id": uid, "first_name": "P"})(), "effective_message": Msg(),
+                              "effective_chat": None})()
+
+    bot.BORN_FLAG.touch()  # Ken already knows them: it says it's connected, then answers
+    await bot.on_text(update(111), None)
+    assert bot.ALLOWED_USER_ID == 111 and replies and "Connected" in replies[0] and prompts == ["hi"]
+    await bot.on_text(update(222), None)  # the bot is theirs now: a stranger gets nothing
+    assert prompts == ["hi"] and bot.ALLOWED_USER_ID == 111

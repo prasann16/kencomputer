@@ -642,15 +642,28 @@ def apply_model_request() -> None:
         log.info("model switched to %s", want)
 
 
+async def pair_here(update: Update) -> bool:
+    """Right after a bot is connected, whatever its owner sends first pairs it: /start, "hi", a voice
+    note. (Telegram only offers a Start button the first time someone opens a bot.)"""
+    if not (update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or "")):
+        return False
+    if BORN_FLAG.exists():  # they know Ken already; a brand-new Ken's own first words say it better
+        await update.effective_message.reply_text(
+            "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
+            "Text me or send a voice note anytime."
+        )
+    return True
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     await handle_prompt(update, update.effective_message.text)
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """An image arrives: save it to the inbox, hand the assistant the path."""
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     msg = update.effective_message
     await update.effective_chat.send_action(ChatAction.TYPING)
@@ -681,7 +694,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not authorized(update):
+    if not authorized(update) and not await pair_here(update):
         return
     msg = update.effective_message
     voice = msg.voice or msg.audio
@@ -709,20 +722,15 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or ""):
+    if await pair_here(update):
         if not BORN_FLAG.exists():  # a brand-new Ken: its own first words, here and in the app
             await handle_prompt(update, first_contact_prompt("connected their phone"))
-        else:
-            await update.effective_message.reply_text(
-                "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
-                "Text me or send a voice note anytime."
-            )
         return
     if not authorized(update):
         await update.effective_message.reply_text(
             "This Ken belongs to someone else." if ALLOWED_USER_ID else
             "Almost there. On the computer Ken runs on, open Ken → Settings → Phone, "
-            "then tap Start here again."
+            "then send me any message here."
         )
         return
     if not BORN_FLAG.exists():
@@ -1467,7 +1475,7 @@ class Handoff:
 class Phone:
     """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
     Connected, paired and disconnected while Ken runs (Settings → Phone).
-    Pairing, like the terminal installer: the first person to tap Start on a just-connected
+    Pairing, like the terminal installer: the first person to message (or tap Start on) a just-connected
     bot becomes its owner. Nobody else knows the bot exists yet."""
 
     def __init__(self) -> None:
