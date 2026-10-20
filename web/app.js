@@ -609,8 +609,8 @@ function ToolList({ tools, onUse, onAddTool }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
-  // Connecting Chrome happens in Chrome, so watch until it actually answers.
-  const waitingChrome = open === 'chrome' && state && !state.chrome;
+  // Connecting or disconnecting Chrome happens in Chrome, so watch until it actually changes.
+  const waitingChrome = state && ((open === 'chrome' && !state.chrome) || (open === 'chrome-off' && state.chrome));
   useEffect(() => {
     if (!waitingChrome) return;
     const t = setInterval(() => api('/api/connections').then(setState).catch(() => {}), 1500);
@@ -633,7 +633,9 @@ function ToolList({ tools, onUse, onAddTool }) {
   return html`<div class="tool-list">
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
       use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
-      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}</div></div>${open === 'chrome' && html`<p class="conn-steps">The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`}`
+      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
+        ${open === 'chrome' && html`<p class="conn-steps">The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`}
+        ${open === 'chrome-off' && html`<p class="conn-steps">${window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. To keep Chrome connected but stop Ken using it, turn off the switch instead. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
       : open === 'chrome' && html`<div class="conn-form"><ol class="conn-steps">
             <li>${window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
