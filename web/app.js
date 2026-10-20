@@ -796,7 +796,7 @@ function Settings({ onClose, toast }) {
     ${tab !== 'feedback' && html`<button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>`}
   <//>`;
 }
-const FOUNDER_TELEGRAM = '';  // a Telegram username for "Message me on Telegram"; empty hides it
+const FOUNDER_TELEGRAM = 'prasann16';  // "Message me on Telegram" under Send feedback; empty hides it
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
 const JOB_HELP = { 'morning-brief': 'What matters today, sent to you each morning.', 'nightly-review': 'Files the day into Ken’s memory and tells you what it saved.' };
 
