@@ -9,6 +9,7 @@
   "scripts": {
     "desktop": "electron .",
     "test:desktop": "node --test tests/desktop.test.cjs",
+    "test:theme": "node --test tests/theme.test.cjs",
     "pack": "electron-builder --dir -c.mac.identity=- -c.mac.notarize=false",
     "dist:mac": "electron-builder --mac",
     "build:engine": ".venv/bin/python desktop/build_engine.py",

@@ -21,6 +21,7 @@ from typing import Callable
 from aiohttp import WSMsgType, web
 
 from engine import HOME, Engine
+from computers import Computers, SELECTION_COOKIE, local_request
 
 log = logging.getLogger("ken")
 
@@ -61,6 +62,8 @@ class WebApp:
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
+        self.websockets: set[web.WebSocketResponse] = set()
+        self.computers = Computers(home, rev)
 
     # ------------------------------------------------------------------ auth
 
@@ -69,14 +72,24 @@ class WebApp:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             given = auth[7:]
-        return bool(given) and hmac.compare_digest(given, self.token)
+        return bool(given) and hmac.compare_digest(given.encode(), self.token.encode())
 
     @web.middleware
     async def auth_mw(self, request: web.Request, handler):
         path = request.path
+        if self.computers.authenticates(request):
+            if not path.startswith("/api/") or path.startswith("/api/computers"):
+                return _json({"error": "Computer settings are only available on that Mac."}, 403)
+            request["ken_remote"] = True
+            return await handler(request)
+        if not local_request(request):
+            return _json({"error": "Server access is off or the server key is invalid."}, 401)
+        origin = request.headers.get("Origin")
+        if origin and origin != f"{request.scheme}://{request.host}":
+            return _json({"error": "Untrusted origin."}, 403)
         if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
             return await handler(request)
-        if path.startswith("/api/"):
+        if path.startswith(("/api/", "/remote/")):
             return _json({"error": "not signed in"}, 401)
         return web.Response(
             text=(
@@ -122,6 +135,10 @@ class WebApp:
     # ------------------------------------------------------------------ pages
 
     async def index(self, request: web.Request) -> web.FileResponse:
+        if request.path == "/":
+            selected = request.cookies.get(SELECTION_COOKIE)
+            if selected and self.computers.get(selected):
+                raise web.HTTPFound("/computer/" + selected)
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
             "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; frame-src 'none'; base-uri 'none'",
@@ -336,11 +353,34 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app"))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", message_id=message['id']))
         return _json({"ok": True, "message": message})
 
     async def stop(self, request):
         return _json({"stopped": await self.engine.stop_chat(self._pid(request))})
+
+    async def tasks(self, request):
+        return _json(self.engine.tasks.list())
+
+    async def task(self, request):
+        try:
+            return _json(self.engine.tasks.get(request.match_info['tid'], details=True))
+        except KeyError:
+            return _json({'error': 'No such task.'}, 404)
+
+    async def task_control(self, request):
+        b = await self._body(request)
+        try:
+            # The UI sends the revision it displayed, so a stale click cannot
+            # stop or restart a newer attempt without the user seeing it first.
+            if type(b.get('expected_revision')) is not int:
+                return _json({'error': 'Refresh this task before controlling it.'}, 400)
+            task = self.engine.tasks.control(request.match_info['tid'], b.get('action'), b.get('instruction', ''), b['expected_revision'])
+            return _json(task)
+        except KeyError:
+            return _json({'error': 'No such task.'}, 404)
+        except ValueError as e:
+            return _json({'error': str(e)}, 409)
 
     async def upload(self, request):
         """Dropped files land in the chat's folder and Ken looks at them right away."""
@@ -550,6 +590,9 @@ class WebApp:
     async def events(self, request):
         ws = web.WebSocketResponse(heartbeat=25)
         await ws.prepare(request)
+        self.websockets.add(ws)
+        if request.get("ken_remote"):
+            self.computers.remote_sockets.add(ws)
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -566,14 +609,25 @@ class WebApp:
         finally:
             pumping.cancel()
             self.engine.unsubscribe(q)
+            self.computers.remote_sockets.discard(ws)
+            self.websockets.discard(ws)
+            await asyncio.gather(pumping, return_exceptions=True)
         return ws
 
     # -------------------------------------------------------------- lifecycle
 
+    async def shutdown(self, app):
+        # An open app window must not hold engine shutdown until aiohttp's
+        # request timeout expires. The frontend reconnects to the new engine.
+        await asyncio.gather(*(ws.close(code=1001, message=b'Ken is restarting') for ws in list(self.websockets)), return_exceptions=True)
+
     def build(self) -> web.Application:
         app = web.Application(middlewares=[self.auth_mw], client_max_size=MAX_UPLOAD)
+        app.on_shutdown.append(self.shutdown)
+        self.computers.install(app)
         r = app.router
         r.add_get("/", self.index)
+        r.add_get("/computer/{cid:[a-f0-9]{16}}", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
         r.add_get("/api/chats", self.chats)
@@ -604,6 +658,9 @@ class WebApp:
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
+        r.add_get('/api/tasks', self.tasks)
+        r.add_get('/api/tasks/{tid}', self.task)
+        r.add_post('/api/tasks/{tid}/control', self.task_control)
         r.add_get("/api/runs/{rid}", self.get_run)
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)

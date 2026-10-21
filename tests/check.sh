@@ -7,4 +7,4 @@ cd "$(dirname "$0")/.."
 PY="${1:-.venv/bin/python}"
 "$PY" -m pytest tests -q --asyncio-mode=auto
 "$PY" desktop/checks/parts.py
-node --test tests/desktop.test.cjs
+node --test tests/*.test.cjs

@@ -1,0 +1,12 @@
+/* Background work lives in the conversation, with a quiet reminder by the composer. */
+.task-card{border:1px solid var(--line);border-radius:12px;background:var(--well);padding:16px 18px;max-width:720px;font-size:13px;line-height:1.5;scroll-margin:24px}
+.task-card-head{display:flex;gap:9px;align-items:center;min-width:0}.task-card-head b{font-weight:500;flex:1;min-width:0;overflow-wrap:anywhere}
+.task-dot{width:6px;height:6px;flex-shrink:0;border-radius:50%;background:var(--faint)}.task-dot.working{background:var(--go);animation:ken-breathe 1.6s ease-in-out infinite}.task-dot.complete{background:var(--go)}
+.task-state{font-size:11.5px;color:var(--faint);text-align:right;max-width:45%}.task-state.done{color:var(--go-ink)}.task-state.failed,.task-state.waiting,.task-state.interrupted{color:var(--ask-ink)}
+.task-activity{margin:9px 0 12px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.task-note{color:var(--faint);font-size:12px;margin:0 0 12px}.task-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.task-actions .text-action{font-size:12px;color:var(--muted)}.task-action-spacer{flex:1}.task-actions .btn{height:28px;font-size:12px}
+.task-summary{display:flex;align-items:center;gap:8px;width:100%;padding:0 4px 10px;background:none;border:0;color:var(--muted);text-align:left;font-size:12px}.task-summary-hint{margin-left:auto;color:var(--faint)}
+.task-edit,.task-detail{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}.task-edit{display:flex;flex-direction:column;gap:8px}.task-edit label{font-size:12px;font-weight:500}.task-edit textarea{width:100%;resize:vertical;border:1px solid var(--line-strong);border-radius:8px;background:var(--card);padding:10px;color:var(--ink);font-size:13px}
+.task-detail{color:var(--muted);overflow-wrap:anywhere;white-space:pre-wrap}.task-detail p{margin:10px 0 6px}.task-detail p:first-child{margin-top:0}.task-detail ol{padding-left:20px;margin:8px 0 0}.task-detail li{padding:4px 0}.task-detail pre{overflow:auto;max-width:100%;font-size:12px}.task-detail code{background:var(--track);border-radius:4px;padding:1px 4px}.task-detail .table{white-space:normal}
+@media(max-width:500px){.task-card{padding:14px}.task-summary-hint{display:none}.task-summary>span:last-child{margin-left:auto}}
+@media(prefers-reduced-motion:reduce){.task-dot.working{animation:none}}

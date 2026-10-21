@@ -359,11 +359,12 @@ async def test_ken_itself_gets_keys_tools_and_an_editable_about(engine):
     engine.tools = lambda only: {t: {} for t in sorted(only)}
     engine.set_key(HOME, "OPENAI_KEY", "sk-proj-abcdef123456")
     s = engine._chat_session(HOME)
-    assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}
+    assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"tasks"} and s.supervisor
     assert "$OPENAI_KEY" in engine.system(HOME) and "abcdef" not in engine.system(HOME)
     assert engine.mask(HOME, "sk-proj-abcdef123456") == "••••••"
     engine.set_tools_use(HOME, ["browser"])  # an old switch: Ken itself still uses everything connected
-    assert set(engine._chat_session(HOME).mcp_fn()) == {"browser", "email", "calendar"}
+    assert set(engine._chat_session(HOME).mcp_fn()) == {"tasks"}
+    assert set(engine.agent_tools(HOME)) == {"browser", "email", "calendar"}  # workers retain the connections
     engine.set_about_context(HOME, "# You are Ken")
     engine.write_note(HOME, "people.md", "Who they work with")
     about = engine.about(HOME)

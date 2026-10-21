@@ -153,3 +153,26 @@ def test_ken_ignores_this_computers_own_claude_code_setup():
     o = seen['options']
     assert o.setting_sources == [] and o.strict_mcp_config and o.max_buffer_size >= 32 * 1024 * 1024
     assert o.stderr is not None
+
+
+async def test_checkpoint_session_before_completion_and_error_results_fail():
+    import pytest
+    from claude_agent_sdk import ResultMessage, SystemMessage
+    recorded = []
+    class Client:
+        async def query(self, prompt):
+            pass
+        async def receive_response(self):
+            yield SystemMessage(subtype='init', data={'session_id': 'early-session'})
+            assert recorded == ['early-session']
+            yield ResultMessage(subtype='error_max_turns', duration_ms=1, duration_api_ms=1,
+                                is_error=True, num_turns=1, session_id='early-session', result='Turn limit reached')
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    session.client = Client()
+    session.on_session_id = recorded.append
+    async def text(value):
+        raise AssertionError('An error is not a successful result')
+    with pytest.raises(RuntimeError, match='Turn limit'):
+        await session.ask('work', text)
+    assert session.session_id == 'early-session'
+    assert recorded == ['early-session']
