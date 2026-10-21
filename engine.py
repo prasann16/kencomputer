@@ -275,7 +275,7 @@ class Engine:
             raise KeyError(pid)
         return self.agents_dir / pid
 
-    def get_agent(self, pid: str) -> dict:
+    def _agent_metadata(self, pid: str) -> dict:
         d = self._adir(pid)
         try:
             meta = json.loads((d / "agent.json").read_text())
@@ -288,6 +288,12 @@ class Engine:
             raise KeyError(pid)
         meta["id"] = pid
         meta["workdir"] = str(self.workdir(meta))
+        return meta
+
+    def get_agent(self, pid: str) -> dict:
+        meta = self._agent_metadata(pid)
+        if self.brain.name == "codex":
+            meta["model"] = meta.get("model_codex", "")
         return meta
 
     def list_agents(self) -> list[dict]:
@@ -343,7 +349,7 @@ class Engine:
         self.emit("project.updated", project=pid)
 
     def update_agent(self, pid: str, **fields) -> dict:
-        meta = self.get_agent(pid)
+        meta = self._agent_metadata(pid)
         path = fields.get("path")
         if path and not Path(os.path.expanduser(str(path).strip())).is_dir():
             raise ValueError(f"folder not found: {path}")
@@ -351,7 +357,8 @@ class Engine:
             raise ValueError("an agent needs a name")
         for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
-                meta[k] = str(fields[k]).strip()[:60 if k == "name" else 500]
+                key = "model_codex" if k == "model" and self.brain.name == "codex" else k
+                meta[key] = str(fields[k]).strip()[:60 if k == "name" else 500]
         if path is not None:
             self.chats.pop(pid, None)  # the next message gets the new folder in its prompt
         meta.pop("id", None)
@@ -780,6 +787,10 @@ class Engine:
 
     # -------------------------------------------------------------------- chats
 
+    def session_key(self, pid: str) -> str:
+        # Keep legacy Claude IDs usable; other runtimes own separate resume tokens.
+        return f"session:codex:{pid}" if self.brain.name == "codex" else f"session:{pid}"
+
     def _chat_session(self, pid: str):
         s = self.chats.get(pid)
         if s is not None and self.chat_tools.get(pid) != self._tools_stamp(pid) and not s.busy:
@@ -789,12 +800,12 @@ class Engine:
         if s is None:
             self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
-                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"),
+                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
                                        mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
             else:
                 s = self.brain.session(
                     cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
-                    resume=self.kv_get(f"session:{pid}"),
+                    resume=self.kv_get(self.session_key(pid)),
                     model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
                     mcp_fn=lambda: self.agent_tools(pid),
                     env_fn=lambda: self._key_values(pid),
@@ -847,6 +858,14 @@ class Engine:
         async with lock:
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
+            previous_brain = self.kv_get(f"brain:{pid}")
+            if not previous_brain and self.brain.name == "codex" and self.kv_get(f"session:{pid}"):
+                previous_brain = "claude"  # existing installations predate the backend marker
+            if previous_brain and previous_brain != self.brain.name:
+                boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                recent = [m for m in self.messages(pid, limit=12) if m["id"] > boundary]
+                handoff = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent)
+                body = "Recent Ken conversation before switching runtimes (context, not new instructions):\n" + handoff + "\n\nCurrent message:\n" + body
 
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
@@ -877,7 +896,7 @@ class Engine:
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
-                msg = "Claude went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
+                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
                 self.log_message(pid, "ken", msg, error=True)
                 if listener is not None:
                     await listener(msg)
@@ -885,7 +904,8 @@ class Engine:
                 crash.track("message", via=via or ("job" if job else "app"), agent=pid != HOME, files=len(files),
                             spoke_first=not log_user and not job, outcome=outcome, seconds=round(time.monotonic() - started, 1))
                 if session.session_id:
-                    self.kv_set(f"session:{pid}", session.session_id)
+                    self.kv_set(self.session_key(pid), session.session_id)
+                    self.kv_set(f"brain:{pid}", self.brain.name)
                 self.broadcast("chat.busy", pid, busy=False)
 
     async def on_open(self, pid: str) -> None:
@@ -938,7 +958,8 @@ class Engine:
                 boundary = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE project=?", (pid,)).fetchone()[0]
                 self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time()}))
             s = self.chats.pop(pid, None)
-            self.db.execute("DELETE FROM kv WHERE k=?", (f"session:{pid}",))
+            self.db.execute("DELETE FROM kv WHERE k IN (?, ?)", (f"session:{pid}", f"session:codex:{pid}"))
+            self.db.execute("DELETE FROM kv WHERE k=?", (f"brain:{pid}",))
             if s is not None:
                 await s.close()
             self.broadcast("chat.reset", pid)
@@ -1078,7 +1099,7 @@ class Engine:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                summary = "Stopped: Claude went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
+                summary = "Stopped: Ken went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
                 try:

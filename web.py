@@ -142,7 +142,7 @@ class WebApp:
                       "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {"claude": True, "phone": "done", "voice": {"state": "ready"}})
+        return _json(self.setup.status() if self.setup else {"connected": True, "backend": self.engine.brain.name, "phone": "done", "voice": {"state": "ready"}})
 
     async def setup_action(self, request):
         """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
@@ -157,8 +157,8 @@ class WebApp:
         except RuntimeError as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
-            log.exception("Connect Claude failed")
-            return _json({"error": "Something went wrong connecting Claude. Click Connect Claude to try again."}, 500)
+            log.exception("Connecting the brain failed")
+            return _json({"error": "Something went wrong connecting. Click Connect to try again."}, 500)
         return _json({"error": "Nothing to do."}, 400)
 
     async def connections_status(self, request):

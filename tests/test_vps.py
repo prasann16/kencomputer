@@ -180,7 +180,7 @@ class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
                 response.json.return_value = {'data': [{'id': 'test-model'}]}
                 client.get.return_value = response
                 oauth = Mock(return_value='test-oauth')
-                namespace = dict(os=SimpleNamespace(environ={'ANTHROPIC_API_KEY': api_key}),
+                namespace = dict(BACKEND='claude', os=SimpleNamespace(environ={'ANTHROPIC_API_KEY': api_key}),
                                  asyncio=asyncio, get_oauth_token=oauth, MODELS_FILE=Path(temp) / 'models',
                                  httpx=SimpleNamespace(AsyncClient=lambda: client), log=Mock())
                 exec(compile(ast.Module(body=[node], type_ignores=[]), 'bot.py', 'exec'), namespace)

@@ -13,6 +13,7 @@ subprocess.run([
     '--specpath', str(root / 'build'), '--paths', str(root),
     # Only data files the code can't import: the bundled `claude` CLI and Whisper's assets.
     '--collect-data', 'claude_agent_sdk', '--collect-data', 'faster_whisper',
+    '--collect-data', 'codex_cli_bin',
     # Optional extras Ken never uses: Whisper's silence filter (off in voice.py) and a download accelerator.
     '--exclude-module', 'onnxruntime', '--exclude-module', 'hf_xet',
     *data('web', 'web'), *data('SOUL.template.md'), *data('jobs.default.json'),

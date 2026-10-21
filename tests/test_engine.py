@@ -57,6 +57,38 @@ class FakeBrain(Brain):
         return FakeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
 
 
+async def test_backends_keep_distinct_sessions_and_agent_models(engine):
+    agent = engine.create_agent("Writer")
+    pid = agent["id"]
+    engine.update_agent(pid, model="claude-test")
+    engine.kv_set(f"session:{pid}", "claude-session")
+    engine.brain.name = "codex"
+    assert engine._chat_session(pid).session_id is None
+    assert engine.get_agent(pid)["model"] == ""
+    engine.update_agent(pid, model="gpt-test")
+    await engine.send_message(pid, "hello")
+    assert engine.kv_get(f"session:codex:{pid}") == "sess-1"
+    assert engine.kv_get(f"session:{pid}") == "claude-session"
+    engine.brain.name = "claude"
+    assert engine.get_agent(pid)["model"] == "claude-test"
+    engine.brain.name = "codex"
+    assert engine.get_agent(pid)["model"] == "gpt-test"
+    await engine.reset_chat(pid, clear=True)
+    assert engine.kv_get(f"session:{pid}") is None
+    assert engine.kv_get(f"session:codex:{pid}") is None
+
+
+async def test_switching_from_legacy_claude_carries_recent_context_but_not_cleared_messages(engine):
+    engine.log_message(HOME, "you", "old archived message")
+    await engine.reset_chat(HOME, clear=True)
+    engine.log_message(HOME, "you", "current context")
+    engine.kv_set(f"session:{HOME}", "legacy-claude")
+    engine.brain.name = "codex"
+    await engine.send_message(HOME, "continue")
+    prompt = engine.brain.asks[-1]["prompt"]
+    assert "current context" in prompt and "old archived message" not in prompt
+
+
 @pytest.fixture
 def engine(tmp_path):
     e = Engine(tmp_path, FakeBrain())

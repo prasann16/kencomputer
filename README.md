@@ -4,6 +4,9 @@
 
 Ken is Claude Code with a body: always on, reachable from your phone via Telegram — text or voice notes — with persistent memory, on a machine you own. Ship a fix from a hike. Have it plan your trip mid-run. Tell it something once; it knows it forever.
 
+Ken also supports the Codex harness: set `KEN_BRAIN=codex`. For a local checkout,
+see the [Codex development setup](desktop/README.md#development).
+
 > You already pay for Claude. Ken gives it a body — heartbeat, hands, a home, and a memory.
 
 🌐 **[kencomputer.dev](https://kencomputer.dev)** · hosted version waitlist there too
