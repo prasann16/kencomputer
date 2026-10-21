@@ -3,7 +3,6 @@
 set -eu
 cd "$(dirname "$0")"
 export KEN_HOME="${KEN_HOME:-$PWD/.context/ken-local}"
-export KEN_BRAIN="${KEN_BRAIN:-codex}"
 export KEN_WEB_PORT="${KEN_WEB_PORT:-7788}"
 export KEN_NO_AUTOUPDATE=1
 mkdir -p "$KEN_HOME"

@@ -180,8 +180,8 @@ class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
                 response.json.return_value = {'data': [{'id': 'test-model'}]}
                 client.get.return_value = response
                 oauth = Mock(return_value='test-oauth')
-                namespace = dict(BACKEND='claude', os=SimpleNamespace(environ={'ANTHROPIC_API_KEY': api_key}),
-                                 asyncio=asyncio, get_oauth_token=oauth, MODELS_FILE=Path(temp) / 'models',
+                namespace = dict(os=SimpleNamespace(environ={'ANTHROPIC_API_KEY': api_key}),
+                                 asyncio=asyncio, get_oauth_token=oauth, models_file=lambda backend: Path(temp) / 'models',
                                  httpx=SimpleNamespace(AsyncClient=lambda: client), log=Mock())
                 exec(compile(ast.Module(body=[node], type_ignores=[]), 'bot.py', 'exec'), namespace)
                 await namespace['refresh_models_file']()
@@ -193,7 +193,7 @@ class ModelAuthenticationTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(headers['Authorization'], 'Bearer test-oauth')
                     self.assertNotIn('x-api-key', headers)
-                self.assertEqual(namespace['MODELS_FILE'].read_text(), 'test-model\n')
+                self.assertEqual(namespace['models_file']('claude').read_text(), 'test-model\n')
 
 
 if __name__ == '__main__':

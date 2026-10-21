@@ -290,3 +290,45 @@ class CodexOnboarding(Onboarding):
         if self.watch and not self.watch.done():
             self.watch.cancel()
         self.watch = None
+
+
+class BrainOnboarding:
+    """Both accounts stay connected; each chat chooses its own runtime."""
+
+    def __init__(self, providers, backend):
+        self.providers, self.backend = providers, backend
+
+    def provider(self, backend):
+        try:
+            return self.providers[self.backend() if backend is None else backend]
+        except (KeyError, TypeError):
+            raise ValueError("Choose Claude or Codex.") from None
+
+    @property
+    def active(self):
+        return any(p.active for p in self.providers.values())
+
+    def status(self):
+        providers = {name: p.status() for name, p in self.providers.items()}
+        return {"providers": providers, "backend": self.backend(),
+                "connected": any(p["connected"] for p in providers.values()),
+                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status()}
+
+    def phone_step(self):
+        return self.providers["claude"].phone_step()
+
+    def skip_phone(self):
+        self.providers["claude"].skip_phone()
+        return self.status()
+
+    async def start(self, backend=None):
+        result = await self.provider(backend).start()
+        return {**result, **self.status()}
+
+    async def submit(self, code, backend=None):
+        await self.provider(backend).submit(code)
+        return self.status()
+
+    def stop(self):
+        for provider in self.providers.values():
+            provider.stop()

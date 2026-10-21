@@ -341,7 +341,7 @@ def test_agent_sees_only_its_folder_and_ken_sees_every_agent(engine):
 
 
 async def test_each_agent_gets_its_own_tools(engine):
-    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.tools = lambda only, backend: {t: {} for t in sorted(only)}
     engine.create_agent("Reader")
     assert engine.tools_config("reader")["use"] == ["browser", "email", "calendar"]  # no tools.json: everything
     first = engine._chat_session("reader")
@@ -388,7 +388,7 @@ async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path
 
 
 async def test_ken_itself_gets_keys_tools_and_an_editable_about(engine):
-    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.tools = lambda only, backend: {t: {} for t in sorted(only)}
     engine.set_key(HOME, "OPENAI_KEY", "sk-proj-abcdef123456")
     s = engine._chat_session(HOME)
     assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}
