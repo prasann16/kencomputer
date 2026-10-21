@@ -328,6 +328,11 @@ class WebApp:
                 return _json({"error": str(exc)}, 400)
         return _json(await self.engine.runtime(pid))
 
+    async def model_catalog(self, request):
+        names = list(self.engine.brains)
+        choices = await asyncio.gather(*(self.engine.model_choices(name) for name in names)) if self.engine.model_choices else [[] for _ in names]
+        return _json(dict(zip(names, choices)))
+
     async def post_message(self, request):
         pid = self._pid(request)
         if not self._brain_connected(pid):
@@ -603,6 +608,7 @@ class WebApp:
         r.add_get("/", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
+        r.add_get("/api/models", self.model_catalog)
         r.add_get("/api/chats", self.chats)
         r.add_get("/api/library", self.library)
         r.add_post("/api/chats", self.new_chat)

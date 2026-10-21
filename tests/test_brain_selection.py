@@ -99,10 +99,15 @@ async def test_runtime_api_persists_choices_and_rejects_invalid_requests(engine,
     client = await aiohttp_client(app.build())
     url = "/api/chats/home/runtime"
     assert (await client.get(url)).status == 401
+    assert (await client.get("/api/models")).status == 401
     await client.get(f"/login?token={app.token}", allow_redirects=False)
     r = await client.put(url, json={"backend": "codex", "model": "gpt-test"})
     assert r.status == 200
     assert await r.json() == {"backend": "codex", "current": "gpt-test", "choices": ["gpt-test"], "providers": ["claude", "codex"]}
+    r = await client.get("/api/models")
+    assert r.status == 200
+    assert await r.json() == {"claude": ["claude-test"], "codex": ["gpt-test"]}
+    assert engine.backend(HOME) == "codex" and engine.model_for(HOME) == "gpt-test"
     for bad in ({"backend": "unknown"}, {"backend": []}, {"model": "claude-test"}, {"model": []}):
         assert (await client.put(url, json=bad)).status == 400
     assert engine.backend(HOME) == "codex" and engine.model_for(HOME) == "gpt-test"
