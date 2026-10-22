@@ -186,12 +186,19 @@ jobs:
     needs: [validate, m1]
     if: inputs.publish_beta && needs.validate.outputs.channel == 'beta'
     runs-on: macos-15
+    concurrency: release-preparation
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Publish to the beta channel
         run: |
+          # Builds may finish out of order. Keep superseded betas as drafts so an older
+          # release cannot become the first entry in the updater's GitHub release feed.
+          python3 desktop/release_version.py beta "$GITHUB_REF_NAME"
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
           echo "Published beta: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
