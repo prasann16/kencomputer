@@ -59,6 +59,7 @@ KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
 
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
+LAST_USER_MESSAGE_ID: int | None = None  # so job/task notifications can thread to the latest message
 WORKSPACE = Path(os.environ.get("WORKSPACE", str(KEN_HOME / "work")))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT_SECONDS", "1800"))
@@ -565,13 +566,49 @@ def split_chunks(text: str, limit: int = TELEGRAM_MAX) -> list[str]:
     return chunks
 
 
+def track_inbound(update: Update) -> None:
+    """Remember the user's latest message so Ken's replies can thread to it
+    even when they're sent from a background task with no Update of its own."""
+    global LAST_USER_MESSAGE_ID
+    msg = update.effective_message
+    if msg is not None:
+        LAST_USER_MESSAGE_ID = msg.message_id
+
+
+async def reply_threaded(msg, text: str, *, parse_mode=None, reply_markup=None) -> None:
+    """Quote the message being answered, so Ken's reply visually threads in Telegram's
+    UI — python-telegram-bot only auto-quotes in group chats, never in a 1:1 DM. Falls
+    back to an unthreaded send if that message was since deleted."""
+    try:
+        await msg.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup,
+                              reply_to_message_id=msg.message_id)
+    except BadRequest as e:
+        if "repl" not in str(e).lower():
+            raise
+        await msg.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
+async def send_reply_threaded(bot, chat_id: int, text: str, *, parse_mode=None, reply_markup=None) -> None:
+    """Same as reply_threaded, for sends that have a bot/chat id but no triggering
+    Update (job notifications, task-completion pings) — threads to the user's latest
+    message instead."""
+    try:
+        await bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup,
+                                reply_to_message_id=LAST_USER_MESSAGE_ID)
+    except BadRequest as e:
+        if LAST_USER_MESSAGE_ID is None or "repl" not in str(e).lower():
+            raise
+        await bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
 async def send_chunked(update: Update, text: str) -> None:
     text = text.strip() or "(done — no output)"
+    msg = update.effective_message
     for chunk in split_chunks(text):
         try:
-            await update.effective_message.reply_text(md_to_html(chunk), parse_mode=ParseMode.HTML)
+            await reply_threaded(msg, md_to_html(chunk), parse_mode=ParseMode.HTML)
         except BadRequest:
-            await update.effective_message.reply_text(chunk)
+            await reply_threaded(msg, chunk)
 
 
 async def keep_typing(update: Update, stop: asyncio.Event) -> None:
@@ -590,7 +627,7 @@ async def handle_prompt(update: Update, prompt: str) -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("Got it — I’ll read this next. Your background tasks keep running.")
+        await reply_threaded(update.effective_message, "Got it — I’ll read this next. Your background tasks keep running.")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -691,7 +728,8 @@ async def pair_here(update: Update) -> bool:
     if not (update.effective_user and PHONE.pair(update.effective_user.id, update.effective_user.first_name or "")):
         return False
     if BORN_FLAG.exists():  # they know Ken already; a brand-new Ken's own first words say it better
-        await update.effective_message.reply_text(
+        await reply_threaded(
+            update.effective_message,
             "📱 Connected. I'm the same Ken as on your computer: same chat, same memory. "
             "Text me or send a voice note anytime."
         )
@@ -701,6 +739,7 @@ async def pair_here(update: Update) -> bool:
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update) and not await pair_here(update):
         return
+    track_inbound(update)
     await handle_prompt(update, update.effective_message.text)
 
 
@@ -708,6 +747,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """An image arrives: save it to the inbox, hand the assistant the path."""
     if not authorized(update) and not await pair_here(update):
         return
+    track_inbound(update)
     msg = update.effective_message
     await update.effective_chat.send_action(ChatAction.TYPING)
     try:
@@ -722,7 +762,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await tg_file.download_to_drive(str(path))
     except Exception as e:
         log.warning("image download failed: %s", e)
-        await msg.reply_text(f"Couldn't save that image: {e}")
+        await reply_threaded(msg, f"Couldn't save that image: {e}")
         return
     caption = (msg.caption or "").strip()
     log_history("you", f"[sent image: {name}]" + (f" {caption}" if caption else ""))
@@ -739,6 +779,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update) and not await pair_here(update):
         return
+    track_inbound(update)
     msg = update.effective_message
     voice = msg.voice or msg.audio
     if voice is None:
@@ -748,7 +789,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         Path.home() / ".cache" / "huggingface" / "hub" / f"models--Systran--faster-whisper-{WHISPER_MODEL}"
     ).exists()
     if not model_cached:
-        await msg.reply_text("🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
+        await reply_threaded(msg, "🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
     tg_file = await voice.get_file()
     with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
         path = f.name
@@ -758,9 +799,9 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         os.unlink(path)
     if not text:
-        await msg.reply_text("🎙️ Couldn't make out any speech in that one.")
+        await reply_threaded(msg, "🎙️ Couldn't make out any speech in that one.")
         return
-    await msg.reply_text(f"🎙️ “{text}”")
+    await reply_threaded(msg, f"🎙️ “{text}”")
     await handle_prompt(update, text)
 
 
@@ -770,7 +811,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await handle_prompt(update, first_contact_prompt("connected their phone"))
         return
     if not authorized(update):
-        await update.effective_message.reply_text(
+        await reply_threaded(
+            update.effective_message,
             "This Ken belongs to someone else." if ALLOWED_USER_ID else
             "Almost there. On the computer Ken runs on, open Ken → Settings → Phone, "
             "then send me any message here."
@@ -779,7 +821,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not BORN_FLAG.exists():
         await handle_prompt(update, first_contact_prompt("pressed Start on their phone"))
         return
-    await update.effective_message.reply_text(
+    await reply_threaded(
+        update.effective_message,
         "👋 Here. Text or voice — I'll get it done.\n"
         "/stop stops the current reply\n/new starts a fresh conversation\n/model switches models"
     )
@@ -789,7 +832,7 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     if HOME in ENGINE.chats and not ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("📓 Saving notes from this conversation…")
+        await reply_threaded(update.effective_message, "📓 Saving notes from this conversation…")
         try:
             await asyncio.wait_for(
                 ENGINE.send_message(
@@ -804,16 +847,16 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             log.warning("memory-on-new failed: %s", e)
     await ENGINE.reset_chat(HOME)
-    await update.effective_message.reply_text("🆕 Fresh conversation.")
+    await reply_threaded(update.effective_message, "🆕 Fresh conversation.")
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     if await ENGINE.stop_chat(HOME):
-        await update.effective_message.reply_text("🛑 Stopping this reply. Background tasks keep running; tell me which one to stop.")
+        await reply_threaded(update.effective_message, "🛑 Stopping this reply. Background tasks keep running; tell me which one to stop.")
     else:
-        await update.effective_message.reply_text("No reply to stop. To stop background work, tell me which task.")
+        await reply_threaded(update.effective_message, "No reply to stop. To stop background work, tell me which task.")
 
 
 def get_oauth_token() -> str:
@@ -846,9 +889,9 @@ async def send_outbound(bot, text: str) -> None:
         return
     for chunk in split_chunks(text.strip() or "…"):
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML)
+            await send_reply_threaded(bot, ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk)
+            await send_reply_threaded(bot, ALLOWED_USER_ID, chunk)
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1149,7 +1192,7 @@ async def notify_telegram(app) -> None:
                     InlineKeyboardButton("✓ Approve", callback_data=f"appr:{a['id']}:approve"),
                     InlineKeyboardButton("Skip", callback_data=f"appr:{a['id']}:skip"),
                 ]])
-                await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
+                await send_reply_threaded(app.bot, ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
@@ -1173,7 +1216,7 @@ async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await q.answer("Approved" if a["status"] == "approved" else "Skipped")
     try:
         await q.edit_message_reply_markup(reply_markup=None)
-        await q.message.reply_text("✓ Approved — on it." if a["status"] == "approved" else "Skipped.")
+        await reply_threaded(q.message, "✓ Approved — on it." if a["status"] == "approved" else "Skipped.")
     except Exception:
         pass
 
@@ -1332,12 +1375,12 @@ async def model(arg: str = "") -> dict:
 
 async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if authorized(update):
-        await update.effective_message.reply_text(coffee())
+        await reply_threaded(update.effective_message, coffee())
 
 
 async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if authorized(update):
-        await update.effective_message.reply_text(decaf())
+        await reply_threaded(update.effective_message, decaf())
 
 
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1350,7 +1393,8 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                               callback_data=f"model:{ENGINE.backend(HOME)}:{m}")]
         for m in result.get("choices", [])
     ]
-    await update.effective_message.reply_text(
+    await reply_threaded(
+        update.effective_message,
         result["reply"], reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
     )
 

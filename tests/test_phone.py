@@ -120,6 +120,7 @@ async def test_saying_hi_pairs_a_just_connected_bot(phone, monkeypatch):
 
     class Msg:
         text = "hi"
+        message_id = 1
         async def reply_text(self, text, **kw):
             replies.append(text)
 
