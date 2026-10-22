@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('kenDesktop', {
   platform: process.platform,
+  setTheme: (preference) => ipcRenderer.invoke('theme:set', preference),
   microphonePermission: () => ipcRenderer.invoke('microphone:permission'),
   microphoneSettings: (kind) => ipcRenderer.invoke('microphone:settings', kind),
   pickFolder: () => ipcRenderer.invoke('folder:pick'),

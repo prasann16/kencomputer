@@ -1,17 +1,20 @@
 // Ken for Mac: a window onto the local `ken` service (bot.py). The service owns
 // the engine, Telegram, voice and schedules; this app only shows its chat.
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, systemPreferences, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, nativeTheme, systemPreferences, clipboard } = require('electron');
 const { execFile } = require('node:child_process');
 const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
-const { trustedFrame } = require('./security.cjs');
+const { trustedFrame, localComputerFrame } = require('./security.cjs');
 
 app.setName('Ken');
 const home = path.resolve(process.env.KEN_HOME || path.join(os.homedir(), '.ken'));
 app.setPath('userData', path.join(home, 'desktop-data'));
 let win, tray, quitting = false;
+const themeFile = path.join(home, 'desktop-data', 'theme');
+const isTheme = (value) => ['system', 'light', 'dark'].includes(value);
+const windowBackground = () => nativeTheme.shouldUseDarkColors ? '#181818' : '#ffffff';
 
 function service() {
   const env = existsSync(path.join(home, '.env')) ? readFileSync(path.join(home, '.env'), 'utf8') : '';
@@ -85,7 +88,8 @@ async function stopOtherEngine() {
   const command = await new Promise((resolve) => execFile('/bin/ps', ['-p', String(pid), '-o', 'command='], (_e, out) => resolve(String(out || ''))));
   if (!/ken-engine|bot\.py/.test(command)) return;  // gone, or the pid now belongs to something else
   try { process.kill(pid, 'SIGTERM'); } catch {}
-  for (let i = 0; i < 20; i++) {
+  // Workers drain their tools and reap CLI processes before Ken exits.
+  for (let i = 0; i < 120; i++) {
     try { process.kill(pid, 0); } catch { return; }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -216,11 +220,17 @@ async function start() {
     const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
     if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
   }
-  win = new BrowserWindow({ title: 'Ken', width: 900, height: 700, minWidth: 480, minHeight: 420, backgroundColor: '#ffffff', show: false,
+  // Restore before opening the loading page, which follows nativeTheme via CSS.
+  try {
+    const saved = readFileSync(themeFile, 'utf8').trim();
+    if (isTheme(saved)) nativeTheme.themeSource = saved;
+  } catch {}
+  win = new BrowserWindow({ title: 'Ken', width: 900, height: 700, minWidth: 480, minHeight: 420, backgroundColor: windowBackground(), show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.on('close', (event) => { if (!quitting) { event.preventDefault(); win.hide(); } });
   win.on('hide', installIfIdle);
+  nativeTheme.on('updated', () => { if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground()); });
   const updated = existsSync(quietRelaunch);
   if (updated) rmSync(quietRelaunch);
   try {
@@ -244,12 +254,21 @@ async function start() {
     callback(ours(wc) && permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')));
   win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); external(url); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(origin + '/api/chats/') && url.includes('/files/')) win.webContents.downloadURL(url);
+    const target = new URL(url);
+    if (target.origin === origin && /^\/(?:remote\/[a-f0-9]{16}\/)?api\/chats\//.test(target.pathname) && target.pathname.includes('/files/')) win.webContents.downloadURL(url);
     else external(url);
     return { action: 'deny' };
   });
   session.defaultSession.on('will-download', (_event, item) => {
     item.setSaveDialogOptions({ title: 'Save from Ken', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())) });
+  });
+  ipcMain.handle('theme:set', (event, preference) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (!isTheme(preference)) throw new Error('Invalid appearance.');
+    if (nativeTheme.themeSource === preference) return;
+    nativeTheme.themeSource = preference;
+    mkdirSync(path.dirname(themeFile), { recursive: true });
+    writeFileSync(themeFile, preference);
   });
   ipcMain.handle('update:failed', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
@@ -289,15 +308,15 @@ async function start() {
     });
   });
   ipcMain.handle('chrome:connect', (event) => {
-    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (!localComputerFrame(event, win, origin)) throw new Error('Open Chrome on the selected computer to connect it.');
     connectChrome();
   });
   ipcMain.handle('folder:open', async (event, folder) => {
-    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (!localComputerFrame(event, win, origin)) throw new Error('This folder is on the remote computer.');
     if (typeof folder === 'string' && existsSync(folder)) await shell.openPath(folder);
   });
   ipcMain.handle('folder:pick', async (event) => {
-    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (!localComputerFrame(event, win, origin)) throw new Error('Enter a folder path on the remote computer.');
     const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });
     return canceled ? '' : filePaths[0];
   });
@@ -341,7 +360,7 @@ function connectChrome() {
 }
 function buildMenus() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome on This Mac…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
     { role: 'windowMenu' },

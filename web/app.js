@@ -1,5 +1,7 @@
 // Ken: one conversation, with tools and settings available when needed.
 import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
+import { ComputerBar, ComputerSettings, computerUrl, computerStorage, isRemote } from '/computers.js';
+import { TaskCard, TaskSummary } from '/tasks.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -31,7 +33,7 @@ async function api(path, opts = {}) {
     init.body = opts.body;
   }
   if (opts.timeout) init.signal = AbortSignal.timeout(opts.timeout);
-  const r = await fetch(path, init);
+  const r = await fetch(computerUrl(path), init);
   if (r.status === 401) { location.reload(); throw new Error('signed out'); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.statusText);
@@ -129,7 +131,7 @@ function Chip({ project }) {
 }
 
 const durationLabel = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current task'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
+const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current reply'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
 
 function waveformPeaks(values, count = 48) {
   // Keep each interval's peak; point-sampling can miss whole words in a note.
@@ -221,11 +223,11 @@ function useRecorder(onAudio, toast) {
 }
 
 function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey }) {
-  const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem('ken-draft:' + storageKey) || '{}'); } catch { return {}; } })();
+  const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem(computerStorage('ken-draft:') + storageKey) || '{}'); } catch { return {}; } })();
   const [text, setText] = useState(savedDraft.text || '');
   const [files, setFiles] = useState(savedDraft.files || []);
   (savedDraft.files || []).forEach((name) => ATTACHED.add(name));
-  useEffect(() => { sessionStorage.setItem('ken-draft:' + storageKey, JSON.stringify({ text, files })); }, [text, files, storageKey]);
+  useEffect(() => { sessionStorage.setItem(computerStorage('ken-draft:') + storageKey, JSON.stringify({ text, files })); }, [text, files, storageKey]);
   useEffect(() => { if (draft) { setText(draft.text); onDraftUsed(); requestAnimationFrame(() => ta.current?.focus()); } }, [draft]);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -274,7 +276,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     ${recording && !recorder.heard && recorder.seconds>2 && html`<div class="mic-error" role="status">No sound from your microphone.${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Check input</button>`}</div>`}
     ${commands.length>0 && html`<div class="command-list" role="listbox" aria-label="Chat commands">${commands.map(([name,description],i)=>html`<button role="option" aria-selected=${i===commandIndex} onClick=${()=>{setText(name+' ');ta.current.focus();}}><b>${name}</b><span>${description}</span></button>`)}</div>`}
     ${uploading > 0 && html`<div class="upload-status" role="status">Attaching files…</div>`}
-    ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`} alt=${f}/>`:Icon.file}${f}
+    ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${computerUrl(`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`)} alt=${f}/>`:Icon.file}${f}
       <button class="x" aria-label=${'Remove ' + f} onClick=${() => setFiles(files.filter((x) => x !== f))}>${Icon.close}</button></span>`)}</div>`}
     <div class="composer" onClick=${(e) => { if (e.target === e.currentTarget) ta.current?.focus(); }}>
       ${voiceBusy ? html`<div class="recording-input"><button class="icon-btn" aria-label="Cancel recording" onClick=${()=>recorder.finish(false)}>${Icon.close}</button>${recording && html`<span class="recording-label"><i aria-hidden="true"></i>Recording</span>`}<${Waveform} stream=${recorder.stream} onPeak=${recorder.peak}/><span class="voice-time">${recorder.status==='requesting'?'Allow microphone…':durationLabel(recorder.seconds)}</span></div>` : html`<label class="sr" for=${id}>${placeholder}</label>
@@ -284,7 +286,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
         <input ref=${picker} type="file" multiple hidden onChange=${(e) => { attach(e.target.files); e.target.value = ''; }} />`}
       ${voice && !voiceBusy && html`<button class="icon-btn" aria-label="Voice" title="Record a voice note" onClick=${recorder.start}>${Icon.mic}</button>`}
       ${busy && !ready && !voiceBusy && onStop
-        ? html`<button class="icon-btn hot" aria-label="Stop" title="Stop" onClick=${() => Promise.resolve(onStop()).catch((e) => toast(e.message))}>${Icon.stop}</button>`
+        ? html`<button class="icon-btn hot" aria-label="Stop reply" title="Stop this reply" onClick=${() => Promise.resolve(onStop()).catch((e) => toast(e.message))}>${Icon.stop}</button>`
         : (ready || voiceBusy) && html`<button class="icon-btn hot" aria-label="Send" disabled=${recording ? !recorder.heard : (!ready || sending || voiceBusy || uploading > 0)} onClick=${send}>${Icon.send}</button>`}
     </div>
   </div>`;
@@ -293,12 +295,12 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
 function Message({ m, label }) {
   const files = m.files || [];
   const content = useMemo(() => md(m.text), [m.text]);
-  const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
+  const recording = m.audio || (m.voice && files.some(isAudio) ? {url:computerUrl(`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`),name:files.find(isAudio),...m.voice} : null);
   if (m.role === 'you') {
     return html`<div class="msg you"><div class="stack">
       ${recording && html`<${VoiceNote} key="recording" src=${recording.url} peaks=${recording.peaks} seconds=${recording.seconds} transcript=${m.text} pending=${m.delivery==='listening'} failed=${m.delivery==='voice-failed'} onRetry=${m.retryVoice} failure=${m.voiceError}/>`}
       ${files.filter(f=>!recording || f!==recording.name).map((f) => {
-        const url = `/api/chats/${m.project}/files/${encodeURIComponent(f)}`;
+        const url = computerUrl(`/api/chats/${m.project}/files/${encodeURIComponent(f)}`);
         return isAudio(f) ? html`<${VoiceNote} src=${url} peaks=${m.voice?.peaks} seconds=${m.voice?.seconds}/>` : isImage(f)
           ? html`<a class="img" href=${url} target="_blank"><img src=${url} alt=${f} loading="lazy" /></a>`
           : html`<a class="filechip" href=${url} target="_blank">${Icon.file}${f}</a>`;
@@ -460,7 +462,7 @@ function Glyph(name) {
   };
   return html`<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[name] || paths.file}/></svg>`;
 }
-const fileUrl = (f) => `/api/chats/${f.project}/files/${encodeURIComponent(f.name)}`;
+const fileUrl = (f) => computerUrl(`/api/chats/${f.project}/files/${encodeURIComponent(f.name)}`);
 const isVideo = (name) => /\.(mp4|webm|mov)$/i.test(name);
 const isAudio = (name) => /\.(mp3|wav|m4a|ogg|oga|opus|flac|aac|aiff?)$/i.test(name) || /^voice-.*\.webm$/i.test(name);
 const isText = (name) => /\.(txt|md|csv|json|log|py|js|css|html)$/i.test(name);
@@ -502,10 +504,12 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
+  const tasks = pid === 'home' ? data?.tasks || [] : [];
   const timeline = [
     ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
+    ...tasks.filter(t=>t.updated>clearedAt || ['queued','running','reviewing','steering','stopping','pausing','waiting','interrupted','needs_review'].includes(t.state)).map(t=>({t:t.created,key:'task-'+t.id,el:html`<${TaskCard} task=${t} api=${api} toast=${toast} renderText=${md}/>`})),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
   // One continuous conversation, never a blank page. Opening a chat lands on the first unread
@@ -555,6 +559,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       </div>
     </div>
     <div class="chat-bottom">
+      <${TaskSummary} tasks=${tasks}/>
       ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
@@ -583,7 +588,7 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
 function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onProjectMenu }) {
   return html`<header class="chat-header"><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/"><img src="/ken.svg" alt=""/>Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep your Mac awake" data-tip=${awake ? 'Coffee’s on — your Mac stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give your Mac a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/"><img src="/ken.svg" alt=""/>Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep the selected computer awake" data-tip=${awake ? 'Coffee’s on — the selected computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // First run: the selected backend owns its sign-in flow.
@@ -644,15 +649,15 @@ function ToolList({ tools, onUse, onAddTool, switches = true }) {
     : connect;
   return html`<div class="tool-list">
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
-      use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
-      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
+      use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { !isRemote && window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
+      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { !isRemote && window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
         ${open === 'chrome' && html`<p class="conn-steps">The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`}
-        ${open === 'chrome-off' && html`<p class="conn-steps">${window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
+        ${open === 'chrome-off' && html`<p class="conn-steps">${!isRemote && window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
       : open === 'chrome' && html`<div class="conn-form"><ol class="conn-steps">
-            <li>${window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
+            <li>${isRemote ? 'On the remote computer, open' : window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${!isRemote && window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${!isRemote && window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
             <p class="conn-steps">Needs Chrome 144 or newer.</p>
-            <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`)}
+            <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${!isRemote && window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`)}
     ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
       use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
       html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
@@ -788,9 +793,15 @@ function JobList({ jobs, change }) {
 }
 
 function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
+  const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
+  useEffect(() => {
+    const changed = () => setAppearance(window.kenTheme.preference);
+    window.addEventListener('ken-theme-change', changed);
+    return () => window.removeEventListener('ken-theme-change', changed);
+  }, []);
   const [error, setError] = useState(''), [reconnect, setReconnect] = useState(''), [update, setUpdate] = useState(null);
   useEffect(() => { window.kenDesktop?.updateStatus?.().then(setUpdate).catch(() => {}); return window.kenDesktop?.onUpdateState?.((s) => { if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version })); }); }, []);
-  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
+  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('computers');
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
@@ -801,7 +812,9 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
-    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    <div class="appearance"><label for="appearance">Appearance</label><select id="appearance" value=${appearance} onChange=${(e) => window.kenTheme.setPreference(e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    <div class="set-tabs" role="tablist">${[['computers', 'Computers'], ['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => html`<div><span>${setup?.providers?.[id]?.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${setup?.providers?.[id]?.connected ? `Reconnect ${label}` : `Connect ${label}`}</button></div>`)}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
@@ -814,7 +827,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
         <input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>
         <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('claude')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
         ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`}</div>`}
-    ${tab === 'privacy' && privacy && html`<div class="set-body"><p class="np-help">Everything Ken knows and does stays on this computer.</p>
+    ${tab === 'privacy' && privacy && html`<div class="set-body"><p class="np-help">Everything Ken knows and does stays on the selected computer.</p>
     ${row(icon('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'), 'Share anonymous crash reports and usage',
       'Helps fix bugs and shows which features get used: counts like “a job ran”. Never what you say, your files or your logins.',
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
@@ -955,10 +968,10 @@ function NewAgent({ onClose, onCreated, setup }) {
     <label class="np-label">Name<input class="np-input" autofocus value=${name} placeholder="Myreader" onInput=${(e) => setName(e.target.value)}/></label>
     <label class="np-label">What should it do?<textarea class="np-input" rows="4" value=${job} placeholder="Run Myreader for me: fix bugs, watch Stripe, send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
     ${more || path ? html`<div class="np-label">Folder <span class="np-optional">optional</span>
-      ${window.kenDesktop?.pickFolder
+      ${!isRemote && window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
+      <small class="np-note">${isRemote ? 'Use a folder path on the remote computer. ' : ''}Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
       : html`<button class="text-action" onClick=${() => setMore(true)}>Point it to a code or info folder…</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
@@ -1001,7 +1014,7 @@ function App() {
   const projectMenu=async(e,id)=>{
     const native=window.kenDesktop; if(!native?.popupMenu)return;
     const project=chats.find((c)=>c.id===id); if(!project)return;
-    const choice=await native.popupMenu([{id:'open',label:'Open in Finder'},{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},{id:'folder',label:'Code or info folder…'},{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    const choice=await native.popupMenu([...(!isRemote ? [{id:'open',label:'Open in Finder'}] : []),{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},...(!isRemote ? [{id:'folder',label:'Code or info folder…'}] : []),{separator:true},{id:'remove',label:'Remove from Ken…'}]);
     if(choice==='open'){ const v=await api(`/api/agents/${id}`); native.openFolder(v.agent.workdir); }
     if(choice==='keys')setProjectDialog({kind:'keys',project});
     if(choice==='rename')setProjectDialog({kind:'rename',project});
@@ -1010,7 +1023,7 @@ function App() {
       try{ await api(`/api/agents/${id}`,{method:'PATCH',json:{path}}); toast(`${project.name} now knows its job is in ${path.replace(/^\/Users\/[^/]+/,'~')}.`); if(id===pid)loadProjectMeta(id); }catch(err){toast(err.message);} }
   };
   // Unread: a chat whose last message is newer than when it was last open.
-  const seen=()=>{try{return JSON.parse(localStorage.getItem('ken-seen')||'{}');}catch{return {};}};
+  const seen=()=>{try{return JSON.parse(localStorage.getItem(computerStorage('ken-seen'))||'{}');}catch{return {};}};
   const [seenAt,setSeenAt]=useState(seen);
   // A "Check for Updates…" the user asked for (Ken menu, menu-bar icon, Settings) answers with a
   // quiet toast; a downloaded update shows a bar with Restart now until it's installed.
@@ -1088,7 +1101,7 @@ function App() {
     let ws, timer, pending, closed = false, rev = null, retry = 0;
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
-      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events');
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + computerUrl('/api/events'));
       ws.onopen = () => { setOnline(true); retry = 0; refresh(); };
       ws.onmessage = (e) => {
         const ev = JSON.parse(e.data), project = ev.project;
@@ -1137,8 +1150,8 @@ function App() {
       }
     } finally { inFlight.current.delete(client_id); }
   };
-  const voiceDrafts = () => {try{return JSON.parse(sessionStorage.getItem('ken-voice-outbox')||'{}');}catch{return {};}};
-  const saveVoiceDraft = (id,data) => {const saved=voiceDrafts();if(data)saved[id]=data;else delete saved[id];sessionStorage.setItem('ken-voice-outbox',JSON.stringify(saved));};
+  const voiceDrafts = () => {try{return JSON.parse(sessionStorage.getItem(computerStorage('ken-voice-outbox'))||'{}');}catch{return {};}};
+  const saveVoiceDraft = (id,data) => {const saved=voiceDrafts();if(data)saved[id]=data;else delete saved[id];sessionStorage.setItem(computerStorage('ken-voice-outbox'),JSON.stringify(saved));};
   const sendVoice = (blob, peaks=[], seconds=0, restore=null) => {
     const target=restore?.project||pid, id=restore?.id||crypto.randomUUID(), audio={blob,peaks:waveformPeaks(peaks),seconds,url:URL.createObjectURL(blob),name:restore?.name||null,transcript:restore?.transcript??null};
     const persist=()=>{if(audio.name)saveVoiceDraft(id,{id,project:target,name:audio.name,peaks:audio.peaks,seconds:audio.seconds,transcript:audio.transcript});};
@@ -1172,7 +1185,7 @@ function App() {
   useEffect(()=>{
     if(restoredVoice.current)return;restoredVoice.current=true;
     for(const note of Object.values(voiceDrafts())){
-      fetch(`/api/chats/${note.project}/files/${encodeURIComponent(note.name)}`).then(r=>{if(!r.ok)throw Error();return r.blob();}).then(blob=>sendVoice(blob,note.peaks,note.seconds,note)).catch(()=>toast('A saved voice note could not be reopened. The original file is still in your chat folder.'));
+      fetch(computerUrl(`/api/chats/${note.project}/files/${encodeURIComponent(note.name)}`)).then(r=>{if(!r.ok)throw Error();return r.blob();}).then(blob=>sendVoice(blob,note.peaks,note.seconds,note)).catch(()=>toast('A saved voice note could not be reopened. The original file is still in your chat folder.'));
     }
   },[]);
   const command = async (text) => {
@@ -1203,7 +1216,7 @@ function App() {
     setClearing(true); generation.current++;
     try {
       const result = await api(`/api/chats/${pid}/reset`, { json: {} });
-      sessionStorage.removeItem('ken-draft:' + pid); setDraft(null); setChoices(null);
+      sessionStorage.removeItem(computerStorage('ken-draft:') + pid); setDraft(null); setChoices(null);
       for(const note of Object.values(voiceDrafts()))if(note.project===pid)saveVoiceDraft(note.id,null);
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
@@ -1215,14 +1228,15 @@ function App() {
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
-  useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
+  useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem(computerStorage('ken-seen'),JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
   // When you last read this chat, as of opening it: where the first unread reply starts.
   const opened = useRef({ pid: null, ts: 0 });
   if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — your Mac can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
+    <${ComputerBar} Modal=${Modal} online=${online}/>
     ${setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or Codex above. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}

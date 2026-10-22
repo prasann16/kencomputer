@@ -1,0 +1,83 @@
+/* Shared surfaces and controls. Keep these palettes in one place. */
+:root {
+  color-scheme: light;
+  --bg: #fff;
+  --side: #fafaf9;
+  --card: #fff;
+  --well: #f6f6f5;
+  --hover: #f0f0ef;
+  --selected: #ebebe9;
+  --line: #ececeb;
+  --line-strong: #dcdcdc;
+  --ink: #111;
+  --ink-2: #333;
+  --muted: #444;
+  --faint: #6b6b6b;
+  --disabled: #999;
+  --accent: #242424;
+  --accent-ink: #111;
+  --primary: #242424;
+  --primary-hover: #080808;
+  --primary-ink: #fff;
+  --track: #f0f0ef;
+  --focus: #777;
+  --scrollbar: #dedede;
+  --wave: #c3c3c3;
+  --switch: #d9d9d6;
+  --go: #419868;
+  --go-soft: #edf5ef;
+  --go-ink: #31774b;
+  --ask-soft: #fff4e8;
+  --ask-ink: #875522;
+  --danger: #aa3528;
+  --recording: #dc633d;
+  --recording-soft: #fff0e9;
+  --coffee: #b26b1f;
+  --scrim: #00000020;
+  --shadow: none;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #181818;
+  --side: #1c1c1c;
+  --card: #222;
+  --well: #252525;
+  --hover: #303030;
+  --selected: #383838;
+  --line: #333;
+  --line-strong: #484848;
+  --ink: #ededed;
+  --ink-2: #d6d6d6;
+  --muted: #bcbcbc;
+  --faint: #a0a0a0;
+  --disabled: #777;
+  --accent: #dedede;
+  --accent-ink: #ededed;
+  --primary: #e5e5e5;
+  --primary-hover: #fff;
+  --primary-ink: #181818;
+  --track: #323232;
+  --focus: #aaa;
+  --scrollbar: #505050;
+  --wave: #646464;
+  --switch: #555;
+  --go: #64ba83;
+  --go-soft: #23382b;
+  --go-ink: #8dd5a7;
+  --ask-soft: #3c2e20;
+  --ask-ink: #e9bb82;
+  --danger: #f2988d;
+  --recording: #f4a28b;
+  --recording-soft: #422a24;
+  --coffee: #dfad6d;
+  --scrim: #00000080;
+}
+
+/* Appearance stays available on every Settings tab, including first-run setup. */
+.appearance { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.appearance label { font-size: 13px; font-weight: 500; }
+.appearance select { min-width: 130px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--card); color: var(--ink); font-size: 13px; cursor: pointer; }
+.set-tabs { max-width: 100%; overflow-x: auto; flex-shrink: 0; }
+.appearance, .settings-foot { flex-shrink: 0; }
+.modal { background: var(--card); }

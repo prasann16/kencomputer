@@ -35,7 +35,8 @@ Then just talk to it.
 - **A morning brief** — every day, first thing, without asking: open loops, what's on today, weather if it knows your city. Pick the time in your first conversation; a nightly review writes memory so tomorrow's brief knows more.
 - **Persistent memory** — Ken keeps notes on you, your projects, and your rules in `~/.ken/work/SOUL.md` — its soul file. Tell it once — it knows tomorrow. It updates its own memory when you say "remember…".
 - **Model switching** — `/model opus`, `/model haiku`, `/model default`. Live list from your own account.
-- **Controls** — `/stop` kills the running task, `/new` starts a fresh conversation.
+- **Concurrent tasks** — give Ken several jobs and keep talking while they run; steer, pause, stop, resume, retry, or ask it to check the work, all in the main conversation.
+- **Controls** — `/stop` stops the current reply; name a background task to stop that job. `/new` starts a fresh conversation and keeps background work.
 
 ## Connecting things
 
@@ -61,8 +62,15 @@ Install the Python desktop dependencies first as described in the desktop guide.
 
 ## The app
 
-`ken open` opens Ken as an app: a chat with Ken, plus one chat per agent. Same Ken, same
-memory, the same conversation you have on Telegram.
+`ken open` opens Ken as an app: one main conversation for requests, progress, and
+results, shared with Telegram. Long jobs run in independent worker sessions; their
+cards stay in the main chat with controls and work history. Ken can use configured
+specialist agents behind those tasks without asking you to switch conversations.
+
+Up to four tasks run concurrently. Their instructions, attempts, session IDs, and
+checkpoints survive restarts; interrupted work waits for you to resume it. A
+worker's result is unverified until a fresh review session checks the evidence.
+See [task execution and recovery](TASKS.md) for the lifecycle and development checks.
 
 An agent does one job for you ("run Myreader", "grow my X following"). Click **New agent**,
 say what it should do, and it sets itself up. Each agent is a folder in `~/.ken/agents/<id>/`:

@@ -287,7 +287,7 @@ SYSTEM_PROMPT = (
     "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
     "app, not a separate assistant. The header line of each message says where they wrote from. On their "
     "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
-    "button, the model menu and the coffee cup; in Telegram /stop (stop the current task), /new (fresh "
+    "button, the model menu and the coffee cup; in Telegram /stop (stop the current reply), /new (fresh "
     "thread), /model (switch models), /coffee and /decaf. Never suggest Esc or Ctrl+C. COFFEE keeps this "
     "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
     "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
@@ -590,7 +590,7 @@ async def handle_prompt(update: Update, prompt: str) -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
+        await update.effective_message.reply_text("Got it — I’ll read this next. Your background tasks keep running.")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -781,7 +781,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.effective_message.reply_text(
         "👋 Here. Text or voice — I'll get it done.\n"
-        "/stop kills the running task\n/new starts a fresh conversation\n/model switches models"
+        "/stop stops the current reply\n/new starts a fresh conversation\n/model switches models"
     )
 
 
@@ -811,9 +811,9 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     if await ENGINE.stop_chat(HOME):
-        await update.effective_message.reply_text("🛑 Stopping the current task.")
+        await update.effective_message.reply_text("🛑 Stopping this reply. Background tasks keep running; tell me which one to stop.")
     else:
-        await update.effective_message.reply_text("Nothing is running.")
+        await update.effective_message.reply_text("No reply to stop. To stop background work, tell me which task.")
 
 
 def get_oauth_token() -> str:
@@ -862,12 +862,7 @@ def job_tag(job: dict) -> dict:
 
 
 async def run_outbound(job: dict) -> None:
-    """The initiative: a scheduled job hands the assistant the pen."""
-    async def deliver(text: str) -> None:
-        if PHONE.bot and ALLOWED_USER_ID:
-            await send_outbound(PHONE.bot, text)
-            await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
-
+    """Scheduled work runs behind Ken without occupying the main conversation."""
     nudge = ""
     if job.get("name") == "morning-brief":
         pending = unresolved_setup()
@@ -880,13 +875,14 @@ async def run_outbound(job: dict) -> None:
             )
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-        f"Instruction: {job.get('prompt', '')}{nudge} — do it now; your messages go straight to "
-        "the human (their app and Telegram). If this job's answer is genuinely not worth sending "
-        "right now, reply exactly NOTHING_TO_SAY.)"
+        f"Instruction: {job.get('prompt', '')}{nudge} — do it now and report the result to main Ken. "
+        "Main Ken delivers useful results to the human in their app and Telegram.)"
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
+        ENGINE.tasks.create(job.get('name', 'Scheduled task').replace('-', ' ').capitalize(), prompt,
+                            criteria='Complete the scheduled instructions and report evidence or explain what blocked them.',
+                            resources=['browser'], request_key=f"schedule:home:{job.get('name')}:{time.strftime('%Y-%m-%d')}:{job.get('time')}")
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
@@ -1061,11 +1057,9 @@ async def scheduler() -> None:
                     crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
                     agent = job.get("agent") or job.get("project")
                     if agent:
-                        # An agent's job runs in that agent's own chat.
-                        asyncio.create_task(ENGINE.send_message(
-                            str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
-                        ))
+                        ENGINE.tasks.create(job.get('name', 'Scheduled task'), job.get('prompt', ''),
+                                            criteria='Complete the scheduled instructions and report evidence.', project=str(agent),
+                                            resources=['browser'], request_key=f"schedule:{agent}:{job.get('name')}:{time.strftime('%Y-%m-%d')}:{job.get('time')}")
                     else:
                         asyncio.create_task(run_outbound(job))
         except Exception as e:
@@ -1092,7 +1086,7 @@ async def brain_connected(backend=None) -> None:
     await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
-async def start_engine() -> None:
+async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
@@ -1128,7 +1122,7 @@ async def start_engine() -> None:
     for attempt in range(15):
         try:
             await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
-            return
+            return web_app
         except OSError as e:
             if attempt == 14:
                 log.warning("app server could not start: %s", e)
@@ -1160,6 +1154,8 @@ async def notify_telegram(app) -> None:
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
+            elif ev['type'] == 'message' and ev.get('task_notice') and ev.get('role') == 'ken':
+                await send_outbound(app.bot, ev['text'])
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 
@@ -1640,7 +1636,7 @@ class Phone:
             await app.bot.set_my_commands([
                 ("coffee", "Keep this computer awake"),
                 ("decaf", "Stop keeping it awake"),
-                ("stop", "Kill the current task"),
+                ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
             ])
@@ -1720,17 +1716,33 @@ async def run() -> None:
     """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
     asyncio.get_running_loop().set_exception_handler(crash.loop_handler)
     crash.track("ken_started", phone=bool(os.environ.get("TELEGRAM_BOT_TOKEN")), frozen=FROZEN)
-    await start_engine()
-    asyncio.create_task(scheduler())
-    asyncio.create_task(self_update())
-    asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
-    await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if token:
-        PHONE.keep_starting(token)
-    else:
-        log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
-    await asyncio.Event().wait()
+    import signal
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, stop.set)
+    web_app = await start_engine()
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
+    try:
+        await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            PHONE.keep_starting(token)
+        else:
+            log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+        await stop.wait()
+    finally:
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
+        if web_app:
+            for task in list(web_app.bg):
+                task.cancel()
+            await asyncio.gather(*web_app.bg, return_exceptions=True)
+        await ENGINE.close()
+        await PHONE.stop()
+        if web_app and web_app.runner:
+            await web_app.runner.cleanup()
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main() -> None:

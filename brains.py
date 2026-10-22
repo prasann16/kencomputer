@@ -29,6 +29,8 @@ class Session:
     session_id: str | None = None
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
+    supervisor: bool = False
+    on_session_id: Callable[[str], None] | None = None
 
     async def ask(
         self, prompt: str, on_text: OnText, on_tool: OnTool | None = None, on_delta: OnText | None = None
@@ -120,6 +122,10 @@ class ClaudeSession(Session):
             # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
             setting_sources=[],
             strict_mcp_config=True,
+            # Main Ken only manages work and its own notes. Execution tools live
+            # in independent worker sessions, so a long command cannot hold chat.
+            tools=["Read", "Glob", "Grep", "Write", "Edit"] if self.supervisor else None,
+            max_turns=12 if self.supervisor else None,
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
@@ -169,7 +175,7 @@ class ClaudeSession(Session):
         return None if final is TOO_NEW else final
 
     async def _ask(self, prompt, on_text, on_tool=None, on_delta=None):
-        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolUseBlock
+        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock
 
         await self._ensure()
         model = self.model_fn()
@@ -183,10 +189,19 @@ class ClaudeSession(Session):
         last_text = ""
         final = None
         partial = ""
+        recorded_session = None
         try:
             await self.client.query(prompt)
             async for msg in self.client.receive_response():
                 self._heard, self.last_activity = True, time.monotonic()
+                # Save the session as soon as it exists, not only when a long
+                # task finishes. An interrupted attempt can then resume too.
+                sid = msg.data.get('session_id') if isinstance(msg, SystemMessage) else getattr(msg, 'session_id', None)
+                if sid:
+                    self.session_id = sid
+                    if self.on_session_id and sid != recorded_session:
+                        self.on_session_id(sid)
+                        recorded_session = sid
                 if isinstance(msg, StreamEvent):
                     ev = msg.event or {}
                     if ev.get("type") == "message_start":
@@ -216,6 +231,8 @@ class ClaudeSession(Session):
                     if NEEDS_NEWER_CLI in result or final is TOO_NEW:
                         final = TOO_NEW
                         continue
+                    if msg.is_error and getattr(msg, 'terminal_reason', None) not in {'aborted_streaming', 'aborted_tools'}:
+                        raise RuntimeError(result or f"Claude ended without completing the turn ({msg.subtype}).")
                     if result and result != last_text:
                         final = result
                         await on_text(result)
