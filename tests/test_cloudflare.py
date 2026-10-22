@@ -116,6 +116,35 @@ async def test_failed_install_and_shutdown_are_recoverable(monkeypatch):
         setup.install()
 
 
-async def test_command_timeout_stops_child():
-    with pytest.raises(asyncio.TimeoutError):
-        await cloudflare.command(sys.executable, "-c", "import time; time.sleep(60)", timeout=0.05)
+@pytest.mark.parametrize("without_killpg", [False, True])
+@pytest.mark.parametrize("cancel", [False, True], ids=["timeout", "cancel"])
+async def test_command_stops_child(monkeypatch, without_killpg, cancel):
+    if without_killpg:
+        monkeypatch.delattr(cloudflare.os, "killpg", raising=False)
+    create = asyncio.create_subprocess_exec
+    started = asyncio.Event()
+    process = None
+
+    async def spawn(*args, **kwargs):
+        nonlocal process
+        process = await create(*args, **kwargs)
+        started.set()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(cloudflare.command(
+        sys.executable, "-c", "import time; time.sleep(60)", timeout=60 if cancel else 0.05))
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        if cancel:
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel else asyncio.TimeoutError):
+            await task
+        assert process.returncode is not None
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()

@@ -161,7 +161,9 @@ Every tagged build is installed on a GitHub M-series Mac and made to update itse
 
 Download files keep fixed names, so `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-arm64.dmg` (and `Ken-x64.dmg`) always point at the newest release. Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
 
-**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
+**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, and opens or updates a dependency PR. If nothing changed, it does nothing. After that PR is merged, it waits for the merged commit's Mac and Windows tests, tags the next version, starts the release build, and opens an issue naming the publish command. It never pushes directly to protected `main` or tags an unmerged dependency update.
+
+Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the weekly PR. GitHub may ask a maintainer to approve workflow runs on that bot-created PR before its checks start. Publishing still requires the Mac release check above.
 
 Repository secrets the release workflow needs:
 

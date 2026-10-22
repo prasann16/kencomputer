@@ -1,6 +1,7 @@
 """Two real HTTP engines, with model execution controlled by the test."""
 import asyncio
 import json
+import os
 import stat
 from types import SimpleNamespace
 
@@ -58,8 +59,20 @@ def test_addresses_and_credential_persistence(tmp_path):
     assert not c.data["server"]["enabled"]
     c.data["server"].update(enabled=True, key="secret")
     c.save()
-    assert stat.S_IMODE(c.path.stat().st_mode) == 0o600
     assert Computers(tmp_path).data["server"]["key"] == "secret"
+    c.data["server"]["key"] = "replacement"
+    c.save()
+    assert Computers(tmp_path).data["server"]["key"] == "replacement"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Windows permissions use ACLs, not POSIX mode bits")
+def test_credentials_stay_private_on_create_and_replace(tmp_path):
+    c = Computers(tmp_path)
+    c.save()
+    assert stat.S_IMODE(c.path.stat().st_mode) == 0o600
+    c.path.chmod(0o644)
+    c.save()
+    assert stat.S_IMODE(c.path.stat().st_mode) == 0o600
 
 
 async def test_optional_server_and_local_only_controls(pair):
