@@ -801,7 +801,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   }, []);
   const [error, setError] = useState(''), [reconnect, setReconnect] = useState(''), [update, setUpdate] = useState(null);
   useEffect(() => { window.kenDesktop?.updateStatus?.().then(setUpdate).catch(() => {}); return window.kenDesktop?.onUpdateState?.((s) => { if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version })); }); }, []);
-  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('computers');
+  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
@@ -812,8 +812,8 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
-    <div class="appearance"><label for="appearance">Appearance</label><select id="appearance" value=${appearance} onChange=${(e) => window.kenTheme.setPreference(e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
-    <div class="set-tabs" role="tablist">${[['computers', 'Computers'], ['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    <div class="appearance"><label for="appearance">Appearance</label><select id="appearance" class="model-select" value=${appearance} onChange=${(e) => window.kenTheme.setPreference(e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy'], ['computers', 'Computers']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => html`<div><span>${setup?.providers?.[id]?.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${setup?.providers?.[id]?.connected ? `Reconnect ${label}` : `Connect ${label}`}</button></div>`)}</div>

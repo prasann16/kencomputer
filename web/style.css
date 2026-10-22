@@ -267,6 +267,7 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .phone-lead{display:flex;gap:22px;justify-content:center;align-items:center;margin:14px 0 0}.phone-lead-qr svg{display:block;width:190px;height:190px}.phone-lead .phone-video{width:120px!important}.phone-steps-box .phone-lead-note{margin:14px auto 22px!important;max-width:360px!important;text-align:center!important;font-size:13.5px!important;color:var(--muted)}.phone-lead-note.err{color:var(--danger)!important}
 .phone-setup .phone-steps-box{width:100%;max-width:460px}
 .phone-lead .phone-video{width:auto!important;height:190px}
+.phone-video{aspect-ratio:480/554}  /* botfather.mp4's shape, so nothing jumps while it loads */
 .phone-confirm{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:380px;margin:18px auto 0;padding:22px;border:1px solid var(--line);border-radius:14px;text-align:center}.phone-confirm .phone-confirm-q{margin:0!important;color:var(--muted);font-size:14px}.phone-confirm .phone-confirm-bot{margin:0 0 6px!important;max-width:100%!important;font-size:17px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}.phone-confirm .btn{width:100%;min-width:0!important}.phone-confirm .text-action{font-size:13px}
 .privacy-more{margin:10px 0 0 44px}
 /* Jobs: a line on what each does, its time and switch */
