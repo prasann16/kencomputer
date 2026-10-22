@@ -66,6 +66,27 @@ APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 IDLE_LIMIT = 45 * 60
 
 
+
+def friendly_error(e: Exception, brain: str) -> str:
+    """What to tell the person when a reply fails: plain words and what to do, never raw JSON."""
+    text = str(e)
+    try:
+        detail = json.loads(text[text.index("{"):])
+        text = detail.get("error", {}).get("message") or detail.get("message") or text
+    except (ValueError, AttributeError):
+        pass
+    low = text.lower()
+    if "model" in low and ("not supported" in low or "not found" in low or "does not exist" in low):
+        return f"{brain} can't use that model with your account. Pick another model at the top and send again."
+    if "usage limit" in low or "rate limit" in low or "429" in low:
+        return f"You've reached your {brain} plan's limit for now. Try again later, or switch to the other AI at the top."
+    if "401" in low or "unauthorized" in low or "authentication" in low or "invalid api key" in low:
+        return f"Ken's sign-in to {brain} has expired. Reconnect it in Settings → AI accounts."
+    if "overloaded" in low or "529" in low or "503" in low:
+        return f"{brain} is busy right now. Try again in a minute."
+    return f"Something went wrong: {text}"
+
+
 async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
     """Await the brain's work, raising TimeoutError once it has been silent for `limit` seconds."""
     task = asyncio.ensure_future(work)
@@ -1011,7 +1032,7 @@ class Engine:
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
-                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
+                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else friendly_error(e, self.backend(pid).capitalize())
                 self.log_message(pid, "ken", msg, error=True)
                 if listener is not None:
                     await listener(msg)

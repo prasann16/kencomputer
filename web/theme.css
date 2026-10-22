@@ -2,39 +2,39 @@
 :root {
   color-scheme: light;
   --bg: #fff;
-  --side: #fafaf9;
+  --side: #f6f5f3;
   --card: #fff;
-  --well: #f6f6f5;
-  --hover: #f0f0ef;
-  --selected: #ebebe9;
-  --line: #ececeb;
-  --line-strong: #dcdcdc;
-  --ink: #111;
-  --ink-2: #333;
-  --muted: #444;
-  --faint: #6b6b6b;
-  --disabled: #999;
-  --accent: #242424;
-  --accent-ink: #111;
-  --primary: #242424;
-  --primary-hover: #080808;
+  --well: #f3f2ef;
+  --hover: #efeeeb;
+  --selected: #eae9e6;
+  --line: #e9e8e5;
+  --line-strong: #e2e1dd;
+  --ink: #1c1b1a;
+  --ink-2: #3d3c3a;
+  --muted: #55544f;
+  --faint: #6e6d69;
+  --disabled: #a3a29d;
+  --accent: #1c1b1a;
+  --accent-ink: #1c1b1a;
+  --primary: #1c1b1a;
+  --primary-hover: #000;
   --primary-ink: #fff;
-  --track: #f0f0ef;
-  --focus: #777;
-  --scrollbar: #dedede;
-  --wave: #c3c3c3;
-  --switch: #d9d9d6;
-  --go: #419868;
+  --track: #efeeeb;
+  --focus: #6e6d69;
+  --scrollbar: #dcdbd7;
+  --wave: #c3c2be;
+  --switch: #d9d8d4;
+  --go: #2f7d4f;
   --go-soft: #edf5ef;
-  --go-ink: #31774b;
-  --ask-soft: #fff4e8;
-  --ask-ink: #875522;
+  --go-ink: #2f6b45;
+  --ask-soft: #fdf4ec;
+  --ask-ink: #6b3a12;
   --danger: #aa3528;
   --recording: #dc633d;
   --recording-soft: #fff0e9;
   --coffee: #b26b1f;
-  --scrim: #00000020;
-  --shadow: none;
+  --scrim: #1c1b1a26;
+  --shadow: 0 1px 2px #0000000a;
 }
 
 :root[data-theme='dark'] {
@@ -76,7 +76,7 @@
 
 /* Appearance stays available on every Settings tab, including first-run setup. */
 .appearance { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-.appearance label { font-size: 13px; font-weight: 500; }
+.appearance label, .appearance > span { font-size: 14px; font-weight: 500; }
 .appearance select { max-width: none; color: var(--ink-2); }
 .set-tabs { max-width: 100%; overflow-x: auto; flex-shrink: 0; }
 .appearance, .settings-foot { flex-shrink: 0; }

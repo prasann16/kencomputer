@@ -110,6 +110,11 @@ function doc(text) {
 // -------------------------------------------------------------------- icons
 
 const Icon = {
+  chat: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12Z"/></svg>`,
+  brain: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V6a3 3 0 0 0-3-3Z"/><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>`,
+  gear: html`<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>`,
+  sidebar: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`,
+  pencil: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
   sun: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
   plus: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   clip: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>`,
@@ -585,10 +590,14 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
   </select>`;
 }
 
-function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onProjectMenu }) {
-  return html`<header class="chat-header"><nav class="top-tabs" aria-label="Ken">${title
-      ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/"><img src="/ken.svg" alt=""/>Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep the selected computer awake" data-tip=${awake ? 'Coffee’s on — the selected computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onProjectMenu, onToggleSide }) {
+  return html`<header class="chat-header"><button class="side-toggle" aria-label="Show or hide the sidebar" data-tip="Sidebar" onClick=${onToggleSide}>${Icon.sidebar}</button>
+    <div class="ken-brand">${brain ? html`<span>Brain</span>` : title ? html`<i class="proj-dot" style=${{background:title.color}}></i><span>${title.name}</span>${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}` : html`<span>Chat</span>`}
+      ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}</div>
+    <div class="header-actions">${!brain && model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}
+      ${!brain && connected && awake !== null && html`<button class=${'hdr-btn coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep the selected computer awake" data-tip=${awake ? 'Coffee’s on — the selected computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}
+      ${!brain && connected && html`<button class="hdr-btn" disabled=${clearing} aria-label="New conversation" data-tip="New conversation. Ken keeps its memory and files." onClick=${onClear}>${Icon.pencil}</button>`}
+      <button class="hdr-btn" aria-label="Settings" data-tip="Settings" onClick=${onSettings}>${Icon.gear}</button></div></header>`;
 }
 
 // First run: the selected backend owns its sign-in flow.
@@ -833,7 +842,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
-    <div class="appearance"><label for="appearance">Appearance</label><select id="appearance" class="model-select" value=${appearance} onChange=${(e) => window.kenTheme.setPreference(e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
     ${update?.channel && html`<div class="appearance"><label for="update-channel">Updates on this Mac</label><select id="update-channel" class="model-select" value=${update.channel} onChange=${(e) => changeUpdateChannel(e.target.value)}><option value="stable">Stable</option><option value="beta">Beta · early releases</option></select></div>`}
     <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy'], ['computers', 'Computers']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
@@ -938,7 +947,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     </div>`);
   if (!a) return frame(null, html`<p class="np-help">${error || 'Loading…'}</p>`);
   const plain = (t) => t.replace(/[*_`#>]/g, '').trim();
-  const firstLine = a.context.split('\n').map(plain).find((l) => l && !/^You are \w+$/.test(l)) || 'Nothing yet';
+  const firstLine = a.context.split('\n').filter((l) => !/^\s*#/.test(l)).map(plain).find((l) => l && !/^You are\b/.test(l) && !/^\(.*\)$/.test(l)) || 'Nothing yet';
   const connected = conn ? { browser: conn.chrome, email: conn.emails.length > 0, calendar: conn.calendars.length > 0 } : {};
   const on = a.builtin.filter((t) => connected[t] && a.tools.use.includes(t)).map((t) => TOOL_NAMES[t]).concat(Object.keys(a.tools.mcp));
   const off = conn ? a.builtin.filter((t) => !connected[t]).map((t) => TOOL_NAMES[t]) : [];
@@ -947,23 +956,37 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     { key: 'soul', title: pid === 'home' ? 'Who Ken is' : 'Context', summary: firstLine, body: html`
         <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ kind: 'context', text: a.context })}>Edit</button></div>
         <div class="about-context">${a.context.trim() ? doc(a.context) : 'Nothing yet.'}</div>` },
-    { key: 'memory', title: 'Memory', summary: a.memory.length ? count(a.memory.length, 'note') : 'Nothing yet', body: html`
+    { key: 'memory', title: pid === 'home' ? 'What Ken remembers' : 'Memory', summary: a.memory.length ? count(a.memory.length, 'note') : 'Nothing yet', body: html`
         <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ kind: 'note', isNew: true, name: '', text: '' })}>New note</button></div>
         ${a.memory.length ? a.memory.map((n) => html`<button class="about-item" onClick=${() => openNote(n.name)}><b>${n.name.replace(/\.md$/, '')}</b><span>${n.about}</span></button>`) : html`<p class="np-note">No notes yet. Ken writes them as it learns about you.</p>`}` },
     pid !== 'home' && { key: 'tools', title: 'Tools', summary: [on.join(', ') || 'Nothing connected', off.length && off.join(', ') + ' not connected'].filter(Boolean).join(' · '), body: html`
         <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
-    { key: 'keys', title: 'Keys', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
-    jobs.length > 0 && { key: 'jobs', title: 'Jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
+    { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
+    jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
     a.files.length > 0 && { key: 'files', title: 'Files', summary: count(a.files.length, 'file'), body: a.files.slice(0, 30).map((f) => html`<button class="about-item" onClick=${() => onPreview({ ...f, project: pid })}><b>${f.name}</b><span>${bytes(f.size)}</span></button>`) },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
     ${open ? html`<div class="brain-section">${back(() => { setSection(null); load(); }, 'Brain')}<h2>${open.title}</h2>${open.body}</div>`
-      : html`<div class="brain-rows">${parts.map((p) => html`<button class="brain-row" onClick=${() => setSection(p.key)}><b>${p.title}</b><span>${p.summary}</span><i aria-hidden="true">›</i></button>`)}</div>`}
+      : html`${page && html`<h1>Brain</h1><p class="brain-intro">Everything Ken knows and does on its own. Ken keeps this up to date as you talk; you can change anything here.</p>`}
+        <div class="brain-cards">${parts.map((p) => html`<button class="brain-card" onClick=${() => setSection(p.key)}><b>${p.title}</b><span>${p.summary}</span><i aria-hidden="true">Open ›</i></button>`)}</div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     ${!page && html`<div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Done</button></div>`}`);
 }
 
+
+// Chat, Brain, any agents and Settings. Closed until you open it with the button at the top left.
+function Sidebar({ brain, pid, agents, onSettings }) {
+  const item = (href, sel, icon, label) => html`<a class=${'side-item' + (sel ? ' sel' : '')} href=${href} aria-current=${sel ? 'page' : null}>${icon}<span class="side-name">${label}</span></a>`;
+  return html`<nav class="side" aria-label="Ken">
+    <div class="side-top"></div>
+    <div class="side-brand"><img src="/ken.svg" alt=""/><span>Ken</span></div>
+    ${item('#/', pid === 'home' && !brain, Icon.chat, 'Chat')}
+    ${item('#/brain', brain, Icon.brain, 'Brain')}
+    ${agents.length > 0 && html`<div class="side-label">Agents</div>${agents.map((a) => item('#/p/' + a.id, pid === a.id && !brain, html`<i class="proj-dot" style=${{ background: a.color }}></i>`, a.name))}`}
+    <button class="side-item side-connections" onClick=${onSettings}>${Icon.gear}<span class="side-name">Settings</span></button>
+  </nav>`;
+}
 
 function RemoveProject({ project, onClose, onDone }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -1029,6 +1052,8 @@ function App() {
   const [newProject,setNewProject]=useState(false);
   const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
   const [connections,setConnections]=useState(false);
+  const [sideOpen,setSideOpen]=useState(()=>{try{return localStorage.getItem('ken-sidebar')==='1';}catch{return false;}}); // closed until you open it
+  const toggleSide=()=>setSideOpen((o)=>{try{localStorage.setItem('ken-sidebar',o?'0':'1');}catch{}return !o;});
   const [projectMeta,setProjectMeta]=useState(null);
   const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/agents/${id}`).then((v)=>setProjectMeta(v.agent)).catch(()=>setProjectMeta(null)); };
   const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
@@ -1258,7 +1283,7 @@ function App() {
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
+  return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} brain=${route.brain} pid=${pid} agents=${chats.filter((c) => c.id !== 'home')} onSettings=${()=>setConnections(true)}/>`}<main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onToggleSide=${toggleSide} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
     <${ComputerBar} Modal=${Modal} online=${online}/>
     ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => changeRuntime({ backend })} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or Codex above. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
