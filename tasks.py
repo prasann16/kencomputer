@@ -444,6 +444,7 @@ run appropriate checks without changing it or repeating external actions; report
 """
 
     async def _notifications(self):
+        backoff = 3
         while True:
             await self.wake.wait()
             self.wake.clear()
@@ -458,10 +459,13 @@ run appropriate checks without changing it or repeating external actions; report
             ok = await self.engine.send_message('home', '', log_user=False, task_notice=True,
                 prompt='(Background task updates arrived. Use the fresh task snapshot. Relay questions or meaningful results in the main chat; launch review for unverified work. Do not wait on workers. Do not claim success without verification.)')
             if ok:
+                backoff = 3
                 for tid, rev, state in pending:
                     self.db.execute('UPDATE tasks SET notice=0 WHERE id=? AND revision=? AND state=?', (tid, rev, state))
             else:
-                await asyncio.sleep(3)
+                # A failed turn (e.g. the brain's usage limit) keeps failing; back off instead of hammering it.
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 600)
                 self.wake.set()
 
     def request_key(self, title, objective):
