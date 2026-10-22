@@ -5,10 +5,54 @@ name: Release Mac app
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:  # the weekly update starts it this way, on the tag it made
+  workflow_dispatch:  # weekly and manual beta preparation dispatch the version tag
+    inputs:
+      publish_beta:
+        description: "Publish a beta prerelease after the build and Mac update checks pass"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: macos-15
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PUBLISH_BETA: ${{ inputs.publish_beta || false }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Validate the release tag
+        run: |
+          [[ "$GITHUB_REF" = refs/tags/* ]] || { echo "::error::Run this workflow on a version tag"; exit 1; }
+          channel="$(python3 desktop/release_version.py classify "$GITHUB_REF_NAME")"
+          [ "$PUBLISH_BETA" != true ] || [ "$channel" = beta ] || { echo "::error::Automatic publishing is only available for beta tags"; exit 1; }
+          if draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            [ "$draft" = true ] || { echo "::error::$GITHUB_REF_NAME is already published; use a new version"; exit 1; }
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - if: steps.version.outputs.channel == 'beta'
+        name: Verify beta source and tests
+        timeout-minutes: 15
+        run: |
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::Betas must be built from merged main commits"; exit 1; }
+          python3 desktop/release_version.py beta "$GITHUB_REF_NAME"
+          bash .github/scripts/wait-for-main-tests.sh "$(git rev-parse HEAD)"
+
   engine:
+    needs: validate
     # The Python engine is native code, so each arch builds on its own kind of Mac.
     strategy:
       matrix:
@@ -33,7 +77,7 @@ jobs:
           path: engine-${{ matrix.arch }}.tgz
 
   app:
-    needs: engine
+    needs: [validate, engine]
     runs-on: macos-15
     permissions:
       contents: write
@@ -54,10 +98,13 @@ jobs:
           desktop/fetch_ffmpeg.sh
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
           # Create the draft first: both arches finish together and would otherwise each make one.
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --notes "Ken for Mac ${GITHUB_REF_NAME#v}"
+          release_flags=(--draft)
+          [ "$UPDATE_CHANNEL" != beta ] || release_flags+=(--prerelease)
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" "${release_flags[@]}" --title "${GITHUB_REF_NAME#v}" --notes "Ken for Mac ${GITHUB_REF_NAME#v}"
           echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
-          npx electron-builder --mac --arm64 --x64 --publish always
+          npx electron-builder --mac --arm64 --x64 --publish always -c.publish.channel="$UPDATE_CHANNEL"
         env:
+          UPDATE_CHANNEL: ${{ needs.validate.outputs.channel == 'beta' && 'beta' || 'latest' }}
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
@@ -134,3 +181,17 @@ jobs:
           echo "===== app log"; cat ~/app.log; echo "===== app log, broken update"; cat ~/app2.log
           for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
           echo "===== installer logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
+
+  publish-beta:
+    needs: [validate, m1]
+    if: inputs.publish_beta && needs.validate.outputs.channel == 'beta'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish to the beta channel
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          echo "Published beta: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"

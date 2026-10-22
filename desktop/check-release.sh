@@ -6,6 +6,7 @@
 # throwaway home and sends a real chat message and a real (spoken) voice note.
 set -uo pipefail
 TAG="${1:?usage: desktop/check-release.sh vX.Y.Z [--publish]}"
+CHANNEL="$(python3 "$(dirname "$0")/release_version.py" classify "$TAG")" || exit 1
 REPO=prasann16/kencomputer
 PORT=7799
 WORK="$(mktemp -d)"
@@ -76,7 +77,11 @@ if [ "$FAILED" = 1 ]; then
 fi
 echo; echo "All checks passed."
 if [ "${2:-}" = --publish ]; then
-  gh release edit "$TAG" -R "$REPO" --draft=false --latest >/dev/null && echo "Published $TAG."
+  if [ "$CHANNEL" = beta ]; then
+    gh release edit "$TAG" -R "$REPO" --draft=false --prerelease --latest=false >/dev/null && echo "Published beta $TAG."
+  else
+    gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest >/dev/null && echo "Published $TAG."
+  fi
 else
   echo "Publish with: desktop/check-release.sh $TAG --publish"
 fi

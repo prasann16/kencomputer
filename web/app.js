@@ -800,7 +800,14 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
     return () => window.removeEventListener('ken-theme-change', changed);
   }, []);
   const [error, setError] = useState(''), [reconnect, setReconnect] = useState(''), [update, setUpdate] = useState(null);
-  useEffect(() => { window.kenDesktop?.updateStatus?.().then(setUpdate).catch(() => {}); return window.kenDesktop?.onUpdateState?.((s) => { if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version })); }); }, []);
+  useEffect(() => { window.kenDesktop?.updateStatus?.().then(setUpdate).catch(() => {}); return window.kenDesktop?.onUpdateState?.((s) => {
+    if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version }));
+    if (s.state === 'channel') setUpdate((u) => ({ ...u, channel: s.channel, ready: null }));
+  }); }, []);
+  const changeUpdateChannel = async (channel) => {
+    try { await window.kenDesktop.setUpdateChannel(channel); setUpdate((u) => ({ ...u, channel, ready: null })); toast(channel === 'beta' ? 'Beta updates enabled.' : 'Stable updates enabled. Ken will wait for a newer stable release.'); }
+    catch (e) { toast(e.message); }
+  };
   const [jobs, setJobs] = useState([]), [tab, setTab] = useState('computers');
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
@@ -813,6 +820,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="appearance"><label for="appearance">Appearance</label><select id="appearance" value=${appearance} onChange=${(e) => window.kenTheme.setPreference(e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+    ${update?.channel && html`<div class="appearance"><label for="update-channel">Updates on this Mac</label><select id="update-channel" value=${update.channel} onChange=${(e) => changeUpdateChannel(e.target.value)}><option value="stable">Stable</option><option value="beta">Beta · early releases</option></select></div>`}
     <div class="set-tabs" role="tablist">${[['computers', 'Computers'], ['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
@@ -1033,6 +1041,7 @@ function App() {
     native.updateFailed?.().then((s)=>{if(s)setUpdateFailed(s);}).catch(()=>{});
     native.updateStatus?.().then((s)=>{if(s?.ready)setUpdateReady(s.ready);}).catch(()=>{});
     return native.onUpdateState((s)=>{
+      if(s.state==='channel'){setUpdateReady(null);setUpdateFailed(null);}
       if(s.state==='failed'){setUpdateFailed(s);setUpdateReady(null);}
       if(s.state==='ready')setUpdateReady(s.version);
       if(s.state==='none')toast(`You’re up to date (${s.version}).`);

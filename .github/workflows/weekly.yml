@@ -74,7 +74,7 @@ jobs:
       github.event.pull_request.head.ref == 'automation/weekly-update' &&
       github.event.pull_request.user.login == 'github-actions[bot]'
     runs-on: macos-15
-    concurrency: weekly-dependency-release
+    concurrency: release-preparation
     permissions:
       contents: write
       actions: write
@@ -90,23 +90,12 @@ jobs:
           fetch-depth: 0
       - name: Wait for merged main checks
         timeout-minutes: 15
-        run: |
-          run=""
-          for attempt in $(seq 1 12); do
-            run="$(gh run list --workflow test.yml --event push --commit "$MERGED_SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
-            [ -n "$run" ] && break
-            sleep 10
-          done
-          [ -n "$run" ] || { echo "::error::No Test run found for the merged commit"; exit 1; }
-          gh run watch "$run" --exit-status --interval 10
+        run: bash .github/scripts/wait-for-main-tests.sh "$MERGED_SHA"
       - name: Tag the tested merge and start the release build
         run: |
           # Reuse this commit's tag on a retry. Never push main or tag an unmerged update.
-          tag="$(git tag --points-at HEAD -l 'v[0-9]*' --sort=-v:refname | sed -n '1p')"
-          if [ -z "$tag" ]; then
-            last="$(git tag -l 'v[0-9]*' --sort=-v:refname | sed -n '1p')"
-            [[ "$last" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::No stable version tag found"; exit 1; }
-            tag="${last%.*}.$(( ${last##*.} + 1 ))"
+          tag="$(python3 desktop/release_version.py stable)"
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" -m "Ken for Mac ${tag#v}"
