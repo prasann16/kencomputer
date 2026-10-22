@@ -963,7 +963,6 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
         <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
     { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
     jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
-    a.files.length > 0 && { key: 'files', title: 'Files', summary: count(a.files.length, 'file'), body: a.files.slice(0, 30).map((f) => html`<button class="about-item" onClick=${() => onPreview({ ...f, project: pid })}><b>${f.name}</b><span>${bytes(f.size)}</span></button>`) },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
