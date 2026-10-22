@@ -91,38 +91,55 @@ test('release self-update checks use the local latest feed even in a beta build'
   assert.equal(updater.allowDowngrade, false);
 });
 
-// Run the real main-process quit hooks with isolated OS/Electron adapters. In particular,
-// its in-progress guard must allow the install reserved by before-quit to continue.
-test('quitting installs a ready update only after the engine is idle and stopped', async () => {
+// Run the real main process with isolated OS/Electron adapters.
+function mainProcess({ busy = false, version = '0.1.22', saved = '' } = {}) {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
   const source = fs.readFileSync(path.join(__dirname, '../desktop/main.cjs'), 'utf8');
+  const calls = [], files = new Map(), app = new EventEmitter(), updater = new EventEmitter();
+  Object.assign(app, {
+    setName() {}, setPath() {}, getVersion: () => version, isPackaged: true,
+    requestSingleInstanceLock: () => true, whenReady: () => new Promise(() => {}),
+    exit: () => calls.push('exit'),
+  });
+  updater.checkForUpdates = async () => null;
+  updater.quitAndInstall = () => calls.push('install');
+  const electron = { app, ipcMain: {}, nativeTheme: {}, Menu: { buildFromTemplate: (t) => t, setApplicationMenu() {} } };
+  const adapters = {
+    electron, 'electron-updater': { autoUpdater: updater },
+    'node:fs': {
+      existsSync: () => false, mkdirSync() {},
+      readFileSync(name) { if (path.basename(name) === 'update-channel') return saved; throw Error('Not found'); },
+      writeFileSync: (name, content) => files.set(path.basename(name), content),
+    },
+    'node:child_process': {
+      execFile: (_cmd, _args, _options, done) => { calls.push('stop'); done(); },
+      spawn: () => ({ unref() {} }),
+    },
+    './updates.cjs': require('../desktop/updates.cjs'),
+    './microphone.cjs': {}, './security.cjs': {},
+  };
+  vm.runInNewContext(source + '\nwin = fixtureWindow; checkForUpdates();', {
+    require: (name) => adapters[name] || require(name),
+    process: { env: {}, execPath: '/Applications/Ken.app/Contents/MacOS/Ken', platform: 'darwin', getuid: () => 501 },
+    __dirname: path.join(__dirname, '../desktop'), console, AbortSignal,
+    setInterval() {}, fetch: async () => ({ json: async () => ({ busy }) }),
+    fixtureWindow: { isVisible: () => true, isDestroyed: () => false, webContents: { send() {} } },
+  });
+  return { app, updater, calls, files };
+}
+
+test('installing a beta preserves its channel when a later update is stable', () => {
+  const beta = mainProcess({ version: '0.1.22-beta.1' });
+  assert.equal(beta.files.get('update-channel'), 'beta');
+  assert.equal(mainProcess({ saved: beta.files.get('update-channel') }).updater.channel, 'beta');
+  const optedOut = mainProcess({ version: '0.1.22-beta.1', saved: 'stable' });
+  assert.equal(optedOut.updater.channel, 'latest');
+  assert.equal(optedOut.files.has('update-channel'), false);
+});
+
+test('quitting installs a ready update only after the engine is idle and stopped', async () => {
   for (const busy of [false, true]) {
-    const calls = [], app = new EventEmitter(), updater = new EventEmitter();
-    Object.assign(app, {
-      setName() {}, setPath() {}, getVersion: () => '0.1.22', isPackaged: true,
-      requestSingleInstanceLock: () => true, whenReady: () => new Promise(() => {}),
-      exit: () => calls.push('exit'),
-    });
-    updater.checkForUpdates = async () => null;
-    updater.quitAndInstall = () => calls.push('install');
-    const electron = { app, ipcMain: {}, nativeTheme: {}, Menu: { buildFromTemplate: (t) => t, setApplicationMenu() {} } };
-    const adapters = {
-      electron, 'electron-updater': { autoUpdater: updater },
-      'node:fs': { existsSync: () => false, readFileSync() { throw Error('Not found'); }, writeFileSync() {} },
-      'node:child_process': {
-        execFile: (_cmd, _args, _options, done) => { calls.push('stop'); done(); },
-        spawn: () => ({ unref() {} }),
-      },
-      './updates.cjs': require('../desktop/updates.cjs'),
-      './microphone.cjs': {}, './security.cjs': {},
-    };
-    vm.runInNewContext(source + '\nwin = fixtureWindow; checkForUpdates();', {
-      require: (name) => adapters[name] || require(name),
-      process: { env: {}, execPath: '/Applications/Ken.app/Contents/MacOS/Ken', platform: 'darwin', getuid: () => 501 },
-      __dirname: path.join(__dirname, '../desktop'), console, AbortSignal,
-      setInterval() {}, fetch: async () => ({ json: async () => ({ busy }) }),
-      fixtureWindow: { isVisible: () => true, isDestroyed: () => false, webContents: { send() {} } },
-    });
+    const { app, updater, calls } = mainProcess({ busy });
     assert.equal(updater.autoInstallOnAppQuit, false);
     updater.emit('update-downloaded', { version: '0.1.23' });
     let prevented = false;
