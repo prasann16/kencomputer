@@ -49,6 +49,10 @@ No plugin system, no marketplace: if a service has a CLI, an API, or an MCP serv
 use it — recipes just mean it doesn't have to figure out the fiddly sign-in dance twice.
 Wrote one? PRs welcome.
 
+Separately, Ken ships with a small curated set of [Claude Code Skills](skills/) — Claude's
+own playbook format for *how it works*, not which service it talks to. These load
+automatically, with nothing to connect.
+
 ## Desktop app
 
 Ken now has a desktop prototype with Today, conversations, projects, a connection to your signed-in Chrome, file previews, local voice input, and scheduled briefs. It uses the existing engine and local memory; Telegram is optional. See [desktop setup, builds, and current limitations](desktop/README.md).

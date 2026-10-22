@@ -153,6 +153,11 @@ def test_ken_ignores_this_computers_own_claude_code_setup():
     o = seen['options']
     assert o.setting_sources == [] and o.strict_mcp_config and o.max_buffer_size >= 32 * 1024 * 1024
     assert o.stderr is not None
+    # The bundled skills (skills/README.md) still load, by path, independent of setting_sources.
+    import os
+    from brains import SKILLS_PLUGIN_DIR
+    assert o.skills == "all" and o.plugins == [{"type": "local", "path": SKILLS_PLUGIN_DIR}]
+    assert os.path.isdir(os.path.join(SKILLS_PLUGIN_DIR, "skills", "mcp-builder"))
 
 
 async def test_checkpoint_session_before_completion_and_error_results_fail():

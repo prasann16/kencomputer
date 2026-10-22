@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from pathlib import Path
 from typing import Awaitable, Callable
 
 log = logging.getLogger("ken")
@@ -18,6 +19,9 @@ log = logging.getLogger("ken")
 # version X or newer is required"). Ken retries on the default model instead of showing it.
 NEEDS_NEWER_CLI = "does not support this model"
 TOO_NEW = object()
+# A local plugin whose root holds a skills/ folder: Claude Code picks up every skill in
+# it with no per-skill registration. See skills/README.md for what's bundled and why.
+SKILLS_PLUGIN_DIR = str(Path(__file__).resolve().parent)
 
 OnText = Callable[[str], Awaitable[None]]
 OnTool = Callable[[str], Awaitable[None]]
@@ -119,11 +123,16 @@ class ClaudeSession(Session):
             max_buffer_size=64 * 1024 * 1024,
             stderr=self.stderr.append,
             # Ken is the same on every computer: none of this Mac's own Claude Code settings,
-            # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
+            # plugins, CLAUDE.md or MCP servers — except the one local plugin Ken ships its
+            # own skills in, loaded by path regardless of setting_sources. "all" just means
+            # every skill found there; there's nowhere else left for a skill to come from.
             setting_sources=[],
+            plugins=[{"type": "local", "path": SKILLS_PLUGIN_DIR}],
+            skills="all",
             strict_mcp_config=True,
             # Main Ken only manages work and its own notes. Execution tools live
-            # in independent worker sessions, so a long command cannot hold chat.
+            # in independent worker sessions, so a long command cannot hold chat — the
+            # Skill tool stays out of that short list, same as Bash does.
             tools=["Read", "Glob", "Grep", "Write", "Edit"] if self.supervisor else None,
             max_turns=12 if self.supervisor else None,
         )

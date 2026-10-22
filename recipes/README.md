@@ -15,6 +15,7 @@ worked.
 | Recipe | What it connects |
 | --- | --- |
 | [email.md](email.md) | Any IMAP mailbox — Gmail, Fastmail, iCloud, work accounts |
+| [heygen-video.md](heygen-video.md) | HeyGen's avatar API — script in, a talking-avatar video out |
 
 ## Credentials
 
