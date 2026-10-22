@@ -78,7 +78,8 @@ class Onboarding:
         return self.pid is not None and not self.exited and time.time() - self.started < 1800
 
     def status(self) -> dict:
-        return {"claude": self.connected(), "phone": self.phone_step(), "voice": self.voice_status()}
+        return {"claude": self.connected(), "connected": self.connected(), "backend": "claude",
+                "phone": self.phone_step(), "voice": self.voice_status()}
 
     # The second fixed step: Ken on your phone, which they can skip. "unset" until done or skipped.
     def _setup(self) -> dict:
@@ -213,3 +214,121 @@ class Onboarding:
             except OSError:
                 pass
         self.pid = self.fd = None
+
+
+class CodexOnboarding(Onboarding):
+    """Use Codex's account API; tokens stay in Codex's own credential store."""
+
+    def __init__(self, home, on_connected, voice_ready):
+        self._connected = False
+        super().__init__(home, lambda: self._connected, on_connected, voice_ready)
+        self.client = self.login = None
+        self.error = ""
+
+    @property
+    def active(self):
+        return self.watch is not None and not self.watch.done()
+
+    def status(self):
+        return {"connected": self._connected, "backend": "codex", "phone": self.phone_step(),
+                "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
+
+    async def refresh(self):
+        from codex_brain import codex_client
+
+        try:
+            async with codex_client() as client:
+                account = await client.account()
+                self._connected = bool(os.environ.get("OPENAI_API_KEY") or account.account or not account.requires_openai_auth)
+            self.error = ""
+        except Exception as exc:
+            self._connected = False
+            self.error = f"Could not connect to Codex: {exc}"
+            log.warning("Codex account check failed: %s", exc)
+
+    async def start(self):
+        from codex_brain import codex_client
+
+        self.stop()
+        await self.refresh()
+        if self._connected:
+            await self.on_connected()
+            return self.status()
+        self.client = codex_client()
+        try:
+            self.login = await self.client.login_chatgpt()
+        except BaseException:
+            await self.client.close()
+            self.client = None
+            raise
+        self.error = ""
+        self.watch = asyncio.create_task(self._watch_login(self.client, self.login))
+        return {"url": self.login.auth_url, "backend": "codex"}
+
+    async def _watch_login(self, client, login):
+        try:
+            result = await login.wait()
+            if not result.success:
+                raise RuntimeError(result.error or "Codex sign-in failed. Try again.")
+            self._connected = True
+            await self.on_connected()
+        except asyncio.CancelledError:
+            try:
+                await login.cancel()
+            except Exception:
+                pass
+            raise
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            await client.close()
+
+    async def submit(self, code):
+        raise RuntimeError("Complete Codex sign-in in your browser; no code needs to be pasted here.")
+
+    def stop(self):
+        if self.watch and not self.watch.done():
+            self.watch.cancel()
+        self.watch = None
+
+
+class BrainOnboarding:
+    """Both accounts stay connected; each chat chooses its own runtime."""
+
+    def __init__(self, providers, backend):
+        self.providers, self.backend = providers, backend
+
+    def provider(self, backend):
+        try:
+            return self.providers[self.backend() if backend is None else backend]
+        except (KeyError, TypeError):
+            raise ValueError("Choose Claude or Codex.") from None
+
+    @property
+    def active(self):
+        return any(p.active for p in self.providers.values())
+
+    def status(self):
+        providers = {name: p.status() for name, p in self.providers.items()}
+        return {"providers": providers, "backend": self.backend(),
+                "connected": any(p["connected"] for p in providers.values()),
+                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status()}
+
+    def phone_step(self):
+        return self.providers["claude"].phone_step()
+
+    def skip_phone(self):
+        self.providers["claude"].skip_phone()
+        return self.status()
+
+    async def start(self, backend=None):
+        result = await self.provider(backend).start()
+        return {**result, **self.status()}
+
+    async def submit(self, code, backend=None):
+        await self.provider(backend).submit(code)
+        return self.status()
+
+    def stop(self):
+        for provider in self.providers.values():
+            provider.stop()

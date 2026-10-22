@@ -1,13 +1,18 @@
 """Ken — a personal AI assistant with its own computer.
 
-Thin harness: Telegram message (text or voice) -> Claude Code headless -> reply.
-The brain is Claude Code; the memory is SOUL.md in the workspace; this file
+Thin harness: Telegram message (text or voice) -> agent runtime -> reply.
+The brain is Claude Code or Codex; the memory is SOUL.md in the workspace; this file
 is just plumbing. https://kencomputer.dev
 """
 
 from __future__ import annotations
 
 import sys
+
+if "--ken-mcp" in sys.argv[1:]:
+    from ken_mcp import main as mcp_main
+    mcp_main()
+    raise SystemExit(0)
 
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
@@ -31,11 +36,13 @@ from dotenv import load_dotenv
 import crash
 
 from brains import ClaudeBrain
+from codex_brain import CodexBrain
 from engine import HOME, Engine, first_contact_prompt
 from web import WebApp
 from connections import Connections
-from onboarding import Onboarding, drop_env, save_env
-from voice import captions, ready as voice_ready, transcribe, warmup as warmup_voice
+from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
+from ken_mcp import external_server, media_server
+from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, InvalidToken
@@ -56,7 +63,6 @@ WORKSPACE = Path(os.environ.get("WORKSPACE", str(KEN_HOME / "work")))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT_SECONDS", "1800"))
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
-DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "")
 
 TELEGRAM_MAX = 4000
 
@@ -65,8 +71,6 @@ log = logging.getLogger("ken")
 # httpx logs every request URL, and Telegram's URLs contain the bot token.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-MODEL_CHOICE = KEN_HOME / "model"  # the model picked in the app or Telegram; survives restarts
-current_model = (MODEL_CHOICE.read_text().strip() if MODEL_CHOICE.exists() else "") or DEFAULT_MODEL
 KEN_HOME.mkdir(parents=True, exist_ok=True)
 def browser_mcp() -> dict:
     """The user's own Chrome, through Google's Chrome DevTools MCP server.
@@ -88,21 +92,11 @@ def browser_mcp() -> dict:
     return {}
 
 
-def media_mcp() -> dict:
+def media_mcp(backend="claude") -> dict:
     """`transcribe_media`: a timed transcript and subtitles for a video or podcast, on this computer."""
     if not voice_available():
         return {}
-    from claude_agent_sdk import create_sdk_mcp_server, tool
-
-    async def run(args):
-        try:
-            return {"content": [{"type": "text", "text": await asyncio.to_thread(captions, str(args["path"]))}]}
-        except Exception as exc:
-            return {"content": [{"type": "text", "text": f"Failed: {exc}"}], "is_error": True}
-    return {"media": create_sdk_mcp_server("media", tools=[tool(
-        "transcribe_media", "Transcribe a video or audio file on this computer: returns the transcript with "
-        "timestamps and saves subtitles (.srt) next to the file. Takes a few minutes per hour of audio.",
-        {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]})(run)])}
+    return {"media": external_server("media", KEN_HOME) if backend == "codex" else media_server()}
 
 
 def video_prompt() -> str:
@@ -129,12 +123,24 @@ BROWSER_PROMPT = (
 )
 
 # Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.
-CONNECTIONS = Connections(KEN_HOME, on_change=lambda: claude_connected())
-ENGINE = Engine(KEN_HOME, ClaudeBrain(lambda: active_model(), mcp_factory=lambda: {**browser_mcp(), **media_mcp(), **CONNECTIONS.mcp()}))
+CONNECTIONS = Connections(KEN_HOME, on_change=lambda: brain_connected())
+BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
+          "codex": CodexBrain(lambda: active_model("codex"))}
+ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
+# Migrate the old process-wide setting once; saved in-app choices win afterwards.
+if not ENGINE.kv_get("backend-migrated"):
+    initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
+    if initial_backend not in BRAINS:
+        initial_backend = "claude"
+    for pid in [HOME, *[p["id"] for p in ENGINE.list_agents()]]:
+        if not ENGINE.kv_get(f"backend:{pid}"):
+            ENGINE.kv_set(f"backend:{pid}", initial_backend)
+    ENGINE.kv_set("backend-migrated", "1")
 
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
-MODELS_FILE = KEN_HOME / "available-models.txt"
+def models_file(backend):
+    return KEN_HOME / ("available-models-codex.txt" if backend == "codex" else "available-models.txt")
 MODEL_REQUEST = KEN_HOME / "model-request"
 HISTORY_DIR = KEN_HOME / "history"
 SESSIONS_FILE = KEN_HOME / ".sessions.json"
@@ -276,7 +282,8 @@ SYSTEM_PROMPT = (
     "two tabs at the top: Chat (this conversation; Clear starts a fresh thread, memory and files stay) "
     "and Brain (who you are, your memory notes, Tools: Chrome, email and calendar connected right there "
     "plus any tool you add, Keys, Jobs and files, all of it viewable and editable). Settings, at the top "
-    "right, has Claude (the account you run on), Phone and Jobs. Ken on your phone is their own Telegram "
+    "right, has AI accounts (connect Claude, Codex, or both), Phone and Jobs. Each chat's brain picker "
+    "chooses Claude or Codex without a restart. Ken on your phone is their own Telegram "
     "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
     "app, not a separate assistant. The header line of each message says where they wrote from. On their "
     "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
@@ -290,7 +297,7 @@ SYSTEM_PROMPT = (
     "installs say you are only a Telegram bot, or carry a 'Your body' section), these instructions are the "
     "truth; leave app mechanics out of SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
-    f"If the human asks to change which Claude model you run on: read {MODELS_FILE} "
+    "If the human asks to change which model you run on: read {available_models_path} "
     f"for what's available, write the chosen model id as the only line of {MODEL_REQUEST}, "
     "and confirm — the switch applies from the next task. "
     "YOUR MEMORY SYSTEM, three layers — all of it already exists and is written for you, "
@@ -483,7 +490,7 @@ def build_system() -> str:
 
     Injected by the harness (not auto-loaded by the engine) so any future
     engine cartridge gets the same soul the same way."""
-    system = SYSTEM_PROMPT
+    system = SYSTEM_PROMPT.replace("{available_models_path}", str(models_file(ENGINE.backend(HOME))))
     try:
         soul = (WORKSPACE / "SOUL.md").read_text()
         system += "\n\n=== SOUL.md — your soul file, current contents ===\n" + soul + "\n=== end SOUL.md ==="
@@ -1072,18 +1079,23 @@ def voice_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
-async def claude_connected() -> None:
+async def brain_connected(backend=None) -> None:
     """Sessions opened before sign-in had no credentials; the next message reopens them."""
     for pid in list(ENGINE.chats):
+        if ENGINE.chat_busy(pid) or (backend and ENGINE.backend(pid) != backend):
+            if not backend or ENGINE.backend(pid) == backend:
+                ENGINE.chat_tools.pop(pid, None)
+            continue
         session = ENGINE.chats.pop(pid, None)
         if session is not None:
             await session.close()
-    await refresh_models_file()
+    await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
 async def start_engine() -> None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.tools = lambda only: {**(browser_mcp() if "browser" in only else {}), **media_mcp(), **CONNECTIONS.mcp(only)}
+    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
+    ENGINE.model_choices = model_choices
     ENGINE.tools_prompt = lambda only: "\n\n".join(
         x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
@@ -1104,7 +1116,13 @@ async def start_engine() -> None:
     refresh_default_jobs()
     if os.environ.get("KEN_WEB", "1") == "0":
         return
-    setup = Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()), claude_connected, voice_ready)
+    codex_setup = CodexOnboarding(KEN_HOME, lambda: brain_connected("codex"), voice_ready)
+    await codex_setup.refresh()
+    setup = BrainOnboarding({
+        "claude": Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()),
+                             lambda: brain_connected("claude"), voice_ready),
+        "codex": codex_setup,
+    }, lambda: ENGINE.backend(HOME))
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
@@ -1164,10 +1182,16 @@ async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         pass
 
 
-async def refresh_models_file(app=None) -> None:
-    """Fetch the live model list with Claude Code's own auth; leave it on disk
+async def refresh_models_file(app=None, *, backend="claude") -> None:
+    """Fetch the selected backend's model list; leave it on disk
     for the assistant to read when asked about switching."""
     try:
+        if backend == "codex":
+            from codex_brain import codex_client
+            async with codex_client() as client:
+                result = await client.models()
+            models_file(backend).write_text("\n".join(m.model for m in result.data) + "\n")
+            return
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         token = "" if api_key else await asyncio.to_thread(get_oauth_token)
         if not api_key and not token:
@@ -1189,10 +1213,18 @@ async def refresh_models_file(app=None) -> None:
             )
             r.raise_for_status()
             models = [m["id"] for m in r.json()["data"]]
-        MODELS_FILE.write_text("\n".join(models) + "\n")
+        models_file(backend).write_text("\n".join(models) + "\n")
         log.info("refreshed model list (%d models)", len(models))
     except Exception as e:
         log.warning("model list refresh failed: %s", e)
+        if backend == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
+            try:
+                from brains import claude_models
+                models = await claude_models()
+                if models:
+                    models_file(backend).write_text("\n".join(models) + "\n")
+            except Exception as exc:
+                log.warning("Claude runtime model discovery failed: %s", exc)
 
 
 # Commands shared by Telegram and the desktop chat: plain functions that return
@@ -1254,39 +1286,51 @@ def decaf() -> str:
     return "🫖 Decaf — normal sleep is back."
 
 
-def set_model(name: str) -> None:
-    global current_model
-    current_model = name
-    MODEL_CHOICE.write_text(name + "\n")
+def set_model(name: str, backend=None) -> None:
+    backend = backend or ENGINE.backend(HOME)
+    (KEN_HOME / ("model-codex" if backend == "codex" else "model")).write_text(name + "\n")
+    ENGINE.broadcast("chat.runtime", HOME, backend=backend)
     crash.track("model_changed", model=name)
 
 
-def active_model() -> str:
+def active_model(backend=None) -> str:
     """The chosen model, else the newest Opus the account offers (the list is newest first)."""
-    return current_model or next((m for m in available_models() if "opus" in m), "")
-
-
-def available_models() -> list[str]:
+    backend = backend or ENGINE.backend(HOME)
     try:
-        return [m.strip() for m in MODELS_FILE.read_text().splitlines() if m.strip()]
+        chosen = (KEN_HOME / ("model-codex" if backend == "codex" else "model")).read_text().strip()
+    except OSError:
+        chosen = ""
+    return chosen or os.environ.get("CODEX_MODEL" if backend == "codex" else "CLAUDE_MODEL", "") or (
+        "" if backend == "codex" else next((m for m in available_models(backend) if "opus" in m), ""))
+
+
+def available_models(backend=None) -> list[str]:
+    try:
+        return [m.strip() for m in models_file(backend or ENGINE.backend(HOME)).read_text().splitlines() if m.strip()]
     except Exception:
         return []
 
 
-async def model(arg: str = "") -> dict:
-    """Like Claude Code's /model: no argument lists choices, `/model opus` switches."""
+async def model_choices(backend):
     # The list comes from the account's own /v1/models; refresh it daily as models change.
-    stale = not MODELS_FILE.exists() or time.time() - MODELS_FILE.stat().st_mtime > 86400
-    if stale or not available_models():
-        await refresh_models_file()
-    models = available_models()
+    path = models_file(backend)
+    stale = not path.exists() or time.time() - path.stat().st_mtime > 86400
+    if stale or not available_models(backend):
+        await refresh_models_file(backend=backend)
+    return available_models(backend)
+
+
+async def model(arg: str = "") -> dict:
+    """No argument lists the home chat's models; `/model opus` switches."""
+    backend = ENGINE.backend(HOME)
+    models = await model_choices(backend)
     want = arg.strip().lower()
     if not want:
-        return {"reply": f"Model — current: {active_model() or 'default'}", "choices": models, "current": active_model()}
+        return {"reply": f"Model — current: {active_model(backend) or 'default'}", "choices": models, "current": active_model(backend)}
     match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
     if not match:
         return {"reply": f"No model matching “{want}”."}
-    set_model(match)
+    set_model(match, backend)
     return {"reply": f"✓ {match} — from the next task."}
 
 
@@ -1306,7 +1350,8 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     result = await model(" ".join(context.args or []))
     keyboard = [
-        [InlineKeyboardButton(("👉 " if m == active_model() else "") + m, callback_data=f"model:{m}")]
+        [InlineKeyboardButton(("👉 " if m == active_model() else "") + m,
+                              callback_data=f"model:{ENGINE.backend(HOME)}:{m}")]
         for m in result.get("choices", [])
     ]
     await update.effective_message.reply_text(
@@ -1318,10 +1363,15 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     q = update.callback_query
     if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
         return
-    set_model(q.data.split(":", 1)[1])
-    await q.answer(f"Switched to {current_model}")
+    selection = q.data.split(":", 2)
+    backend = ENGINE.backend(HOME)
+    if len(selection) == 3 and selection[1] != backend:
+        await q.answer("This chat's brain changed. Open /model again.", show_alert=True)
+        return
+    result = await model(selection[-1])
+    await q.answer(result["reply"])
     try:
-        await q.edit_message_text(f"✓ {current_model} — from the next task.")
+        await q.edit_message_text(result["reply"])
     except Exception:
         pass
 
@@ -1674,7 +1724,7 @@ async def run() -> None:
     asyncio.create_task(scheduler())
     asyncio.create_task(self_update())
     asyncio.create_task(warmup_voice())  # download the voice model now, not at the first voice note
-    await refresh_models_file()
+    await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if token:
         PHONE.keep_starting(token)

@@ -256,3 +256,13 @@ class ClaudeBrain(Brain):
 
     def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None, env_fn=None) -> Session:
         return ClaudeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
+
+
+async def claude_models() -> list[str]:
+    """Ask the signed-in runtime when its saved OAuth token cannot list models directly."""
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+    async with ClaudeSDKClient(options=ClaudeAgentOptions(setting_sources=[], strict_mcp_config=True)) as client:
+        info = await client.get_server_info() or {}
+        models = [m.get("resolvedModel") or m.get("value") for m in info.get("models", [])]
+        return list(dict.fromkeys(m for m in models if m and m != "default"))

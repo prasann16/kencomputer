@@ -57,6 +57,38 @@ class FakeBrain(Brain):
         return FakeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
 
 
+async def test_backends_keep_distinct_sessions_and_agent_models(engine):
+    agent = engine.create_agent("Writer")
+    pid = agent["id"]
+    engine.update_agent(pid, model="claude-test")
+    engine.kv_set(f"session:{pid}", "claude-session")
+    engine.brain.name = "codex"
+    assert engine._chat_session(pid).session_id is None
+    assert engine.get_agent(pid)["model"] == ""
+    engine.update_agent(pid, model="gpt-test")
+    await engine.send_message(pid, "hello")
+    assert engine.kv_get(f"session:codex:{pid}") == "sess-1"
+    assert engine.kv_get(f"session:{pid}") == "claude-session"
+    engine.brain.name = "claude"
+    assert engine.get_agent(pid)["model"] == "claude-test"
+    engine.brain.name = "codex"
+    assert engine.get_agent(pid)["model"] == "gpt-test"
+    await engine.reset_chat(pid, clear=True)
+    assert engine.kv_get(f"session:{pid}") is None
+    assert engine.kv_get(f"session:codex:{pid}") is None
+
+
+async def test_switching_from_legacy_claude_carries_recent_context_but_not_cleared_messages(engine):
+    engine.log_message(HOME, "you", "old archived message")
+    await engine.reset_chat(HOME, clear=True)
+    engine.log_message(HOME, "you", "current context")
+    engine.kv_set(f"session:{HOME}", "legacy-claude")
+    engine.brain.name = "codex"
+    await engine.send_message(HOME, "continue")
+    prompt = engine.brain.asks[-1]["prompt"]
+    assert "current context" in prompt and "old archived message" not in prompt
+
+
 @pytest.fixture
 def engine(tmp_path):
     e = Engine(tmp_path, FakeBrain())
@@ -309,7 +341,7 @@ def test_agent_sees_only_its_folder_and_ken_sees_every_agent(engine):
 
 
 async def test_each_agent_gets_its_own_tools(engine):
-    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.tools = lambda only, backend: {t: {} for t in sorted(only)}
     engine.create_agent("Reader")
     assert engine.tools_config("reader")["use"] == ["browser", "email", "calendar"]  # no tools.json: everything
     first = engine._chat_session("reader")
@@ -356,7 +388,7 @@ async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path
 
 
 async def test_ken_itself_gets_keys_tools_and_an_editable_about(engine):
-    engine.tools = lambda only: {t: {} for t in sorted(only)}
+    engine.tools = lambda only, backend: {t: {} for t in sorted(only)}
     engine.set_key(HOME, "OPENAI_KEY", "sk-proj-abcdef123456")
     s = engine._chat_session(HOME)
     assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}

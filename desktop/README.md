@@ -16,11 +16,53 @@ Telegram and the Mac app share everything: the same conversation, the same `voic
 
 ## Development
 
+To run this checkout alongside an installed Ken:
+
+```sh
+uv venv --python 3.12
+uv pip install --python .venv/bin/python -r requirements.txt
+./dev.sh
+# In another terminal:
+npm ci
+KEN_HOME="$PWD/.context/ken-local" KEN_WEB_PORT=7788 npm run desktop
+```
+
+This uses port 7788 and a separate `.context/ken-local` data directory. In the app,
+connect **Claude**, **Codex**, or both under **Settings → AI accounts**. Pick a
+brain and model at the top of each chat; new agents can choose either at creation.
+Different chats and background jobs can use different providers at the same time.
+Choices survive restarts and changing a brain does not require restarting Ken.
+
+Codex uses your existing Codex login; if you are signed out, the setup screen opens ChatGPT
+sign-in. An `OPENAI_API_KEY` is also supported. Set `KEN_CODEX_HOME` to use a
+separate Codex configuration and credential store, or `CODEX_BIN` to override the
+SDK's bundled binary with a compatible runtime. `CODEX_MODEL` selects a model;
+otherwise Codex uses its configured default. Stop the development engine with Ctrl-C.
+
+![Claude and Codex connected together in Settings](screenshots/ai-accounts.png)
+
+For the standard installed Ken home and port:
+
 ```sh
 ken stop                              # free the port if the installed service is running
 .venv/bin/python bot.py               # this repo's service; leave TELEGRAM_BOT_TOKEN unset for app-only
 npm ci && npm run desktop
 ```
+
+Existing installations keep Claude as their initial choice. The earlier
+`KEN_BRAIN` setting is migrated once; subsequent choices are saved in the app and
+take precedence over the environment. Memory, files and Ken's visible transcript
+are shared, while model selections and resumable conversations are stored separately.
+On switching a chat's brain, Ken supplies the recent transcript as context. Clear
+discards both backends' resume IDs while retaining memory and files.
+
+Codex uses full filesystem access and no execution approval prompts, matching
+Ken's Claude configuration. Ken's instructions and existing approval workflow
+still govern consequential actions. Codex reuses its user configuration, but
+Ken disables inherited MCP servers and enables only the agent's selected servers.
+Use `KEN_CODEX_HOME` when you want a separate configuration. Ken's built-in tools
+run over stdio MCP; custom tools support stdio and streamable HTTP. Legacy SSE
+servers must be changed to one of these transports for Codex.
 
 ## Build
 
