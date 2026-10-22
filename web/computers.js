@@ -27,14 +27,15 @@ async function choose(id) {
 }
 
 export function ComputerBar({ Modal, online }) {
-  const [open, setOpen] = useState(false), [name, setName] = useState(isRemote ? 'Remote computer' : 'This Mac');
-  useEffect(() => { localApi('').then((s) => setName(isRemote ? s.computers.find((c) => c.id === computerId)?.name || 'Removed computer' : 'This Mac')).catch(() => {}); }, []);
+  const [open, setOpen] = useState(false), [name, setName] = useState(isRemote ? 'Remote computer' : 'This Mac'), [saved, setSaved] = useState(0);
+  useEffect(() => { localApi('').then((s) => { setSaved(s.computers.length); setName(isRemote ? s.computers.find((c) => c.id === computerId)?.name || 'Removed computer' : 'This Mac'); }).catch(() => {}); }, []);
+  // Most people have one Mac: the bar shows up only once another computer is saved (Settings → Computers).
+  if (!isRemote && !saved) return null;
   return html`<div class="computer-bar">
     <button class="computer-switch" onClick=${() => setOpen(true)} aria-label=${`Choose computer, current: ${name}`} aria-haspopup="dialog">
       ${isRemote ? monitor : laptop}<span>${name}</span><i class=${'computer-dot ' + (online ? 'online' : '')}></i><svg class="computer-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
     </button>
     ${isRemote && html`<span class="computer-caption">${online ? 'Keeps running when this Mac is offline.' : 'Reconnecting. Accepted work stays on this computer.'}</span>`}
-    ${!isRemote && html`<button class="computer-add-link" onClick=${() => setOpen(true)}>Connect a computer</button>`}
     ${open && html`<${Modal} title="Your computers" className="computer-modal" closeX onClose=${() => setOpen(false)}><${ComputerSettings}/><//>`}
   </div>`;
 }

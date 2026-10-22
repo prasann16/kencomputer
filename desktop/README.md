@@ -14,8 +14,9 @@ Closing the window hides it. Quitting the app leaves the service (and Telegram) 
 
 ## Connecting another Mac
 
-Ken works locally without any server setup. Use **Connect a computer** below the
-chat header to use another Mac; **This Mac** switches back. Each computer owns its
+Ken works locally without any server setup. Use **Settings → Computers → Connect a
+computer** to use another Mac; once one is saved, a menu below the chat header
+switches between it and **This Mac**. Each computer owns its
 chats, memory, files, Claude account, tools, and schedules. Switching or quitting
 the client does not stop work already accepted by the server.
 

@@ -77,7 +77,7 @@
 /* Appearance stays available on every Settings tab, including first-run setup. */
 .appearance { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .appearance label { font-size: 13px; font-weight: 500; }
-.appearance select { min-width: 130px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--card); color: var(--ink); font-size: 13px; cursor: pointer; }
+.appearance select { max-width: none; color: var(--ink-2); }
 .set-tabs { max-width: 100%; overflow-x: auto; flex-shrink: 0; }
 .appearance, .settings-foot { flex-shrink: 0; }
 .modal { background: var(--card); }
