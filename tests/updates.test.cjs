@@ -92,7 +92,7 @@ test('release self-update checks use the local latest feed even in a beta build'
 });
 
 // Run the real main process with isolated OS/Electron adapters.
-function mainProcess({ busy = false, version = '0.1.22', saved = '' } = {}) {
+function mainProcess({ busy = false, version = '0.1.22', saved = '', feedUrl = '' } = {}) {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
   const source = fs.readFileSync(path.join(__dirname, '../desktop/main.cjs'), 'utf8');
   const calls = [], files = new Map(), app = new EventEmitter(), updater = new EventEmitter();
@@ -102,6 +102,7 @@ function mainProcess({ busy = false, version = '0.1.22', saved = '' } = {}) {
     exit: () => calls.push('exit'),
   });
   updater.checkForUpdates = async () => null;
+  updater.setFeedURL = (options) => { updater.feedOptions = options; };
   updater.quitAndInstall = () => calls.push('install');
   const electron = { app, ipcMain: {}, nativeTheme: {}, Menu: { buildFromTemplate: (t) => t, setApplicationMenu() {} } };
   const adapters = {
@@ -116,17 +117,30 @@ function mainProcess({ busy = false, version = '0.1.22', saved = '' } = {}) {
       spawn: () => ({ unref() {} }),
     },
     './updates.cjs': require('../desktop/updates.cjs'),
+    './github-updates.cjs': require('../desktop/github-updates.cjs'),
     './microphone.cjs': {}, './security.cjs': {},
   };
   vm.runInNewContext(source + '\nwin = fixtureWindow; checkForUpdates();', {
     require: (name) => adapters[name] || require(name),
-    process: { env: {}, execPath: '/Applications/Ken.app/Contents/MacOS/Ken', platform: 'darwin', getuid: () => 501 },
+    process: { env: { KEN_UPDATE_URL: feedUrl }, execPath: '/Applications/Ken.app/Contents/MacOS/Ken', platform: 'darwin', getuid: () => 501 },
     __dirname: path.join(__dirname, '../desktop'), console, AbortSignal,
     setInterval() {}, fetch: async () => ({ json: async () => ({ busy }) }),
     fixtureWindow: { isVisible: () => true, isDestroyed: () => false, webContents: { send() {} } },
   });
   return { app, updater, calls, files };
 }
+
+test('packaged apps use version-aware GitHub updates while release checks keep their local feed', () => {
+  const { feedOptions } = mainProcess().updater;
+  assert.equal(feedOptions.provider, 'custom');
+  assert.equal(feedOptions.updateProvider, require('../desktop/github-updates.cjs').GitHubUpdates);
+  assert.equal(feedOptions.owner, 'prasann16');
+  assert.equal(feedOptions.repo, 'kencomputer');
+  const { updater } = mainProcess({ version: '0.1.22-beta.1', feedUrl: 'http://127.0.0.1:8765' });
+  assert.equal(updater.feedOptions.provider, 'generic');
+  assert.equal(updater.feedOptions.url, 'http://127.0.0.1:8765');
+  assert.equal(updater.channel, 'latest');
+});
 
 test('installing a beta preserves its channel when a later update is stable', () => {
   const beta = mainProcess({ version: '0.1.22-beta.1' });

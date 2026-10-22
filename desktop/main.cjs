@@ -211,6 +211,8 @@ function checkForUpdates() {
   const { autoUpdater } = require('electron-updater');
   // The release check feeds the app a local "newer" copy of itself to prove it can update.
   if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
+  else autoUpdater.setFeedURL({ provider: 'custom', updateProvider: require('./github-updates.cjs').GitHubUpdates,
+    owner: 'prasann16', repo: 'kencomputer' });
   updateChecks = new UpdateChecks(autoUpdater, updateChannel, (state) => {
     if (state.state === 'channel') { updateReady = false; updateVersion = ''; buildMenus(); }
     if (state.state === 'ready') { updateReady = true; updateVersion = state.version; buildMenus(); }
