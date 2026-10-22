@@ -249,7 +249,7 @@ class Connections:
     def __init__(self, home: Path, on_change=None) -> None:
         self.file = home / "connections.json"
         self.setup_file = home / "setup.json"
-        self.on_change = on_change  # e.g. reopen Claude sessions so they get the new tools
+        self.on_change = on_change  # reopen sessions so they get the new tools
         self._calendars: Calendars | None = None
 
     def load(self) -> dict:
@@ -387,7 +387,14 @@ class Connections:
                     "calendars": data.get("calendars", []) if "calendar" in only else []}
         return data
 
-    def mcp(self, only: set | None = None) -> dict:
+    def mcp(self, only: set | None = None, *, backend: str = "claude") -> dict:
+        if backend == "codex":
+            from ken_mcp import external_server
+
+            data = self._only(only)
+            enabled = {name for name, key in (("email", "emails"), ("calendar", "calendars")) if data.get(key)}
+            return {"ken": external_server("connections", self.file.parent, enabled)} if enabled else {}
+
         import asyncio
 
         from claude_agent_sdk import create_sdk_mcp_server, tool

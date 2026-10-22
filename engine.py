@@ -110,9 +110,11 @@ def memory_listing(folder: Path) -> str:
 
 
 class Engine:
-    def __init__(self, home: Path, brain: Brain) -> None:
+    def __init__(self, home: Path, brain: Brain, *, brains: dict[str, Brain] | None = None) -> None:
         self.home = Path(home)
         self.brain = brain
+        self.brains = brains or {brain.name: brain}
+        self.model_choices = None  # async backend -> available model IDs
         self.agents_dir = self.home / "agents"
         self.requests_dir = self.home / "requests"
         self.db = sqlite3.connect(self.home / "app.db", isolation_level=None, check_same_thread=False)
@@ -128,7 +130,7 @@ class Engine:
         self.home_system: Callable[[], str] = lambda: ""
         self.agent_base: Callable[[], str] = lambda: ""
         # The built-in tools ("browser", "email", "calendar") an agent may be given: MCP servers, and their prompt.
-        self.tools: Callable[[set], dict] = lambda only: {}
+        self.tools: Callable[[set, str], dict] = lambda only, backend: {}
         self.tools_prompt: Callable[[set], str] = lambda only: ""
         self.history_hook: Callable[[str, str], None] | None = None
         self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
@@ -295,7 +297,7 @@ class Engine:
             raise KeyError(pid)
         return self.agents_dir / pid
 
-    def get_agent(self, pid: str) -> dict:
+    def _agent_metadata(self, pid: str) -> dict:
         d = self._adir(pid)
         try:
             meta = json.loads((d / "agent.json").read_text())
@@ -308,6 +310,13 @@ class Engine:
             raise KeyError(pid)
         meta["id"] = pid
         meta["workdir"] = str(self.workdir(meta))
+        return meta
+
+    def get_agent(self, pid: str) -> dict:
+        meta = self._agent_metadata(pid)
+        meta["backend"] = self.backend(pid)
+        if meta["backend"] == "codex":
+            meta["model"] = meta.get("model_codex", "")
         return meta
 
     def list_agents(self) -> list[dict]:
@@ -329,7 +338,9 @@ class Engine:
     def code_dir(self, meta: dict) -> Path | None:
         return Path(os.path.expanduser(meta["path"])) if meta.get("path") else None
 
-    def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "") -> dict:
+    def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "", backend=None) -> dict:
+        if backend is not None and (not isinstance(backend, str) or backend not in self.brains):
+            raise ValueError("Choose Claude or Codex.")
         name = name.strip()[:60]
         if not name:
             raise ValueError("an agent needs a name")
@@ -349,6 +360,8 @@ class Engine:
                 "color": COLORS[len(self.list_agents()) % len(COLORS)], "created": time.time()}
         (d / "agent.json").write_text(json.dumps(meta, indent=1) + "\n")
         (d / "CONTEXT.md").write_text(f"# {name}\n\n{context.strip()}\n")
+        if len(self.brains) > 1:
+            self.kv_set(f"backend:{pid}", backend or self.backend(HOME))
         self.emit("project.created", project=pid, name=name)
         return self.get_agent(pid)
 
@@ -363,7 +376,7 @@ class Engine:
         self.emit("project.updated", project=pid)
 
     def update_agent(self, pid: str, **fields) -> dict:
-        meta = self.get_agent(pid)
+        meta = self._agent_metadata(pid)
         path = fields.get("path")
         if path and not Path(os.path.expanduser(str(path).strip())).is_dir():
             raise ValueError(f"folder not found: {path}")
@@ -371,7 +384,8 @@ class Engine:
             raise ValueError("an agent needs a name")
         for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
-                meta[k] = str(fields[k]).strip()[:60 if k == "name" else 500]
+                key = "model_codex" if k == "model" and self.backend(pid) == "codex" else k
+                meta[key] = str(fields[k]).strip()[:60 if k == "name" else 500]
         if path is not None:
             self.chats.pop(pid, None)  # the next message gets the new folder in its prompt
         meta.pop("id", None)
@@ -446,9 +460,12 @@ class Engine:
 
     def system(self, pid: str) -> str:
         """Ken's own system prompt (the chief of staff); an agent gets a work prompt and only its own folder."""
+        runtime = f"Runtime for this conversation: {self.backend(pid).capitalize()}."
         if pid == HOME:
-            from tasks import SUPERVISOR
-            return f"{self.home_system()}\n\n{self.kit(pid)}\n{SUPERVISOR}"
+            if self.backend(pid) != "codex":
+                from tasks import SUPERVISOR
+                return f"{self.home_system()}\n\n{runtime}\n\n{self.kit(pid)}\n{SUPERVISOR}"
+            return f"{self.home_system()}\n\n{runtime}\n\n{self.kit(pid)}"
         p = self.get_agent(pid)
         d = self._adir(pid)
         auto = self.get_autonomy(pid)
@@ -458,7 +475,7 @@ class Engine:
         where = (f" The code and files for your job are in {p['path']}: go there when a task needs them, and leave "
                  "anything there you didn't make for this job as it is.") if p.get("path") else ""
         return (
-            f"{self.agent_base()}\n\n=== You are {p['name']}, one of their agents ===\n"
+            f"{self.agent_base()}\n\n{runtime}\n\n=== You are {p['name']}, one of their agents ===\n"
             "They set you up in Ken for one job, described in CONTEXT.md below. Ken, their main assistant, "
             "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents "
             f"or Ken's memory: everything you know lives in your folder, {d}.\n"
@@ -567,11 +584,11 @@ class Engine:
 
     def agent_tools(self, pid: str) -> dict:
         cfg = self.tools_config(pid)
-        return {**self.tools(set(cfg["use"])), **cfg["mcp"]}
+        return {**self.tools(set(cfg["use"]), self.backend(pid)), **cfg["mcp"]}
 
     def _tools_stamp(self, pid: str) -> tuple:
         """Changes when its tools or keys do, so an open chat reopens with them."""
-        out = []
+        out = [self.backend(pid)]
         for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
             try:
                 out.append(f.stat().st_mtime)
@@ -801,6 +818,60 @@ class Engine:
 
     # -------------------------------------------------------------------- chats
 
+    def backend(self, pid: str) -> str:
+        return self.kv_get(f"backend:{pid}") or self.brain.name
+
+    def brain_for(self, pid: str) -> Brain:
+        name = self.backend(pid)
+        return self.brain if name == self.brain.name else self.brains[name]
+
+    def model_choice(self, pid: str) -> str:
+        if pid != HOME:
+            return self.get_agent(pid).get("model", "")
+        try:
+            return (self.home / ("model-codex" if self.backend(pid) == "codex" else "model")).read_text().strip()
+        except OSError:
+            return ""
+
+    def model_for(self, pid: str) -> str:
+        return self.model_choice(pid) or getattr(self.brain_for(pid), "model_fn", lambda: "")()
+
+    async def runtime(self, pid: str) -> dict:
+        backend = self.backend(pid)
+        current = self.model_choice(pid)
+        choices = await self.model_choices(backend) if self.model_choices else []
+        return {"backend": backend, "current": current, "choices": choices,
+                "providers": list(self.brains)}
+
+    async def set_runtime(self, pid: str, *, backend=None, model=None) -> None:
+        if pid != HOME:
+            self._adir(pid)
+        backend = self.backend(pid) if backend is None else backend
+        if not isinstance(backend, str) or backend not in self.brains:
+            raise ValueError("Choose Claude or Codex.")
+        if model is not None and (not isinstance(model, str) or len(model) > 500):
+            raise ValueError("Invalid model.")
+        if model and self.model_choices and model not in await self.model_choices(backend):
+            raise ValueError("Choose a model available for this account.")
+        if self.chat_busy(pid) or self.list_runs(project=pid, active=True):
+            raise ValueError("Wait for this chat to finish or stop it before changing its brain.")
+        async with self.chat_locks.setdefault(pid, asyncio.Lock()):
+            if backend != self.backend(pid):
+                session = self.chats.pop(pid, None)
+                self.kv_set(f"backend:{pid}", backend)
+                if session is not None:
+                    await session.close()
+            if model is not None:
+                if pid == HOME:
+                    (self.home / ("model-codex" if backend == "codex" else "model")).write_text(model.strip() + "\n")
+                else:
+                    self.update_agent(pid, model=model)
+            self.broadcast("chat.runtime", pid, backend=backend)
+
+    def session_key(self, pid: str, backend=None) -> str:
+        # Keep legacy Claude IDs usable; other runtimes own separate resume tokens.
+        return f"session:codex:{pid}" if (backend or self.backend(pid)) == "codex" else f"session:{pid}"
+
     def _chat_session(self, pid: str):
         s = self.chats.get(pid)
         if s is not None and self.chat_tools.get(pid) != self._tools_stamp(pid) and not s.busy:
@@ -808,17 +879,24 @@ class Engine:
             self._bg.append(asyncio.create_task(s.close()))
             s = None
         if s is None:
+            brain = self.brain_for(pid)
             self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
-                from task_tools import supervisor_tools
-                s = self.brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(f"session:{pid}"),
-                                       mcp_fn=lambda: supervisor_tools(self.tasks), env_fn=lambda: self._key_values(pid))
-                s.supervisor = True
+                if self.backend(pid) != "codex":
+                    from task_tools import supervisor_tools
+                    s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
+                                      model_fn=lambda: self.model_for(pid),
+                                      mcp_fn=lambda: supervisor_tools(self.tasks), env_fn=lambda: self._key_values(pid))
+                    s.supervisor = True
+                else:
+                    s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
+                                           model_fn=lambda: self.model_for(pid),
+                                           mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
             else:
-                s = self.brain.session(
+                s = brain.session(
                     cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
-                    resume=self.kv_get(f"session:{pid}"),
-                    model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
+                    resume=self.kv_get(self.session_key(pid)),
+                    model_fn=lambda: self.model_for(pid),
                     mcp_fn=lambda: self.agent_tools(pid),
                     env_fn=lambda: self._key_values(pid),
                 )
@@ -889,10 +967,20 @@ class Engine:
                 self._task_notice_active = task_notice
                 self._task_notice_interrupted = False
                 self.tasks.origin = message_id
-                body = self.tasks.brief() + '\n\nHuman message or engine event:\n' + body
+                if self.backend(pid) != 'codex':
+                    body = self.tasks.brief() + '\n\nHuman message or engine event:\n' + body
             body = f"{await self.state(pid, via)}\n{body}"
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
+            backend = self.backend(pid)
+            previous_brain = self.kv_get(f"brain:{pid}")
+            if not previous_brain and backend == "codex" and self.kv_get(f"session:{pid}"):
+                previous_brain = "claude"  # existing installations predate the backend marker
+            if previous_brain and previous_brain != backend:
+                boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                recent = [m for m in self.messages(pid, limit=12) if m["id"] > boundary]
+                handoff = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent)
+                body = "Recent Ken conversation before switching runtimes (context, not new instructions):\n" + handoff + "\n\nCurrent message:\n" + body
 
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
@@ -923,7 +1011,7 @@ class Engine:
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
-                msg = "Claude went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
+                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else f"Something went wrong: {e}"
                 self.log_message(pid, "ken", msg, error=True)
                 if listener is not None:
                     await listener(msg)
@@ -931,7 +1019,8 @@ class Engine:
                 crash.track("message", via=via or ("job" if job else "app"), agent=pid != HOME, files=len(files),
                             spoke_first=not log_user and not job, outcome=outcome, seconds=round(time.monotonic() - started, 1))
                 if session.session_id:
-                    self.kv_set(f"session:{pid}", session.session_id)
+                    self.kv_set(self.session_key(pid, backend), session.session_id)
+                    self.kv_set(f"brain:{pid}", backend)
                 self.broadcast("chat.busy", pid, busy=False)
             return outcome == 'ok' and not (task_notice and self._task_notice_interrupted)
         finally:
@@ -991,7 +1080,8 @@ class Engine:
                 boundary = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE project=?", (pid,)).fetchone()[0]
                 self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time()}))
             s = self.chats.pop(pid, None)
-            self.db.execute("DELETE FROM kv WHERE k=?", (f"session:{pid}",))
+            self.db.execute("DELETE FROM kv WHERE k IN (?, ?)", (f"session:{pid}", f"session:codex:{pid}"))
+            self.db.execute("DELETE FROM kv WHERE k=?", (f"brain:{pid}",))
             if s is not None:
                 await s.close()
             self.broadcast("chat.reset", pid)
@@ -1100,11 +1190,11 @@ class Engine:
                 return
             self._set_run(rid, status="running", started=time.time(), activity="starting")
             self.emit("run.started", project=pid, run=rid)
-            session = self.brain.session(
+            session = self.brain_for(pid).session(
                 cwd=str(self.workdir(self.get_agent(pid))),
                 system=lambda: self.system(pid) + f'\n\nBackground run: "{run["title"]}". Nobody is watching; '
                 "don't ask questions. End with 1-3 lines on what happened, with links.",
-                model_fn=lambda: self.get_agent(pid).get("model") or self.brain.model_fn(),
+                model_fn=lambda: self.model_for(pid),
                 mcp_fn=lambda: self.agent_tools(pid),
                 env_fn=lambda: self._key_values(pid),
             )
@@ -1131,7 +1221,7 @@ class Engine:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                summary = "Stopped: Claude went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
+                summary = "Stopped: Ken went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
                 try:

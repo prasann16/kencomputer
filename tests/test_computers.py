@@ -158,9 +158,9 @@ async def test_tunnel_verification_access_headers_redirects_and_no_secret_storag
 
 async def test_client_does_not_need_local_claude_or_server_setup(pair):
     p = pair
-    p["ca"].setup = SimpleNamespace(status=lambda: {"claude": False, "phone": "declined", "voice": {"state": "ready"}})
-    assert (await (await p["client"].get("/api/setup")).json())["claude"] is False
-    assert (await (await p["client"].get(p["prefix"] + "/api/setup")).json())["claude"] is True
+    p["ca"].setup = SimpleNamespace(status=lambda: {"connected": False, "phone": "declined", "voice": {"state": "ready"}})
+    assert (await (await p["client"].get("/api/setup")).json())["connected"] is False
+    assert (await (await p["client"].get(p["prefix"] + "/api/setup")).json())["connected"] is True
     assert p["ca"].computers.data["server"]["enabled"] is False
     assert (await p["client"].post("/api/computers/select", json={"id": p["computer"]["id"]})).status == 200
 

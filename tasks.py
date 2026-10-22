@@ -340,7 +340,7 @@ class TaskManager:
                     connected.pop('browser', None)
                 return {**connected, **worker_tools(self, tid, revision, number, report)}
             session = self.engine.brain.session(cwd=str(cwd), system=lambda: self._worker_prompt(task, cwd), resume=task['session_id'],
-                model_fn=(lambda: self.engine.get_agent(task['project']).get('model') or self.engine.brain.model_fn()) if task['project'] != 'home' else None,
+                model_fn=(lambda: (self.engine.get_agent(task['project']).get('model') if self.engine.backend(task['project']) != 'codex' else '') or self.engine.brain.model_fn()) if task['project'] != 'home' else None,
                 mcp_fn=mcp, env_fn=lambda: {**self.engine._key_values(task['project']), 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1', 'BASH_MAX_TIMEOUT_MS': '3600000'})
             session.on_session_id = lambda sid: self._checkpoint(tid, revision, number, sid)
             self.sessions[tid] = session

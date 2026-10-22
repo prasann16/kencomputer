@@ -159,23 +159,27 @@ class WebApp:
                       "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
 
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {"claude": True, "phone": "done", "voice": {"state": "ready"}})
+        return _json(self.setup.status() if self.setup else {
+            "connected": True, "backend": self.engine.backend(HOME),
+            "providers": {name: {"connected": True} for name in self.engine.brains},
+            "phone": "done", "voice": {"state": "ready"},
+        })
 
     async def setup_action(self, request):
-        """First-run setup: {"action": "start"} opens Claude sign-in, {"code": ...} finishes it."""
+        """Connect either account without changing the other account or chat's choice."""
         b = await self._body(request)
         try:
             if b.get("action") == "start":
-                return _json(await self.setup.start())
+                return _json(await self.setup.start(backend=b.get("backend")))
             if b.get("action") == "skip-phone":
                 return _json(self.setup.skip_phone())
             if b.get("code"):
-                return _json(await self.setup.submit(str(b["code"])))
-        except RuntimeError as exc:
+                return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
+        except (RuntimeError, ValueError) as exc:
             return _json({"error": str(exc)}, 400)
         except Exception:
-            log.exception("Connect Claude failed")
-            return _json({"error": "Something went wrong connecting Claude. Click Connect Claude to try again."}, 500)
+            log.exception("Connecting the brain failed")
+            return _json({"error": "Something went wrong connecting. Click Connect to try again."}, 500)
         return _json({"error": "Nothing to do."}, 400)
 
     async def connections_status(self, request):
@@ -294,7 +298,8 @@ class WebApp:
         b = await self._body(request)
         try:
             p = self.engine.create_agent(
-                str(b.get("name", "")), str(b.get("path", "")), str(b.get("context", "")), str(b.get("blurb", ""))
+                str(b.get("name", "")), str(b.get("path", "")), str(b.get("context", "")), str(b.get("blurb", "")),
+                backend=b.get("backend"),
             )
         except ValueError as e:
             return _json({"error": str(e)}, 400)
@@ -307,21 +312,48 @@ class WebApp:
         # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
         # greets on Start), here when the phone step was skipped. Quiet during setup.
         phone_skipped = not self.setup or self.setup.phone_step() == "declined"
-        if pid == HOME and self.engine.new_install() and phone_skipped:
+        if pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid):
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         return _json(self.engine.chat_view(pid))
 
     async def open_chat(self, request):
-        self._spawn(self.engine.on_open(self._pid(request)))
+        pid = self._pid(request)
+        if self._brain_connected(pid):
+            self._spawn(self.engine.on_open(pid))
         return _json({"ok": True})
 
     async def warm_chat(self, request):
         # Start the existing CLI session without generating a greeting or a turn.
-        self._spawn(self.engine.warm(self._pid(request)))
+        pid = self._pid(request)
+        if self._brain_connected(pid):
+            self._spawn(self.engine.warm(pid))
         return _json({"ok": True})
+
+    def _brain_connected(self, pid):
+        if not self.setup:
+            return True
+        status = self.setup.status()
+        return status.get("providers", {}).get(self.engine.backend(pid), status).get("connected", False)
+
+    async def chat_runtime(self, request):
+        pid = self._pid(request)
+        if request.method == "PUT":
+            b = await self._body(request)
+            try:
+                await self.engine.set_runtime(pid, backend=b.get("backend"), model=b.get("model"))
+            except ValueError as exc:
+                return _json({"error": str(exc)}, 400)
+        return _json(await self.engine.runtime(pid))
+
+    async def model_catalog(self, request):
+        names = list(self.engine.brains)
+        choices = await asyncio.gather(*(self.engine.model_choices(name) for name in names)) if self.engine.model_choices else [[] for _ in names]
+        return _json(dict(zip(names, choices)))
 
     async def post_message(self, request):
         pid = self._pid(request)
+        if not self._brain_connected(pid):
+            return _json({"error": f"Connect {self.engine.backend(pid).capitalize()} in Settings → AI accounts first."}, 400)
         b = await self._body(request)
         text = str(b.get("text", "")).strip()
         files = [str(f) for f in b.get("files", []) if isinstance(f, str)]
@@ -630,10 +662,13 @@ class WebApp:
         r.add_get("/computer/{cid:[a-f0-9]{16}}", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
+        r.add_get("/api/models", self.model_catalog)
         r.add_get("/api/chats", self.chats)
         r.add_get("/api/library", self.library)
         r.add_post("/api/chats", self.new_chat)
         r.add_get("/api/chats/{pid}", self.chat)
+        r.add_get("/api/chats/{pid}/runtime", self.chat_runtime)
+        r.add_put("/api/chats/{pid}/runtime", self.chat_runtime)
         r.add_post("/api/chats/{pid}/open", self.open_chat)
         r.add_post("/api/chats/{pid}/warm", self.warm_chat)
         r.add_post("/api/chats/{pid}/messages", self.post_message)
