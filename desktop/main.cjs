@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
 const { trustedFrame, localComputerFrame } = require('./security.cjs');
+const { UpdateChecks, validChannel, acceptsVersion, initialChannel } = require('./updates.cjs');
 
 app.setName('Ken');
 const home = path.resolve(process.env.KEN_HOME || path.join(os.homedir(), '.ken'));
@@ -144,7 +145,16 @@ function watchEngine() {
 // menu-bar icon and Settings becomes "Restart to update to x.y.z", and quitting installs it.
 // A check the user asked for (menu or Settings) reports what it found with a quiet toast.
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
-let updateReady = false, updateVersion = '', manualCheck = false, installing = false;
+let updateReady = false, updateVersion = '', installing = false, updateChecks;
+const updateChannelFile = path.join(home, 'desktop-data', 'update-channel');
+let savedChannel = '';
+try { savedChannel = readFileSync(updateChannelFile, 'utf8').trim(); } catch {}
+let updateChannel = initialChannel(savedChannel, app.getVersion());
+function saveUpdateChannel(channel) {
+  mkdirSync(path.dirname(updateChannelFile), { recursive: true });
+  writeFileSync(updateChannelFile, channel);
+  savedChannel = channel;
+}
 // If an update doesn't install, Ken must come back and say so rather than vanish and retry
 // forever: a note records the version being installed and which Ken.app was on disk, a
 // timer reopens Ken if the installer didn't, and the next start that finds the note with
@@ -155,8 +165,8 @@ const bundlePath = path.resolve(process.execPath, '..', '..', '..');
 // Which Ken.app is on disk: a replaced bundle is a different directory (or a rewritten Info.plist).
 const bundleStamp = () => { try { const b = statSync(bundlePath), p = statSync(path.join(bundlePath, 'Contents', 'Info.plist')); return `${b.ino}:${p.ino}:${p.mtimeMs}`; } catch { return ''; } };
 let updateFailed = '';
-const downloadUrl = `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
-const failedState = () => updateFailed ? { state: 'failed', version: updateFailed, url: downloadUrl } : null;
+const downloadUrl = (version) => `https://github.com/prasann16/kencomputer/releases/download/v${encodeURIComponent(version)}/Ken-${process.arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
+const failedState = () => updateFailed && acceptsVersion(updateChannel, updateFailed) ? { state: 'failed', version: updateFailed, url: downloadUrl(updateFailed) } : null;
 const tellPage = (state) => { if (win && !win.isDestroyed()) win.webContents.send('update:state', state); };
 async function engineBusy() {
   try {
@@ -172,7 +182,8 @@ async function stopService() {
   await run('/bin/launchctl', ['bootout', `gui/${process.getuid()}/${appAgent}`]);
   await stopOtherEngine();
 }
-async function restartIntoUpdate(quiet) {
+async function restartIntoUpdate(quiet, reservedByQuit = false) {
+  if ((installing && !reservedByQuit) || !updateReady || !acceptsVersion(updateChannel, updateVersion)) return;
   installing = true;
   if (quiet) writeFileSync(quietRelaunch, '');
   quitting = true;
@@ -191,18 +202,23 @@ async function installNow() {
 }
 function checkNow(manual) {
   if (!app.isPackaged) { if (manual) tellPage({ state: 'none', version: app.getVersion() }); return; }
-  manualCheck = manual;
-  require('electron-updater').autoUpdater.checkForUpdates().catch(() => {});
+  updateChecks?.check(manual);
 }
 function checkForUpdates() {
   if (!app.isPackaged) return;
+  // Installing a beta opts in across subsequent stable updates, too.
+  if (updateChannel === 'beta' && !validChannel(savedChannel)) saveUpdateChannel(updateChannel);
   const { autoUpdater } = require('electron-updater');
   // The release check feeds the app a local "newer" copy of itself to prove it can update.
   if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
-  autoUpdater.on('update-available', (info) => { if (manualCheck) tellPage({ state: 'downloading', version: info.version }); });
-  autoUpdater.on('update-not-available', () => { if (manualCheck) tellPage({ state: 'none', version: app.getVersion() }); manualCheck = false; });
-  autoUpdater.on('update-downloaded', (info) => { updateReady = true; updateVersion = info.version; buildMenus(); tellPage({ state: 'ready', version: info.version }); manualCheck = false; installIfIdle(); });
-  autoUpdater.on('error', (error) => { console.error('update check failed:', error.message); if (manualCheck) tellPage({ state: 'error' }); manualCheck = false; });
+  else autoUpdater.setFeedURL({ provider: 'custom', updateProvider: require('./github-updates.cjs').GitHubUpdates,
+    owner: 'prasann16', repo: 'kencomputer' });
+  updateChecks = new UpdateChecks(autoUpdater, updateChannel, (state) => {
+    if (state.state === 'channel') { updateReady = false; updateVersion = ''; buildMenus(); }
+    if (state.state === 'ready') { updateReady = true; updateVersion = state.version; buildMenus(); }
+    tellPage({ version: app.getVersion(), ...state });
+    if (state.state === 'ready') installIfIdle();
+  }, { testFeed: !!process.env.KEN_UPDATE_URL });
   checkNow(false);
   setInterval(() => checkNow(false), 4 * 60 * 60 * 1000);
   setInterval(installIfIdle, 10 * 60 * 1000);  // retry after a busy engine finishes
@@ -277,7 +293,16 @@ async function start() {
   // Settings: this version, an update waiting to install, check now, restart into it.
   ipcMain.handle('update:status', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
-    return { version: app.getVersion(), ready: updateReady && updateVersion !== updateFailed ? updateVersion : null };
+    return { version: app.getVersion(), channel: updateChannel, ready: updateReady && updateVersion !== updateFailed ? updateVersion : null };
+  });
+  ipcMain.handle('update:channel', (event, channel) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (!validChannel(channel)) throw new Error('Invalid update channel.');
+    if (installing) throw new Error('Wait for the update to finish installing.');
+    saveUpdateChannel(channel);
+    updateChannel = channel;
+    updateChecks?.select(channel);
+    return { channel };
   });
   ipcMain.handle('update:check', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
@@ -387,6 +412,6 @@ else {
     if (!updateReady || installing || updateVersion === updateFailed || process.platform !== 'darwin') return;
     event.preventDefault();
     installing = true;
-    engineBusy().then((busy) => busy ? app.exit(0) : restartIntoUpdate(true));
+    engineBusy().then((busy) => busy ? app.exit(0) : restartIntoUpdate(true, true));
   });
 }

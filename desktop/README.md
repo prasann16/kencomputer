@@ -146,12 +146,12 @@ home that already has a terminal install (`~/.ken/app/bot.py`) keeps using that 
 
 ## Releasing
 
-Four rules keep a change from breaking Ken somewhere else:
+The release checks keep a change from breaking Ken somewhere else:
 
 1. **Locked parts.** `requirements.txt` pins the exact version of every package (generated from `requirements.in`). Dev, terminal installs and release builds all install the same versions.
 2. **Every change is tested.** Pull requests and `main` run `tests/check.sh`: the unit tests, plus a check that Ken's native parts load and can decode a voice note.
 3. **A tag builds a draft.** `.github/workflows/release.yml` builds the engine on an Apple Silicon and an Intel runner, runs the same native-parts check inside each bundled engine, then signs, notarizes and uploads Ken to a **draft** GitHub Release.
-4. **One command publishes.** It downloads the draft like a user would, checks macOS accepts it, sends a real chat message and a real voice note to its engine, and publishes only if all of that passes:
+4. **Stable publishing includes a local check.** One command downloads the draft like a user would, checks macOS accepts it, sends a real chat message and a real voice note to its engine, and publishes only if all of that passes:
 
 ```sh
 git tag v0.1.2 && git push origin v0.1.2      # wait for the release build
@@ -162,7 +162,17 @@ Every tagged build is installed on a GitHub M-series Mac and made to update itse
 
 Download files keep fixed names, so `https://github.com/prasann16/kencomputer/releases/latest/download/Ken-arm64.dmg` (and `Ken-x64.dmg`) always point at the newest release. Installed apps download a published release within four hours and install it the next time their window is closed while Ken is idle.
 
-**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, commits, tags the next version, starts the release build, and opens an issue naming the publish command. If nothing changed, it does nothing.
+**Manual betas.** In GitHub, choose **Actions → Publish beta → Run workflow**, select **main**, and leave the version blank to use the next beta (for example, `v0.1.22-beta.1`). An optional explicit version must use `vX.Y.Z-beta.N`, target a version newer than the stable tags, and not go backwards from the latest beta. To retry a failed build, enter its exact tag; it must still point to the selected main commit, or rerun the failed release workflow directly.
+
+The workflow waits for that exact main commit's Mac and Windows tests, creates the beta tag, and starts the signed and notarized release build. After both architectures build and the Mac install, self-update and failed-install recovery checks pass, GitHub automatically publishes the prerelease. If a newer version was tagged during the build, the superseded beta stays a draft. Betas do **not** require the local chat-and-voice check. They never become GitHub's latest stable release; the weekly stable path and its local publish check are unchanged.
+
+In Ken, **Settings → Updates on this Mac → Beta · early releases** opts this Mac into beta updates. The choice is saved locally, including when using a remote Ken computer. Stable installs default to Stable; a freshly installed beta defaults to Beta unless a preference was already saved. Older builds without this setting need the first beta downloaded and installed once from [GitHub Releases](https://github.com/prasann16/kencomputer/releases).
+
+Switching back to Stable cancels any pending beta download and clears its install prompt. Ken waits for a stable version newer than the installed version; it never automatically downgrades. Beta users also receive newer stable releases. To run the real chat-and-voice check on a beta yourself, use `desktop/check-release.sh <beta-tag>`; adding `--publish` preserves its prerelease status.
+
+**Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, and opens or updates a dependency PR. If nothing changed, it does nothing. After that PR is merged, it waits for the merged commit's Mac and Windows tests, tags the next version, starts the release build, and opens an issue naming the publish command. It never pushes directly to protected `main` or tags an unmerged dependency update.
+
+Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the weekly PR. GitHub may ask a maintainer to approve workflow runs on that bot-created PR before its checks start. Publishing still requires the Mac release check above.
 
 Repository secrets the release workflow needs:
 

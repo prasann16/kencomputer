@@ -1719,7 +1719,12 @@ async def run() -> None:
     import signal
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGTERM, stop.set)
+    signal_handler = False
+    try:
+        loop.add_signal_handler(signal.SIGTERM, stop.set)
+        signal_handler = True
+    except NotImplementedError:  # Windows event loops do not support signal handlers.
+        pass
     web_app = await start_engine()
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
     try:
@@ -1742,7 +1747,8 @@ async def run() -> None:
         await PHONE.stop()
         if web_app and web_app.runner:
             await web_app.runner.cleanup()
-        loop.remove_signal_handler(signal.SIGTERM)
+        if signal_handler:
+            loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main() -> None:

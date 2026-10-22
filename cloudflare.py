@@ -98,7 +98,10 @@ async def command(*args, timeout=5, env=None, capture=True):
     finally:
         if process.returncode is None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                if hasattr(os, "killpg"):
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:  # Windows has no POSIX process groups.
+                    process.kill()
             except ProcessLookupError:
                 pass
             await process.wait()

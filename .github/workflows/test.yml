@@ -16,6 +16,7 @@ jobs:
         with:
           node-version: 22
       - run: |
+          npm ci --omit=dev --ignore-scripts
           uv venv -q --seed --managed-python --python 3.13 .venv
           uv pip install -q --python .venv/bin/python -r requirements.txt pytest pytest-asyncio pytest-aiohttp
           tests/check.sh

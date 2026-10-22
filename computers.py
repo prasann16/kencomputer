@@ -89,7 +89,7 @@ class Computers:
                 json.dump(self.data, f)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(name, self.path)  # mkstemp creates mode 0600, including on replacement
+            os.replace(name, self.path)  # mkstemp preserves mode 0600 on POSIX, including on replacement
         finally:
             if os.path.exists(name):
                 os.unlink(name)
