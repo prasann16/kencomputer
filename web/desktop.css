@@ -145,3 +145,4 @@ html[data-desktop='darwin'] .shell:not(.side-open) .chat-header{padding-left:84p
 .chat-bottom{max-width:768px;padding-left:24px;padding-right:24px}
 .chat-header .model-select{width:auto;max-width:200px}
 .conversation-thread{max-width:768px;margin:0 auto;padding:32px 24px 28px;gap:24px}
+.conversation-thread .typing.idle{visibility:hidden}  /* keeps the typing row's space, so the chat doesn't shift when Ken starts or finishes */

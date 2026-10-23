@@ -509,7 +509,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
   const timeline = [
-    ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
+    ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery === 'failed' && !m.audio && html`<div class="delivery" role="status">Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button></div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
@@ -557,7 +557,8 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
           <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
-        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Live} stream=${stream} activity=${activity}/>`
+          : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>
     </div>
     <div class="chat-bottom">
