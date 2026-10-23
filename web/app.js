@@ -41,9 +41,14 @@ async function api(path, opts = {}) {
 // Files the user attached; they show in their message, not as Ken's file cards.
 const ATTACHED = new Set();
 async function upload(pid, list, attach) {
-  const fd = new FormData();
-  for (const f of list) fd.append('file', f, f.name);
-  const saved = (await api(`/api/chats/${pid}/files${attach ? '?attach=1' : ''}`, { body: fd })).saved || [];
+  const query = attach ? '?attach=1' : '';
+  let saved;
+  if (typeof list[0] === 'string') saved = (await api(`/api/chats/${pid}/files/paths${query}`, { json: { paths: list } })).saved || [];  // picked in the Mac app
+  else {
+    const fd = new FormData();
+    for (const f of list) fd.append('file', f, f.name);
+    saved = (await api(`/api/chats/${pid}/files${query}`, { body: fd })).saved || [];
+  }
   if (attach) saved.forEach((name) => ATTACHED.add(name));
   return saved;
 }
@@ -280,7 +285,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
       ${voiceBusy ? html`<div class="recording-input"><button class="icon-btn" aria-label="Cancel recording" onClick=${()=>recorder.finish(false)}>${Icon.close}</button>${recording && html`<span class="recording-label"><i aria-hidden="true"></i>Recording</span>`}<${Waveform} stream=${recorder.stream} onPeak=${recorder.peak}/><span class="voice-time">${recorder.status==='requesting'?'Allow microphone…':durationLabel(recorder.seconds)}</span></div>` : html`<label class="sr" for=${id}>${placeholder}</label>
       <textarea id=${id} ref=${ta} rows="1" placeholder=${placeholder} value=${text}
         onInput=${(e) => setText(e.target.value)} onKeyDown=${onKey}></textarea>`}
-      ${onAttach && !voiceBusy && html`<button class="icon-btn attach-button" aria-label="Attach files" title="Attach files" onClick=${() => picker.current.click()}>${Icon.plus}</button>
+      ${onAttach && !voiceBusy && html`<button class="icon-btn attach-button" aria-label="Attach files" title="Attach files" onClick=${() => window.kenDesktop?.pickFiles ? window.kenDesktop.pickFiles().then(attach).catch((e) => toast(e.message)) : picker.current.click()}>${Icon.plus}</button>
         <input ref=${picker} type="file" multiple hidden onChange=${(e) => { attach(e.target.files); e.target.value = ''; }} />`}
       ${voice && !voiceBusy && html`<button class="icon-btn" aria-label="Voice" title="Record a voice note" onClick=${recorder.start}>${Icon.mic}</button>`}
       ${busy && !ready && !voiceBusy && onStop

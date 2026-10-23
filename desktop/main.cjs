@@ -325,6 +325,16 @@ async function start() {
     const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });
     return canceled ? '' : filePaths[0];
   });
+  // Attach files: start in a real folder (the last one used, else Downloads). The page's own file
+  // input starts in Recents, which macOS builds by searching the disk: seconds of spinning cursor.
+  let lastPickDir = app.getPath('downloads');
+  ipcMain.handle('files:pick', async (event) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], defaultPath: lastPickDir });
+    if (canceled || !filePaths.length) return [];
+    lastPickDir = path.dirname(filePaths[0]);
+    return filePaths;
+  });
   ipcMain.handle('microphone:settings', async (event, kind) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (process.platform === 'darwin') await shell.openExternal(kind === 'privacy' ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone' : 'x-apple.systempreferences:com.apple.preference.sound?input');

@@ -9,6 +9,7 @@ pages see the new revision on reconnect and reload themselves.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import hmac
 import json
 import logging
@@ -406,6 +407,26 @@ class WebApp:
             self._spawn(self.engine.files_dropped(pid, saved))  # dropped: Ken looks right away
         return _json({"saved": saved})
 
+    async def attach_paths(self, request):
+        """Files picked in the Mac app arrive as paths on this computer: copied into the chat's folder."""
+        pid = self._pid(request)
+        paths = (await self._body(request)).get("paths")
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+            return _json({"error": "Pick at least one file."}, 400)
+        saved = []
+        for p in paths:
+            src = Path(p).expanduser()
+            if not src.is_file():
+                return _json({"error": f"{src.name} isn't a file Ken can attach."}, 400)
+            if src.stat().st_size > MAX_UPLOAD:
+                return _json({"error": f"{src.name} is too big to attach."}, 413)
+            dest = self.engine.new_file_path(pid, src.name)
+            await asyncio.to_thread(shutil.copyfile, src, dest)
+            saved.append(dest.name)
+        if request.query.get("attach") != "1":
+            self._spawn(self.engine.files_dropped(pid, saved))
+        return _json({"saved": saved})
+
     async def download(self, request):
         pid = self._pid(request)
         try:
@@ -645,6 +666,7 @@ class WebApp:
         r.add_post("/api/chats/{pid}/messages", self.post_message)
         r.add_post("/api/chats/{pid}/stop", self.stop)
         r.add_post("/api/chats/{pid}/files", self.upload)
+        r.add_post("/api/chats/{pid}/files/paths", self.attach_paths)
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
