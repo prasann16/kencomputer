@@ -79,4 +79,5 @@ def test_ken_codex_has_its_own_folder(tmp_path, monkeypatch):
     prepare_skills(tmp_path)
     bot.prepare_codex_home(tmp_path / "codex")
     assert os.environ["KEN_CODEX_HOME"] == str(tmp_path / "codex")  # never the person's own ~/.codex
-    assert (tmp_path / "codex").stat().st_mode & 0o077 == 0  # the login lives here: only its owner can read it
+    if os.name != "nt":  # Windows keeps a user's folders private with ACLs, not mode bits
+        assert (tmp_path / "codex").stat().st_mode & 0o077 == 0  # the login lives here: only its owner can read it
