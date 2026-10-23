@@ -124,6 +124,7 @@ BROWSER_PROMPT = (
 
 # Email and calendars; connecting or disconnecting reopens sessions so they get the right tools.
 CONNECTIONS = Connections(KEN_HOME, on_change=lambda: brain_connected())
+ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the app starts
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
@@ -1080,8 +1081,23 @@ def voice_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def use_signed_in_account(prefer=None) -> None:
+    """On a new install the chat uses an account that's signed in: connecting only ChatGPT
+    must not leave the chat on a Claude that isn't."""
+    if ACCOUNTS is None or not ENGINE.new_install():
+        return
+    current = ENGINE.backend(HOME)
+    if ACCOUNTS.providers[current].status().get("connected"):
+        return
+    for name in [prefer, *ACCOUNTS.providers]:
+        if name and name != current and ACCOUNTS.providers[name].status().get("connected"):
+            ENGINE.kv_set(f"backend:{HOME}", name)
+            return
+
+
 async def brain_connected(backend=None) -> None:
     """Sessions opened before sign-in had no credentials; the next message reopens them."""
+    use_signed_in_account(backend)
     for pid in list(ENGINE.chats):
         if ENGINE.chat_busy(pid) or (backend and ENGINE.backend(pid) != backend):
             if not backend or ENGINE.backend(pid) == backend:
@@ -1124,6 +1140,9 @@ async def start_engine() -> WebApp | None:
                              lambda: brain_connected("claude"), voice_ready),
         "codex": codex_setup,
     }, lambda: ENGINE.backend(HOME))
+    global ACCOUNTS
+    ACCOUNTS = setup
+    use_signed_in_account()
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
