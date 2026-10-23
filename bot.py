@@ -45,8 +45,8 @@ from ken_mcp import external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
-from telegram.constants import ChatAction, ParseMode
-from telegram.error import BadRequest, InvalidToken
+from telegram.constants import ChatAction, ParseMode, ReactionEmoji
+from telegram.error import BadRequest, InvalidToken, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -657,7 +657,12 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("Got it — I’ll read this next. Send /stop if you want me to drop what I’m doing first.", do_quote=True, allow_sending_without_reply=True)
+        # 👀 on their message: seen. The note says it's queued, not an answer, and how to stop.
+        try:
+            await update.effective_message.set_reaction(ReactionEmoji.EYES)
+        except TelegramError:
+            pass
+        await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
