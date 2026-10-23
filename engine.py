@@ -671,8 +671,32 @@ class Engine:
         out = {"id": pid, "name": "Ken" if pid == HOME else self.get_agent(pid)["name"], "context": context,
                "memory": notes, "files": self.list_files(pid)}
         out.update(tools=self.tools_config(pid), builtin=list(BUILTIN_TOOLS), keys=self.list_keys(pid),
-                   path="" if pid == HOME else self.get_agent(pid).get("path", ""))
+                   path="" if pid == HOME else self.get_agent(pid).get("path", ""),
+                   skills=self.list_skills() if pid == HOME else [])
         return out
+
+    def list_skills(self) -> list[dict]:
+        """Ken's skills: one folder each in <home>/skills, named and described by its SKILL.md."""
+        out, d = [], self.home / "skills"
+        for f in sorted(d.iterdir()) if d.is_dir() else []:
+            md = f / "SKILL.md"
+            if f.name.startswith(".") or not md.is_file():
+                continue
+            meta, text = {}, md.read_text(errors="replace")
+            if text.startswith("---"):
+                for line in text.split("---", 2)[1].splitlines():
+                    key, _, value = line.partition(":")
+                    if key.strip() in ("name", "description"):
+                        meta[key.strip()] = value.strip().strip("\"'")
+            out.append({"id": f.name, "name": meta.get("name") or f.name, "about": meta.get("description", "")[:200]})
+        return out
+
+    def remove_skill(self, sid: str) -> list[dict]:
+        d = self.home / "skills" / sid
+        if not sid or "/" in sid or "\\" in sid or sid.startswith(".") or not d.is_dir():
+            raise KeyError(sid)
+        d.unlink() if d.is_symlink() else shutil.rmtree(d)
+        return self.list_skills()
 
     def set_about_context(self, pid: str, text: str) -> None:
         f = self.context_file(pid)

@@ -297,11 +297,14 @@ SECRETS_RULE = (
 )
 
 SKILLS_RULE = (
-    f"SKILLS: skills in {KEN_HOME / 'skills'} (one folder per skill: a SKILL.md and its files) are yours in "
-    "every chat, whichever AI they use. Add one only when they ask: say in one line what it is and where "
-    "it comes from, and wait for their OK. Then put its folder there (for a package, run `npx skills add "
-    "<pkg>` in a temporary folder and move the skill folder over) and tell them it works from their next "
-    "message. Remove one by deleting its folder when they ask. Never add skills on your own. "
+    f"SKILLS: your skills are the folders in {KEN_HOME / 'skills'} (each a SKILL.md and its files); they "
+    "load in every chat, whichever AI they use. When they ask for one, find where it comes from (usually a "
+    "GitHub repo), tell them in one line what it is and where it's from, and wait for their yes, even if "
+    f"they named it. Then copy just that skill's folder into {KEN_HOME / 'skills'}/<name> (clone or download "
+    "into a temporary folder and copy it over). Never run `npx skills` or any skill installer, and never "
+    "install, update or change anything in ~/.claude, ~/.agents or ~/.codex: those are their own AI tools, "
+    "not yours. If a skill they want is already there, copy it into your folder instead. Tell them it works "
+    "from their next message. Remove one by deleting its folder when they ask. Never add skills on your own. "
 )
 
 SYSTEM_PROMPT = (

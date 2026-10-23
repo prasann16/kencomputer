@@ -944,6 +944,9 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     pid !== 'home' && { key: 'tools', title: 'Tools', summary: [on.join(', ') || 'Nothing connected', off.length && off.join(', ') + ' not connected'].filter(Boolean).join(' · '), body: html`
         <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
     { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
+    pid === 'home' && { key: 'skills', title: 'Skills', summary: a.skills.length ? a.skills.map((s) => s.name).join(', ') : 'None yet', body: html`
+        <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
+        ${a.skills.map((s) => html`<div class="skill-row"><div><b>${s.name}</b><span>${s.about}</span></div><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
     jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);

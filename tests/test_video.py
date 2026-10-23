@@ -98,3 +98,18 @@ def test_codex_finds_kens_skills_in_kens_own_folders_only(tmp_path):
     theirs.mkdir()
     e._share_skills(theirs)
     assert not (theirs / ".agents").exists()  # a folder of theirs is never written to
+
+
+def test_brain_lists_kens_skills_and_removes_one(tmp_path):
+    import pytest
+    from test_engine import FakeBrain
+    e = Engine(tmp_path, FakeBrain())
+    prepare_skills(tmp_path)
+    (tmp_path / "skills" / "remotion").mkdir()
+    (tmp_path / "skills" / "remotion" / "SKILL.md").write_text("---\nname: remotion-best-practices\ndescription: \"Make videos in React\"\n---\nbody\n")
+    (tmp_path / "skills" / "not-a-skill").mkdir()  # no SKILL.md: not listed
+    assert e.about("home")["skills"] == [{"id": "remotion", "name": "remotion-best-practices", "about": "Make videos in React"}]
+    with pytest.raises(KeyError):
+        e.remove_skill("../work")  # only a skill folder, never anything else
+    assert e.remove_skill("remotion") == []
+    assert not (tmp_path / "skills" / "remotion").exists()

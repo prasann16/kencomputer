@@ -470,6 +470,12 @@ class WebApp:
         self.engine.set_about_context(pid, str((await self._body(request)).get("text", "")))
         return _json(self.engine.about(pid))
 
+    async def remove_skill(self, request):
+        try:
+            return _json(self.engine.remove_skill(request.match_info["sid"]))
+        except KeyError:
+            return _json({"error": "No such skill."}, 404)
+
     async def note(self, request):
         pid, name = self._pid(request), request.match_info["name"]
         try:
@@ -649,6 +655,7 @@ class WebApp:
         r.add_get("/api/about/{pid}", self.about)
         r.add_put("/api/about/{pid}/context", self.put_about_context)
         r.add_route("*", "/api/about/{pid}/memory/{name}", self.note)
+        r.add_delete("/api/skills/{sid}", self.remove_skill)
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
