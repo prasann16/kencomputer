@@ -818,19 +818,18 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
     if (s.state === 'channel') setUpdate((u) => ({ ...u, channel: s.channel, ready: null }));
   }); }, []);
 
-  const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
+  const [tab, setTab] = useState('claude');
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
-  useEffect(() => { api('/api/jobs').then(setJobs).catch(() => {}); api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch(() => {}); }, []);
+  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch(() => {}); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
-  const job = async (j, change) => { setError(''); try { setJobs(await api(`/api/jobs/${encodeURIComponent(j.name)}`, { method: 'PATCH', json: { ...change, agent: j.agent } })); return true; } catch (e) { setError(e.message); return false; } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
-    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => html`<div><span>${setup?.providers?.[id]?.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${setup?.providers?.[id]?.connected ? `Reconnect ${label}` : `Connect ${label}`}</button></div>`)}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
@@ -848,8 +847,6 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
       'Helps fix bugs and shows which features get used: counts like “a job ran”. Never what you say, your files or your logins.',
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
     <p class="np-note privacy-more"><a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a></p></div>`}
-    ${tab === 'jobs' && html`<div class="set-body"><p class="np-help">What Ken does on its own. You can also just tell Ken to change these.</p>
-    <${JobList} jobs=${jobs} change=${job}/></div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     ${tab !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
@@ -947,7 +944,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     pid !== 'home' && { key: 'tools', title: 'Tools', summary: [on.join(', ') || 'Nothing connected', off.length && off.join(', ') + ' not connected'].filter(Boolean).join(' · '), body: html`
         <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
     { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
-    pid !== 'home' && jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
+    jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`

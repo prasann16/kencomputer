@@ -36,7 +36,7 @@ curl -fsSL https://kencomputer.dev/install | bash
   the work itself and tells you what it did.
 - **Voice notes**, transcribed on your computer (the audio never leaves it).
 - **A morning brief** with what matters today, and a **nightly review** that files the day
-  into Ken's memory. Pick the times, or add your own scheduled jobs in Settings → Jobs or by
+  into Ken's memory. Pick the times, or add your own scheduled jobs in Brain or by
   just asking.
 - **Memory.** Tell Ken something once and it remembers. Everything it knows is in
   **Brain**: who Ken is, what it remembers, and the accounts and passwords you've given it,
