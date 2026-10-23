@@ -67,19 +67,7 @@ body{-webkit-font-smoothing:auto;letter-spacing:normal}.chat-header{height:64px;
 .connect{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 24px 80px;text-align:center}.connect img{width:44px;height:48px}.connect h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.2px}.connect p{margin:0;max-width:340px;color:var(--muted);font-size:14px;line-height:1.5}.connect .btn{min-width:220px;height:40px}.connect .text-action{font-size:13px;color:var(--faint)}.connect-input{background:var(--card);color:var(--ink);width:280px;height:40px;padding:0 12px;border:1px solid var(--line-strong);border-radius:10px;font:inherit;font-size:14px;text-align:center}.connect-input:focus{outline:none;border-color:var(--faint)}.connect-error{color:var(--danger)!important}.connect a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.first-connect .btn+.btn{margin-top:-4px}.first-connect .first-connect-note{font-size:12.5px;color:var(--faint)}
 .voice-setup{margin:0 4px 8px;font-size:12px;color:var(--faint)}
 /* Projects sidebar */
-.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;gap:1px;padding:0 10px 16px;background:var(--side);border-right:1px solid var(--line);overflow-y:auto}
-.side-top{height:48px;flex-shrink:0;-webkit-app-region:drag}
-.side-label{margin:18px 10px 6px;font-size:11.5px;font-weight:500;letter-spacing:.02em;color:var(--faint)}
-.side-item{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border:0;border-radius:7px;background:none;color:var(--ink-2);font:inherit;font-size:13.5px;text-align:left;text-decoration:none;cursor:pointer}
-.side-item:hover{background:var(--hover)}.side-item.sel{background:var(--selected);color:var(--ink);font-weight:500}
-.side-item img{width:16px;height:17px;flex-shrink:0}
-.side-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .proj-dot{display:inline-block;width:8px;height:8px;border-radius:2.5px;flex-shrink:0;margin:0 4px}
-.side-unread{width:6px;height:6px;border-radius:50%;background:var(--ink);flex-shrink:0}
-.side-busy{width:6px;height:6px;border-radius:50%;background:var(--disabled);flex-shrink:0;animation:ken-breathe 1.6s ease-in-out infinite}
-.side-new{color:var(--faint)}.side-new svg{flex-shrink:0;margin:0 1px}
-.side-toggle{-webkit-app-region:no-drag;display:grid;place-items:center;width:28px;height:28px;margin-right:10px;border:0;border-radius:7px;background:none;color:var(--faint);cursor:pointer}.side-toggle:hover{background:var(--well);color:var(--ink-2)}
-html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:16px}
 .chat-header .ken-brand{font-size:15px;font-weight:600;gap:8px}
 .ken-brand .proj-dot{margin:0 1px 0 0}
 .np-help{margin:0 0 18px;color:var(--faint);font-size:14px}
@@ -93,12 +81,8 @@ html[data-desktop='darwin'] .shell.side-open .chat-header{padding-left:16px}
 .modal .np-help{margin:0 0 20px;font-size:13.5px}.modal .np-label{margin:0 0 14px;font-size:12.5px}.modal .np-input{height:34px;font-size:13.5px;border-radius:8px}
 .modal .np-folder{padding:7px 10px;border-radius:8px;font-size:13.5px}.modal .np-note{font-size:12px}
 .modal .np-actions .btn{height:32px;padding:0 14px;font-size:13.5px;border-radius:8px}
-.side-label{margin-top:14px}
-.side-top{height:62px}
-.side-item:focus{outline:none}
 .proj-more{-webkit-app-region:no-drag;display:grid;place-items:center;width:26px;height:26px;margin-left:2px;border:0;border-radius:7px;background:none;color:var(--faint);cursor:pointer}.proj-more:hover{background:var(--well);color:var(--ink-2)}
 /* Connections */
-.side-connections{margin-top:auto;color:var(--faint)}.side-connections svg{flex-shrink:0;margin:0 1px}
 .modal:has(.conn){width:min(520px,calc(100vw - 32px))}
 .conn{padding:14px 0;border-top:1px solid var(--line)}.conn:first-of-type{border-top:0}
 .conn-row{display:flex;align-items:center;gap:12px}.conn-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;background:var(--well);color:var(--muted);flex-shrink:0}
@@ -113,3 +97,51 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 .set-tabs{display:flex;gap:4px;margin:0;padding:3px;border-radius:9px;background:var(--well);width:max-content}.set-tabs button{border:0;background:none;padding:5px 12px;border-radius:7px;font:inherit;font-size:13px;color:var(--faint);cursor:pointer}.set-tabs button.on{background:var(--card);color:var(--ink-2);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .job-time{height:30px;padding:0 8px;border:1px solid var(--line-strong);border-radius:7px;font:inherit;font-size:13px;color:var(--ink-2);background:var(--card)}.job-time:disabled{color:var(--disabled)}
 .job-switch{appearance:none;position:relative;width:34px;height:20px;margin:0;border-radius:10px;background:var(--switch);cursor:pointer;transition:background .15s}.job-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}.job-switch:checked{background:var(--go)}.job-switch:checked::after{transform:translateX(14px)}
+
+/* The look: one font, four sizes (12 · 14 · 15 · 22), warm greys, 8px controls, 12px cards. */
+/* Sidebar: closed until opened from the header. */
+.side{width:232px;flex-shrink:0;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;padding:0 12px 14px;background:var(--side);border-right:1px solid var(--line);overflow-y:auto}
+.side-top{height:14px;flex-shrink:0;-webkit-app-region:drag}html[data-desktop='darwin'] .side-top{height:46px}
+.side-brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px;font-size:16px;font-weight:600;letter-spacing:-.2px;color:var(--ink)}.side-brand img{width:24px;height:26px}
+.side-item{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--ink-2);font:inherit;font-size:14px;text-align:left;text-decoration:none;cursor:pointer}
+.side-item:hover{background:var(--hover)}.side-item.sel{background:var(--selected);color:var(--ink);font-weight:500}.side-item svg{flex-shrink:0}.side-item .proj-dot{margin:0 4px}
+.side-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side-label{margin:20px 10px 6px;font-size:12px;font-weight:500;color:var(--faint)}
+.side-connections{margin-top:auto}
+@media(max-width:700px){.side{position:fixed;inset:0 auto 0 0;z-index:40;box-shadow:0 10px 40px #0000001f}}
+/* Header: sidebar button and page name, then quiet icon buttons. */
+.chat-header,html[data-desktop='darwin'] .chat-header{height:60px;padding:0 16px 0 14px;gap:8px;justify-content:flex-start;border-bottom:1px solid var(--line)}
+html[data-desktop='darwin'] .shell:not(.side-open) .chat-header{padding-left:84px}
+.side-toggle,.hdr-btn{-webkit-app-region:no-drag;display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;border-radius:8px;background:none;color:var(--faint);cursor:pointer;flex-shrink:0}
+.side-toggle:hover,.hdr-btn:hover{background:var(--well);color:var(--ink-2)}.hdr-btn:disabled{opacity:.4;cursor:default}.hdr-btn.coffee.on{color:var(--coffee)}
+.chat-header .ken-brand{display:flex;align-items:center;gap:8px;min-width:0;font-size:15px;font-weight:600;letter-spacing:-.1px;color:var(--ink)}
+.chat-header .header-actions{margin-left:auto;display:flex;align-items:center;gap:2px;padding:0}
+.chat-header .model-select{height:32px;margin-right:6px;padding:0 28px 0 12px;border:1px solid var(--line-strong);background-color:var(--card);color:var(--ink-2)}
+.chat-header .model-select:hover{background-color:var(--well)}
+/* Messages and composer */
+.txt{font-size:15px;line-height:1.6;letter-spacing:normal}
+.msg.you .bubble{background:var(--well);color:var(--ink);border-radius:16px;padding:10px 14px;font-size:15px;line-height:1.5}
+.msg.you .bubble code{background:var(--track)}
+.composer,.composer:focus-within{border:1px solid var(--line-strong);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+/* Buttons */
+.btn{height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--card);color:var(--ink-2);font-size:14px;font-weight:400}
+.btn:hover{background:var(--well)}
+.btn.primary{background:var(--primary);color:var(--primary-ink);border-color:transparent;font-weight:500}.btn.primary:hover{background:var(--primary-hover)}
+.btn.sm{height:32px;padding:0 12px;font-size:13px;border-radius:8px}
+/* Brain: a title, a line on what it is, and a card per part. */
+.knows-inner{max-width:880px;padding:40px 24px 48px}
+.knows-inner h1{margin:0 0 6px;font-size:22px;font-weight:600;letter-spacing:-.3px}
+.brain-intro{margin:0 0 24px;color:var(--faint)}
+.brain-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}
+.brain-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:116px;padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.brain-card:hover{border-color:var(--line-strong);background:var(--side)}
+.brain-card b{font-size:15px;font-weight:600}.brain-card span{color:var(--faint);overflow-wrap:anywhere}
+.brain-card i{margin-top:auto;font-style:normal;font-size:13px;color:var(--ink-2)}
+/* Settings: a switch for appearance instead of a menu. */
+.segmented{display:flex;padding:3px;border-radius:9px;background:var(--well)}
+.segmented button{height:30px;padding:0 14px;border:0;border-radius:7px;background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer}
+.segmented button[aria-checked='true']{background:var(--card);color:var(--ink);font-weight:500;box-shadow:0 1px 2px #00000014}
+:root[data-theme='dark'] .segmented button[aria-checked='true']{background:var(--selected)}
+.chat-bottom{max-width:768px;padding-left:24px;padding-right:24px}
+.chat-header .model-select{width:auto;max-width:200px}
+.conversation-thread{max-width:768px;margin:0 auto;padding:32px 24px 28px;gap:24px}

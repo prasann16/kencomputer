@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from brains import Brain, Session  # noqa: E402
-from engine import GREET_AFTER, HOME, Engine  # noqa: E402
+from engine import GREET_AFTER, HOME, Engine, friendly_error  # noqa: E402
 
 
 class FakeSession(Session):
@@ -448,3 +448,10 @@ async def test_work_stops_only_after_the_brain_goes_quiet():
     Session.last_activity = _time.monotonic()
     with pytest.raises(asyncio.TimeoutError):
         await engine_mod.until_idle(Session, silent(), limit=0.1)
+
+
+def test_failed_replies_read_as_plain_words_not_json():
+    codex = Exception('{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-astra\' model is not supported when using Codex with a ChatGPT account."}}')
+    assert friendly_error(codex, "Codex") == "Codex can't use that model with your account. Pick another model at the top and send again."
+    assert "expired" in friendly_error(Exception("401 Unauthorized"), "Claude")
+    assert friendly_error(Exception("disk full"), "Claude") == "Something went wrong: disk full"
