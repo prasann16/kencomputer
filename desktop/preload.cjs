@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   microphonePermission: () => ipcRenderer.invoke('microphone:permission'),
   microphoneSettings: (kind) => ipcRenderer.invoke('microphone:settings', kind),
   pickFolder: () => ipcRenderer.invoke('folder:pick'),
+  pickFiles: () => ipcRenderer.invoke('files:pick'),
   openFolder: (folder) => ipcRenderer.invoke('folder:open', folder),
   popupMenu: (items) => ipcRenderer.invoke('menu:popup', items),
   connectChrome: () => ipcRenderer.invoke('chrome:connect'),

@@ -481,3 +481,18 @@ async def test_a_turn_carries_its_phone_message_and_lets_go_after(engine):
 
     await engine.send_message(HOME, "hi", via="telegram", listener=listener, origin=7)
     assert seen == [7] and engine.chat_origin is None
+
+
+async def test_files_picked_in_the_mac_app_are_copied_by_path(engine, tmp_path, aiohttp_client):
+    from web import WebApp
+    app = WebApp(engine, tmp_path, rev="abc")
+    client = await aiohttp_client(app.build())
+    await client.get(f"/login?token={app.token}", allow_redirects=False)
+    picked = tmp_path / "picked"
+    picked.mkdir()
+    (picked / "receipt.pdf").write_bytes(b"%PDF-1")
+    r = await client.post("/api/chats/home/files/paths?attach=1", json={"paths": [str(picked / "receipt.pdf")]})
+    assert r.status == 200 and (await r.json())["saved"] == ["receipt.pdf"]
+    assert (engine.files_dir(HOME) / "receipt.pdf").read_bytes() == b"%PDF-1"
+    assert (await client.post("/api/chats/home/files/paths", json={"paths": [str(picked)]})).status == 400  # a folder isn't a file
+    assert (await client.post("/api/chats/home/files/paths", json={"paths": []})).status == 400
