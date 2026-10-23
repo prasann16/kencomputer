@@ -274,3 +274,4 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .modal:focus{outline:none}
 .settings-feedback{align-self:flex-start;margin-top:4px;font-size:12.5px;color:var(--faint)}.feedback .feedback-text{height:120px!important;padding:10px 12px!important;resize:vertical;margin-bottom:8px}.feedback .np-input{margin-top:0}.feedback .np-actions{margin-top:12px}
 .msg.from-job{flex-direction:column;gap:6px}
+.phone-lead-wait{height:190px}

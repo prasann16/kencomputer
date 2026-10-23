@@ -1,97 +1,85 @@
 # ken ●
 
-**Give your AI its own computer.**
+**Your assistant, on your computer.**
 
-Ken is Claude Code with a body: always on, reachable from your phone via Telegram — text or voice notes — with persistent memory, on a machine you own. Ship a fix from a hike. Have it plan your trip mid-run. Tell it something once; it knows it forever.
+Ken is an AI assistant that lives on your Mac. Text or talk to it from your desk or your
+phone, and it does the work: it reads your email and calendar, browses the web in your
+Chrome, makes files, runs things on a schedule, and checks with you before anything goes
+out. It runs on the Claude or ChatGPT subscription you already have, and everything it
+knows stays on your computer.
 
-Ken also supports the Codex harness. Connect Claude, Codex, or both in
-**Settings → AI accounts**, then choose a brain and model for each chat.
-For a local checkout, see the [development setup](desktop/README.md#development).
+🌐 **[kencomputer.dev](https://kencomputer.dev)**
 
-> You already pay for Claude. Ken gives it a body — heartbeat, hands, a home, and a memory.
+## Get it
 
-🌐 **[kencomputer.dev](https://kencomputer.dev)** · hosted version waitlist there too
+**Mac:** download [Ken for Apple Silicon](https://github.com/prasann16/kencomputer/releases/latest/download/Ken-arm64.dmg)
+or [Ken for Intel Macs](https://github.com/prasann16/kencomputer/releases/latest/download/Ken-x64.dmg),
+drag it into Applications and open it. Then:
 
-## Install
+1. **Connect Claude or ChatGPT.** One click signs in with the subscription you already have
+   (Claude Pro or Max, or a paid ChatGPT plan through Codex). No API keys, no per-token bills.
+2. **Add your phone (optional).** Scan a QR code and Ken is in your Telegram: same Ken, same
+   conversation, text or voice notes from anywhere.
 
-One command, on a Mac or any Linux box (a $5 VPS is Ken's favorite home — it never sleeps there):
+Ken updates itself.
+
+**Linux or a server:** one command installs the same Ken, run from the terminal and reached
+through Telegram. A $5 VPS is a fine home; it never sleeps there.
 
 ```bash
 curl -fsSL https://kencomputer.dev/install | bash
 ```
 
-~2 minutes. The installer walks you through everything:
+## What it does
 
-1. **Create a Telegram bot** — message [@BotFather](https://t.me/BotFather), send `/newbot`, paste the token.
-2. **Pair your account** — send the installer's one-time code to your new bot in a private chat; Ken locks itself to your Telegram account.
-3. **Connect Claude** — sign in with the Claude subscription you already have. No API keys, no per-token bills.
+- **One conversation.** Ask for anything in plain words, in the app or on Telegram. Ken does
+  the work itself and tells you what it did.
+- **Voice notes**, transcribed on your computer (the audio never leaves it).
+- **A morning brief** with what matters today, and a **nightly review** that files the day
+  into Ken's memory. Pick the times, or add your own scheduled jobs in Settings → Jobs or by
+  just asking.
+- **Memory.** Tell Ken something once and it remembers. Everything it knows is in
+  **Brain**: who Ken is, what it remembers, and the accounts and passwords you've given it,
+  all readable and editable.
+- **Your tools.** Chrome (your signed-in browser), email and calendar connect in
+  Settings → Tools. Anything with a CLI, an API or an MCP server, Ken can set up itself;
+  [recipes](recipes/) cover the fiddly sign-ins.
+- **Claude and ChatGPT, side by side.** Connect either or both, and pick the AI and model
+  for each chat from the menu at the top.
+- **Agents.** Ask Ken to give an ongoing job its own agent ("run my newsletter"), with its
+  own chat, memory, schedule and tools. Ken, the chief of staff, sees all of them.
+- **Asks first.** Ken checks with you before sending email, posting publicly, merging or
+  spending money.
+- **Light and dark**, and an optional "keep this Mac awake" so Ken works while you're away.
+- **Another Mac (optional).** Settings → Computers lets you use Ken running on another Mac,
+  over a Cloudflare tunnel you control.
 
-Then just talk to it.
+## Requirements
 
-## What you get
+- A Mac (Apple Silicon or Intel) for the app, or macOS/Linux with `git` for the terminal install
+- A Claude subscription (Pro or Max) or a paid ChatGPT plan
+- Telegram, only if you want Ken on your phone
 
-- **A real assistant on a real computer** — it runs Claude Code (Anthropic's own agent) with full access to its machine: installs tools, runs code, browses the web, manages projects, sets up its own cron jobs.
-- **Voice notes** — transcribed locally on your machine (never sent to a third party), then handled like text.
-- **A morning brief** — every day, first thing, without asking: open loops, what's on today, weather if it knows your city. Pick the time in your first conversation; a nightly review writes memory so tomorrow's brief knows more.
-- **Persistent memory** — Ken keeps notes on you, your projects, and your rules in `~/.ken/work/SOUL.md` — its soul file. Tell it once — it knows tomorrow. It updates its own memory when you say "remember…".
-- **Model switching** — `/model opus`, `/model haiku`, `/model default`. Live list from your own account.
-- **Concurrent tasks** — give Ken several jobs and keep talking while they run; steer, pause, stop, resume, retry, or ask it to check the work, all in the main conversation.
-- **Controls** — `/stop` stops the current reply; name a background task to stop that job. `/new` starts a fresh conversation and keeps background work.
+## Privacy and security, honestly
 
-## Connecting things
+- **It's a real assistant with real access.** Ken runs as your user and can do what you can
+  do in a terminal, without asking for each command. That's what makes it able to do things.
+  Run it on a computer you're comfortable giving it.
+- **Your data stays on your computer.** Conversations, memory, files and passwords live in
+  `~/.ken/`, as plain files you can read and delete. Not encrypted at rest, so treat that
+  computer like the personal computer it is. Passwords are only readable by you.
+- **What leaves it:** your messages go to Claude or ChatGPT to be answered, the same as using
+  them directly, and through Telegram if you use Ken on your phone. Anonymous crash reports
+  and usage counts (never what you say, your files or your logins) can be turned off in
+  Settings → Privacy. [Exactly what's sent](https://kencomputer.dev/privacy).
+- **Nothing is reachable from outside.** The app talks to Ken on `127.0.0.1` with a private
+  token. Using Ken from another Mac is off unless you turn it on.
+- **Only you.** On Telegram, Ken answers only your account.
 
-Ken connects to services by following **recipes** — markdown playbooks it reads and acts on
-([recipes/](recipes/)). Say "connect my email" and it walks you through it in the chat:
-direct links for the bits only you can do, credentials stored on your machine at
-`~/.ken/credentials/` (chmod 600), a verification step so you know it worked.
-
-No plugin system, no marketplace: if a service has a CLI, an API, or an MCP server, Ken can
-use it — recipes just mean it doesn't have to figure out the fiddly sign-in dance twice.
-Wrote one? PRs welcome.
-
-## Desktop app
-
-Ken now has a desktop prototype with Today, conversations, projects, a connection to your signed-in Chrome, file previews, local voice input, and scheduled briefs. It uses the existing engine and local memory; Telegram is optional. See [desktop setup, builds, and current limitations](desktop/README.md).
-
-```sh
-npm ci
-npm run desktop
-```
-
-Install the Python desktop dependencies first as described in the desktop guide. Mac has been exercised locally; Windows build configuration is included and needs native validation.
-
-## The app
-
-`ken open` opens Ken as an app: one main conversation for requests, progress, and
-results, shared with Telegram. Long jobs run in independent worker sessions; their
-cards stay in the main chat with controls and work history. Ken can use configured
-specialist agents behind those tasks without asking you to switch conversations.
-
-Up to four tasks run concurrently. Their instructions, attempts, session IDs, and
-checkpoints survive restarts; interrupted work waits for you to resume it. A
-worker's result is unverified until a fresh review session checks the evidence.
-See [task execution and recovery](TASKS.md) for the lifecycle and development checks.
-
-An agent does one job for you ("run Myreader", "grow my X following"). Click **New agent**,
-say what it should do, and it sets itself up. Each agent is a folder in `~/.ken/agents/<id>/`:
+## Terminal install: manage it
 
 ```
-CONTEXT.md     who it is, its goal, its rules — read with every message
-jobs.json      its schedule (same format as ~/.ken/jobs.json)
-tools.json     what it may use: {"use": ["browser", "email", "calendar"], "mcp": {...any MCP server}}
-autonomy.json  what it does alone, what it asks you first
-memory/        its own notes
-files/         what you drop into its chat
-```
-
-An agent sees only its own folder. Ken itself is the chief of staff: it sees every agent,
-checks how they're doing, and can hand them work or create new ones. Drop files in and
-Ken looks at them straight away. It updates when Ken does, and on a phone you can add it
-to your home screen. Telegram is optional.
-
-## Manage it
-
-```
+ken open       open Ken in your browser
 ken status     is it running?
 ken logs       recent activity
 ken update     pull the latest version and restart
@@ -101,29 +89,14 @@ ken config     edit settings
 ken uninstall  remove Ken (keeps your memory & settings)
 ```
 
-## Requirements
+## Development
 
-- macOS or Linux and `git`. The installer sets up Python 3.13 itself (via uv, no sudo)
-- A [Claude](https://claude.ai) subscription (Pro or Max)
-- A Telegram account
-
-## Security notes, honestly
-
-- Ken runs Claude Code with `--dangerously-skip-permissions` in its workspace — that's what makes it *able to do things*. Run it on a machine you're comfortable giving it. A cheap dedicated VPS is the sweet spot: full power, blast radius of one.
-- Only your Telegram user ID gets answered; everyone else is ignored.
-- Your credentials live in `~/.ken/.env` (chmod 600) on your machine — nowhere else.
-- Everything Ken remembers is plaintext on your disk: `SOUL.md`, its journal, and full conversation transcripts in `~/.ken/history/`. Readable and deletable by you at any time — and not encrypted at rest, so treat that machine like the personal computer it is.
-- What it can and can't reach: it runs as your user, so it can do what you can do in a terminal — but it has no admin rights unless you grant them, and on macOS the system keeps background processes out of Desktop, Documents, Downloads, Photos, Calendar and Contacts until you explicitly allow it in Privacy & Security.
-- Nothing listens on any port. The bot polls Telegram outbound; there is no inbound surface.
-- The entire harness is [one Python file](bot.py) — read it over coffee.
-
-## The hosted version
-
-Don't want to run anything? [kencomputer.dev](https://kencomputer.dev) — we stamp a hardened server with Ken preinstalled, you connect two accounts, done. Join the waitlist.
-
-Setting up fresh boxes for the pilot? See the [VPS deployment guide](deploy/README.md)
-for preparation, owner onboarding, service checks, and backup/restore drills.
+Ken is one engine (`bot.py`, `engine.py`, `brains.py`) with windows onto it: the chat page in
+`web/`, shown in the Mac app (`desktop/`), and Telegram. See the
+[desktop guide](desktop/README.md) for running a checkout (`./dev.sh`), building, releasing
+and tests (`tests/check.sh`). Setting up servers for someone else? See the
+[VPS deployment guide](deploy/README.md).
 
 ## License
 
-MIT — do whatever, no warranty. Built by [Prasann](https://x.com/prasann_pandya), who talks to his Ken every day.
+MIT, no warranty. Built by [Prasann](https://x.com/prasann_pandya), who talks to his Ken every day.

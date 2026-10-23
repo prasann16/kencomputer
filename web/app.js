@@ -1,7 +1,6 @@
 // Ken: one conversation, with tools and settings available when needed.
 import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
 import { ComputerBar, ComputerSettings, computerUrl, computerStorage, isRemote } from '/computers.js';
-import { TaskCard, TaskSummary } from '/tasks.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -509,13 +508,10 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
-  // Scheduled jobs arrive as Ken's messages; only one waiting on you shows as a card.
-  const tasks = pid === 'home' ? (data?.tasks || []).filter((t) => !(t.request_key || '').startsWith('schedule:') || t.state === 'waiting') : [];
   const timeline = [
-    ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
+    ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery === 'failed' && !m.audio && html`<div class="delivery" role="status">Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button></div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
-    ...tasks.filter(t=>t.updated>clearedAt || ['queued','running','reviewing','steering','stopping','pausing','waiting','interrupted','needs_review'].includes(t.state)).map(t=>({t:t.created,key:'task-'+t.id,el:html`<${TaskCard} task=${t} api=${api} toast=${toast} renderText=${md}/>`})),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
   // One continuous conversation, never a blank page. Opening a chat lands on the first unread
@@ -561,11 +557,11 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
           <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
-        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') && html`<${Live} stream=${stream} activity=${activity}/>`}
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Live} stream=${stream} activity=${activity}/>`
+          : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>
     </div>
     <div class="chat-bottom">
-      <${TaskSummary} tasks=${tasks}/>
       ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
@@ -717,11 +713,12 @@ function PhoneSteps({ toast, onPaired }) {
   const [phone, setPhone] = useState(null);
   const [botToken, setBotToken] = useState(''), [found, setFound] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const waiting = phone && !phone.paired && !phone.connected;
+  const [noHandoff, setNoHandoff] = useState(false);  // the QR couldn't be made: show the steps instead
   useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
   // Send it from the phone (encrypted, through kencomputer.dev): a QR while they're on this step.
   useEffect(() => {
     if (!waiting || phone.handoff) return;
-    api('/api/phone/handoff', { json: {} }).then((h) => setPhone((p) => ({ ...p, handoff: h }))).catch(() => {});
+    api('/api/phone/handoff', { json: {} }).then((h) => setPhone((p) => ({ ...p, handoff: h }))).catch(() => setNoHandoff(true));
   }, [waiting, !!phone?.handoff]);  // and again after "No, it isn't"
   useEffect(() => () => { api('/api/phone/handoff', { method: 'DELETE' }).catch(() => {}); }, []);
   // Every 2s: has the phone sent the code, or tapped Start on the new bot?
@@ -765,7 +762,8 @@ function PhoneSteps({ toast, onPaired }) {
   if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and say hi.</p>
     <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Use a different bot</button></div>`;
   return html`<div class="phone-steps-box">
-    ${phone.handoff?.qr ? html`<div class="phone-lead">
+    ${!phone.handoff && !noHandoff ? html`<div class="phone-lead phone-lead-wait" aria-busy="true"></div><p class="phone-lead-note">Scan with your phone\u2019s camera. It walks you through making your Telegram bot, about 2 minutes.</p>`
+    : phone.handoff?.qr ? html`<div class="phone-lead">
         <div class="phone-lead-qr" dangerouslySetInnerHTML=${{ __html: phone.handoff.qr }}></div>
         <video class="phone-video" src="/media/botfather.mp4" autoplay muted loop playsinline aria-label="What you'll do in Telegram"></video>
       </div>
@@ -828,10 +826,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
     if (s.state === 'ready') setUpdate((u) => ({ ...u, ready: s.version }));
     if (s.state === 'channel') setUpdate((u) => ({ ...u, channel: s.channel, ready: null }));
   }); }, []);
-  const changeUpdateChannel = async (channel) => {
-    try { await window.kenDesktop.setUpdateChannel(channel); setUpdate((u) => ({ ...u, channel, ready: null })); toast(channel === 'beta' ? 'Beta updates enabled.' : 'Stable updates enabled. Ken will wait for a newer stable release.'); }
-    catch (e) { toast(e.message); }
-  };
+
   const [jobs, setJobs] = useState([]), [tab, setTab] = useState('claude');
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
@@ -844,7 +839,6 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
-    ${update?.channel && html`<div class="appearance"><label for="update-channel">Updates on this Mac</label><select id="update-channel" class="model-select" value=${update.channel} onChange=${(e) => changeUpdateChannel(e.target.value)}><option value="stable">Stable</option><option value="beta">Beta · early releases</option></select></div>`}
     <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy'], ['computers', 'Computers']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>

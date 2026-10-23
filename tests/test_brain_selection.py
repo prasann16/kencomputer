@@ -37,7 +37,7 @@ async def test_both_runtimes_can_answer_concurrently(engine, monkeypatch):
     tasks = [asyncio.create_task(engine.send_message(pid, "hello")) for pid in (HOME, "coder")]
     try:
         await asyncio.wait_for(asyncio.gather(*(e.wait() for e in entered.values())), 2)
-        assert set(engine.chats[HOME].mcp_fn()) == {"tasks"}  # main Ken on Claude supervises tasks
+        assert engine.chats[HOME].mcp_fn() == {"runtime": "claude"}
         assert engine.chats["coder"].mcp_fn() == {"runtime": "codex"}
         with pytest.raises(ValueError, match="finish"):
             await engine.set_runtime(HOME, backend="codex")

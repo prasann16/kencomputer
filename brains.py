@@ -29,8 +29,6 @@ class Session:
     session_id: str | None = None
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
-    supervisor: bool = False
-    on_session_id: Callable[[str], None] | None = None
 
     async def ask(
         self, prompt: str, on_text: OnText, on_tool: OnTool | None = None, on_delta: OnText | None = None
@@ -122,10 +120,6 @@ class ClaudeSession(Session):
             # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
             setting_sources=[],
             strict_mcp_config=True,
-            # Main Ken only manages work and its own notes. Execution tools live
-            # in independent worker sessions, so a long command cannot hold chat.
-            tools=["Read", "Glob", "Grep", "Write", "Edit"] if self.supervisor else None,
-            max_turns=12 if self.supervisor else None,
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
@@ -189,7 +183,6 @@ class ClaudeSession(Session):
         last_text = ""
         final = None
         partial = ""
-        recorded_session = None
         try:
             await self.client.query(prompt)
             async for msg in self.client.receive_response():
@@ -199,9 +192,6 @@ class ClaudeSession(Session):
                 sid = msg.data.get('session_id') if isinstance(msg, SystemMessage) else getattr(msg, 'session_id', None)
                 if sid:
                     self.session_id = sid
-                    if self.on_session_id and sid != recorded_session:
-                        self.on_session_id(sid)
-                        recorded_session = sid
                 if isinstance(msg, StreamEvent):
                     ev = msg.event or {}
                     if ev.get("type") == "message_start":
