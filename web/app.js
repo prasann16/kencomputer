@@ -589,11 +589,11 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
 
 // First run: the selected backend owns its sign-in flow.
 function Connect({ onDone, backend = 'claude', start = false, onBack }) {
-  const isCodex = backend === 'codex', label = isCodex ? 'Codex' : 'Claude';
+  const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
   const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const go = async (body) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); if (isCodex) window.open(r.url, '_blank', 'noopener'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   };
   useEffect(() => { if (start) go({ action: 'start' }); }, []);
@@ -605,11 +605,12 @@ function Connect({ onDone, backend = 'claude', start = false, onBack }) {
   }, [step]);
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
   return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect ${label}</h1>
-    ${step === 'start' && html`<p>${isCodex ? 'Ken uses Codex on this computer. Sign in with ChatGPT to get started.' : 'Ken runs on your Claude subscription. Sign in once and you’re set.'}</p>
+    ${step === 'start' && html`<p>Sign in with your ${label} account. Ken uses your plan, so there’s nothing else to pay.</p>
       <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? `Opening ${label}…` : `Connect ${label}`}</button>`}
-    ${step === 'code' && html`<p>${isCodex ? 'Sign in with ChatGPT in your browser. Ken connects by itself once you’re done.' : 'Approve Ken in your browser and Ken connects by itself. If Claude shows you a code instead, paste it here.'}</p>${!isCodex && html`${field('Paste the code')}
+    ${step === 'code' && html`<p>Finish signing in in your browser. Ken connects by itself.</p>
+      <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
+      ${!isCodex && html`<p class="connect-code-note">If Claude shows you a code instead, paste it here.</p>${field('Paste the code')}
       <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>`}
-      ${isCodex ? html`<a class="btn primary" href=${url} target="_blank" rel="noopener">Open ChatGPT sign-in</a>` : html`<a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>`}
       ${!onBack && html`<button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}`}
     ${onBack && html`<button class="text-action" disabled=${busy} onClick=${onBack}>Back</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
@@ -624,7 +625,7 @@ function FirstConnect({ onPick, onDone }) {
   return html`<div class="connect first-connect"><img src="/ken.svg" alt=""/><h1>Connect Ken</h1>
     <p>Ken runs on your Claude or ChatGPT subscription. Sign in once and you’re set.</p>
     <button class="btn primary" onClick=${() => pick('claude')}>Connect Claude</button>
-    <button class="btn primary" onClick=${() => pick('codex')}>Connect ChatGPT (Codex)</button>
+    <button class="btn primary" onClick=${() => pick('codex')}>Connect ChatGPT</button>
     <p class="first-connect-note">You can add the other one later in Settings.</p></div>`;
 }
 
@@ -1252,7 +1253,7 @@ function App() {
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
   return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
-    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => changeRuntime({ backend })} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or Codex above. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
