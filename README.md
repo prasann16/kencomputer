@@ -51,8 +51,6 @@ curl -fsSL https://kencomputer.dev/install | bash
 - **Asks first.** Ken checks with you before sending email, posting publicly, merging or
   spending money.
 - **Light and dark**, and an optional "keep this Mac awake" so Ken works while you're away.
-- **Another Mac (optional).** Settings → Computers lets you use Ken running on another Mac,
-  over a Cloudflare tunnel you control.
 
 ## Requirements
 
@@ -73,7 +71,7 @@ curl -fsSL https://kencomputer.dev/install | bash
   and usage counts (never what you say, your files or your logins) can be turned off in
   Settings → Privacy. [Exactly what's sent](https://kencomputer.dev/privacy).
 - **Nothing is reachable from outside.** The app talks to Ken on `127.0.0.1` with a private
-  token. Using Ken from another Mac is off unless you turn it on.
+  token.
 - **Only you.** On Telegram, Ken answers only your account.
 
 ## Terminal install: manage it

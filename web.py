@@ -21,7 +21,6 @@ from typing import Callable
 from aiohttp import WSMsgType, web
 
 from engine import HOME, Engine
-from computers import Computers, SELECTION_COOKIE, local_request
 
 log = logging.getLogger("ken")
 
@@ -63,7 +62,6 @@ class WebApp:
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
-        self.computers = Computers(home, rev)
 
     # ------------------------------------------------------------------ auth
 
@@ -77,19 +75,12 @@ class WebApp:
     @web.middleware
     async def auth_mw(self, request: web.Request, handler):
         path = request.path
-        if self.computers.authenticates(request):
-            if not path.startswith("/api/") or path.startswith("/api/computers"):
-                return _json({"error": "Computer settings are only available on that Mac."}, 403)
-            request["ken_remote"] = True
-            return await handler(request)
-        if not local_request(request):
-            return _json({"error": "Server access is off or the server key is invalid."}, 401)
         origin = request.headers.get("Origin")
         if origin and origin != f"{request.scheme}://{request.host}":
             return _json({"error": "Untrusted origin."}, 403)
         if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
             return await handler(request)
-        if path.startswith(("/api/", "/remote/")):
+        if path.startswith("/api/"):
             return _json({"error": "not signed in"}, 401)
         return web.Response(
             text=(
@@ -135,10 +126,6 @@ class WebApp:
     # ------------------------------------------------------------------ pages
 
     async def index(self, request: web.Request) -> web.FileResponse:
-        if request.path == "/":
-            selected = request.cookies.get(SELECTION_COOKIE)
-            if selected and self.computers.get(selected):
-                raise web.HTTPFound("/computer/" + selected)
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
             "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; frame-src 'none'; base-uri 'none'",
@@ -600,8 +587,6 @@ class WebApp:
         ws = web.WebSocketResponse(heartbeat=25)
         await ws.prepare(request)
         self.websockets.add(ws)
-        if request.get("ken_remote"):
-            self.computers.remote_sockets.add(ws)
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -618,7 +603,6 @@ class WebApp:
         finally:
             pumping.cancel()
             self.engine.unsubscribe(q)
-            self.computers.remote_sockets.discard(ws)
             self.websockets.discard(ws)
             await asyncio.gather(pumping, return_exceptions=True)
         return ws
@@ -633,10 +617,8 @@ class WebApp:
     def build(self) -> web.Application:
         app = web.Application(middlewares=[self.auth_mw], client_max_size=MAX_UPLOAD)
         app.on_shutdown.append(self.shutdown)
-        self.computers.install(app)
         r = app.router
         r.add_get("/", self.index)
-        r.add_get("/computer/{cid:[a-f0-9]{16}}", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
         r.add_get("/api/models", self.model_catalog)
