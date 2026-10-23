@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from pathlib import Path
 from typing import Awaitable, Callable
 
 log = logging.getLogger("ken")
@@ -78,6 +79,16 @@ def describe_tool(name: str, args: dict) -> str:
     return name
 
 
+def skills_plugin(cwd: str) -> list[dict]:
+    """Skills in <cwd>/.claude/skills load as a local plugin once that folder has a plugin
+    manifest (Ken writes one for its own workspace). Only the skills: setting_sources stays
+    empty, so that folder's settings, hooks and CLAUDE.md never apply."""
+    root = Path(cwd) / ".claude"
+    if (root / ".claude-plugin" / "plugin.json").is_file() and (root / "skills").is_dir():
+        return [{"type": "local", "path": str(root)}]
+    return []
+
+
 class ClaudeSession(Session):
     """A persistent Claude Code session (Agent SDK): no per-message cold start."""
 
@@ -120,6 +131,7 @@ class ClaudeSession(Session):
             # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
             setting_sources=[],
             strict_mcp_config=True,
+            plugins=skills_plugin(self.cwd),
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()

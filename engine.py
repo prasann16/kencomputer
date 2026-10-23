@@ -107,6 +107,23 @@ async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
 BUILTIN_TOOLS = ("browser", "email", "calendar")
 
 
+def ensure_skills_plugin(workspace: Path) -> None:
+    """Make <workspace>/.claude a local plugin, so skills installed there with
+    `npx skills add <pkg> -a claude-code` (run in the workspace) reach Ken."""
+    manifest = workspace / ".claude" / ".claude-plugin" / "plugin.json"
+    if manifest.exists():
+        return
+    try:
+        (workspace / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({
+            "name": "ken-skills",
+            "description": "Skills installed in Ken's workspace (npx skills add <pkg> -a claude-code)",
+        }, indent=2) + "\n")
+    except OSError as e:
+        log.warning("couldn't set up the skills folder: %s", e)
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s[:40] or "project"
@@ -160,11 +177,16 @@ class Engine:
         self.run_sessions: dict[str, object] = {}
         self.run_slots = asyncio.Semaphore(4)
         self._bg: list[asyncio.Task] = []
+        # The phone message behind the turn in progress, and behind each run/approval it started, so
+        # their results can quote it in Telegram instead of whatever the human said last.
+        self.chat_origin: int | None = None
+        self.origins: dict[str, int] = {}
 
     def configure_home(self, cwd: Path, system: Callable[[], str], project_system: Callable[[], str] | None = None) -> None:
         self.home_cwd = Path(cwd)
         self.home_system = system
         self.agent_base = project_system or system
+        ensure_skills_plugin(self.home_cwd)
 
     def start(self) -> None:
         try:
@@ -932,6 +954,7 @@ class Engine:
         listener: Callable[[str], Awaitable[None]] | None = None,
         quiet: bool = False,
         job: dict | None = None,
+        origin: int | None = None,
     ) -> bool:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it)."""
@@ -947,6 +970,8 @@ class Engine:
         await lock.acquire()
         try:
             self.chat_tasks.add(asyncio.current_task())
+            if pid == HOME:
+                self.chat_origin = origin
             body = f"{await self.state(pid, via)}\n{body}"
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
@@ -1002,6 +1027,8 @@ class Engine:
                 self.broadcast("chat.busy", pid, busy=False)
             return outcome == 'ok'
         finally:
+            if pid == HOME:
+                self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
 
@@ -1142,9 +1169,11 @@ class Engine:
         args.append(limit)
         return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
-    def start_run(self, pid: str, title: str, prompt: str, source: str = "you") -> dict:
+    def start_run(self, pid: str, title: str, prompt: str, source: str = "you", origin: int | None = None) -> dict:
         self.get_agent(pid)
         rid = uuid.uuid4().hex[:10]
+        if origin or self.chat_origin:
+            self.origins[rid] = origin or self.chat_origin
         self.db.execute(
             "INSERT INTO runs (id, project, title, prompt, source, status, created, activity) VALUES (?,?,?,?,?,?,?,?)",
             (rid, pid, title.strip()[:120] or "Task", prompt, source, "queued", time.time(), "waiting to start"),
@@ -1206,7 +1235,8 @@ class Engine:
             if self._run_row(rid)["status"] == "stopped":
                 status = "stopped"
             self._set_run(rid, status=status, finished=time.time(), summary=summary[:4000], activity="")
-            self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600])
+            self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
+                      origin=self.origins.pop(rid, None))
             if status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
 
@@ -1240,7 +1270,9 @@ class Engine:
              next_step.strip()[:2000], "pending", time.time()),
         )
         a = self.get_approval(aid)
-        self.emit("approval.created", project=pid, approval=a)
+        if self.chat_origin:
+            self.origins[aid] = self.chat_origin
+        self.emit("approval.created", project=pid, approval=a, origin=self.chat_origin)
         return a
 
     def get_approval(self, aid: str) -> dict:
@@ -1257,6 +1289,7 @@ class Engine:
         if a["status"] != "pending":
             return a
         approved = decision == "approve"
+        origin = self.origins.pop(aid, None)
         final = (body if body is not None else a["body"]).strip()
         self.db.execute(
             "UPDATE approvals SET status=?, resolved=?, final_body=? WHERE id=?",
@@ -1270,7 +1303,7 @@ class Engine:
             if a["project"] == HOME:
                 asyncio.create_task(self.send_message(HOME, "", prompt=go, log_user=False))
             else:
-                self.start_run(a["project"], a["title"], go, source="approval")
+                self.start_run(a["project"], a["title"], go, source="approval", origin=origin)
         return a
 
     # ------------------------------------------------------------------- views

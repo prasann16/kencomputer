@@ -43,7 +43,8 @@ from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
 from ken_mcp import external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+import video
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, InvalidToken
 from telegram.ext import (
@@ -109,7 +110,13 @@ def video_prompt() -> str:
         "transcript with timestamps; pick the strongest moments; cut each one with ffmpeg. For Reels, TikTok "
         "and Shorts crop to 9:16 at 1080x1920 and burn in captions with the subtitles filter, from an .srt "
         "you write for that clip's own times. Never change the original; save clips next to it and say where. "
-        "Show them the clips before anything is posted."
+        "Show them the clips before anything is posted. "
+        "MAKING VIDEOS (promo, demo, explainer, social post): use your HyperFrames skills (HTML compositions "
+        "rendered to mp4, the default) or your Remotion skills (React, when they ask for it or the video is "
+        "data-driven). Work in a folder under videos/ in your workspace, render locally, one render at a time "
+        "(this computer has no GPU, so keep it to 720p or 1080p and under a minute unless they ask). Vertical "
+        "1080x1920 for Reels, Shorts and X, square or 16:9 for LinkedIn. Watch your own output before sending: "
+        "grab a few frames with ffmpeg and look at them. Then copy the mp4 to the outbox."
     )
 
 
@@ -158,6 +165,25 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
+async def send_video(bot, chat_id: int, path: Path) -> bool:
+    """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
+    over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
+    ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
+    if ready is None:
+        return False
+    out, meta = ready
+    try:
+        with open(out, "rb") as fh:
+            await bot.send_video(
+                chat_id, fh, caption=path.name, filename=path.with_suffix(".mp4").name,
+                supports_streaming=True, write_timeout=300, read_timeout=300, **meta,
+            )
+    finally:
+        if out != path:
+            out.unlink(missing_ok=True)
+    return True
+
+
 async def flush_outbox(bot, chat_id: int) -> None:
     """Anything the assistant drops in ~/.ken/outbox is delivered to the chat."""
     try:
@@ -169,6 +195,10 @@ async def flush_outbox(bot, chat_id: int) -> None:
             try:
                 size = path.stat().st_size
                 if size == 0:
+                    path.unlink(missing_ok=True)
+                    continue
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path):
+                    log_history("assistant", f"[sent video: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
                 if size > TELEGRAM_FILE_LIMIT:
@@ -253,7 +283,8 @@ WORK_RULES = (
     f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
     f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
     "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, everything else as documents. Copy, don't "
+    "from the outbox; images arrive as photos, videos as playable videos (converted and shrunk to fit "
+    "Telegram's 50MB automatically), everything else as documents. Copy, don't "
     "move, if the original matters. Say what you're sending in your reply — the file arrives "
     "right after it. When they wrote from the app, also say where the file is saved. "
 )
@@ -566,13 +597,36 @@ def split_chunks(text: str, limit: int = TELEGRAM_MAX) -> list[str]:
     return chunks
 
 
-async def send_chunked(update: Update, text: str) -> None:
+def quoting(message_id: int | None) -> dict:
+    """Send kwargs that quote one message, still sending if it was deleted meanwhile."""
+    if not message_id:
+        return {}
+    return {"reply_parameters": ReplyParameters(message_id=message_id, allow_sending_without_reply=True)}
+
+
+def reply_context(msg) -> str:
+    """When they swipe-reply to an earlier message, Ken is told which one (or which part of it)."""
+    earlier = msg.reply_to_message
+    if earlier is None:
+        return ""
+    quoted = (msg.quote.text if msg.quote else "") or earlier.text or earlier.caption or ""
+    if not quoted.strip():
+        return ""
+    whose = "your" if earlier.from_user and earlier.from_user.is_bot else "their own"
+    return f'(They are replying to {whose} earlier message: "{quoted[:800]}")\n'
+
+
+async def send_chunked(update: Update, text: str, quote: bool = True) -> None:
+    """A reply quotes the message it answers (first chunk only), so it threads in the chat.
+
+    Telegram only auto-quotes in groups; in a private chat the quote has to be asked for."""
     text = text.strip() or "(done — no output)"
-    for chunk in split_chunks(text):
+    for i, chunk in enumerate(split_chunks(text)):
+        quote_kw = {"do_quote": quote and i == 0, "allow_sending_without_reply": True}
         try:
-            await update.effective_message.reply_text(md_to_html(chunk), parse_mode=ParseMode.HTML)
+            await update.effective_message.reply_text(md_to_html(chunk), parse_mode=ParseMode.HTML, **quote_kw)
         except BadRequest:
-            await update.effective_message.reply_text(chunk)
+            await update.effective_message.reply_text(chunk, **quote_kw)
 
 
 async def keep_typing(update: Update, stop: asyncio.Event) -> None:
@@ -587,21 +641,25 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
             pass
 
 
-async def handle_prompt(update: Update, prompt: str) -> None:
+async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("Got it — I’ll read this next.")
+        await update.effective_message.reply_text("Got it — I’ll read this next.", do_quote=True, allow_sending_without_reply=True)
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
+        quoted = False
+
         async def deliver(text: str) -> None:
-            await send_chunked(update, text)
+            nonlocal quoted  # a turn can say several things; only its first message quotes theirs
+            await send_chunked(update, text, quote=not quoted)
+            quoted = True
             await flush_outbox(update.get_bot(), chat_id)
 
         await ENGINE.send_message(
             HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
-            prompt=prompt,
+            prompt=context + prompt, origin=update.effective_message.message_id,
         )
     finally:
         stop.set()
@@ -702,7 +760,7 @@ async def pair_here(update: Update) -> bool:
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update) and not await pair_here(update):
         return
-    await handle_prompt(update, update.effective_message.text)
+    await handle_prompt(update, update.effective_message.text, reply_context(update.effective_message))
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -761,8 +819,8 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not text:
         await msg.reply_text("🎙️ Couldn't make out any speech in that one.")
         return
-    await msg.reply_text(f"🎙️ “{text}”")
-    await handle_prompt(update, text)
+    await msg.reply_text(f"🎙️ “{text}”", do_quote=True, allow_sending_without_reply=True)
+    await handle_prompt(update, text, reply_context(msg))
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -842,14 +900,17 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def send_outbound(bot, text: str) -> None:
+async def send_outbound(bot, text: str, reply_to: int | None = None) -> None:
+    """Ken speaking first. It quotes `reply_to` (the message that started this work) when there
+    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last."""
     if bot is None or not ALLOWED_USER_ID:
         return
-    for chunk in split_chunks(text.strip() or "…"):
+    for i, chunk in enumerate(split_chunks(text.strip() or "…")):
+        quote = quoting(reply_to if i == 0 else None)
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML)
+            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk)
+            await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1156,11 +1217,13 @@ async def notify_telegram(app) -> None:
                     InlineKeyboardButton("✓ Approve", callback_data=f"appr:{a['id']}:approve"),
                     InlineKeyboardButton("Skip", callback_data=f"appr:{a['id']}:skip"),
                 ]])
-                await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons)
+                await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
+                                           **quoting(ev.get("origin")))
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
-                await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
+                await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
+                                    reply_to=ev.get("origin"))
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 

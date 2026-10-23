@@ -113,13 +113,15 @@ async def test_saying_hi_pairs_a_just_connected_bot(phone, monkeypatch):
     monkeypatch.setattr(bot, "PHONE", phone)
     replies, prompts = [], []
 
-    async def handle(update, text):
+    async def handle(update, text, context=""):
         prompts.append(text)
 
     monkeypatch.setattr(bot, "handle_prompt", handle)
 
     class Msg:
         text = "hi"
+        message_id = 1
+        reply_to_message = None
         async def reply_text(self, text, **kw):
             replies.append(text)
 
@@ -132,3 +134,31 @@ async def test_saying_hi_pairs_a_just_connected_bot(phone, monkeypatch):
     assert bot.ALLOWED_USER_ID == 111 and replies and "Connected" in replies[0] and prompts == ["hi"]
     await bot.on_text(update(222), None)  # the bot is theirs now: a stranger gets nothing
     assert prompts == ["hi"] and bot.ALLOWED_USER_ID == 111
+
+
+async def test_ken_speaking_first_quotes_only_what_started_the_work(monkeypatch):
+    sent = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kw):
+            sent.append(kw.get("reply_parameters"))
+
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 111)
+    await bot.send_outbound(FakeBot(), "☀️ brief")  # a job answers nobody
+    await bot.send_outbound(FakeBot(), "x" * (bot.TELEGRAM_MAX + 10), reply_to=42)  # a run started by message 42
+    assert sent[0] is None
+    assert sent[1].message_id == 42 and sent[1].allow_sending_without_reply and sent[2] is None
+
+
+def test_a_swipe_reply_tells_ken_what_it_points_at():
+    def msg(earlier=None, quote=None):
+        return type("M", (), {"reply_to_message": earlier, "quote": quote})()
+
+    def earlier(text, is_bot=True):
+        return type("E", (), {"text": text, "caption": None, "from_user": type("U", (), {"is_bot": is_bot})()})()
+
+    assert bot.reply_context(msg()) == ""
+    assert "your earlier message: \"Draft: shipped v2\"" in bot.reply_context(msg(earlier("Draft: shipped v2")))
+    part = type("Q", (), {"text": "v2"})()
+    assert '"v2"' in bot.reply_context(msg(earlier("Draft: shipped v2"), part))
+    assert "their own" in bot.reply_context(msg(earlier("my note", is_bot=False)))

@@ -454,3 +454,30 @@ def test_failed_replies_read_as_plain_words_not_json():
     assert friendly_error(codex, "Codex") == "Codex can't use that model with your account. Pick another model at the top and send again."
     assert "expired" in friendly_error(Exception("401 Unauthorized"), "Claude")
     assert friendly_error(Exception("disk full"), "Claude") == "Something went wrong: disk full"
+
+
+async def test_work_started_from_a_phone_message_quotes_it_when_done(engine):
+    engine.create_agent("MyReader")
+    q = engine.subscribe()
+    engine.chat_origin = 42  # a turn answering phone message 42 asks for an OK
+    a = engine.create_approval("myreader", "post", "Offline post", "Offline mode is here")
+    engine.chat_origin = None
+    await engine.resolve_approval(a["id"], "approve")
+    await settle(engine)
+    engine.start_run("myreader", "Later", "tidy up")  # nothing on the phone started this one
+    await settle(engine)
+    events = [q.get_nowait() for _ in range(q.qsize())]
+    assert next(e for e in events if e["type"] == "approval.created")["origin"] == 42
+    finished = [e for e in events if e["type"] == "run.finished"]
+    assert [e["origin"] for e in finished] == [42, None]
+    assert engine.origins == {}
+
+
+async def test_a_turn_carries_its_phone_message_and_lets_go_after(engine):
+    seen = []
+
+    async def listener(text):
+        seen.append(engine.chat_origin)
+
+    await engine.send_message(HOME, "hi", via="telegram", listener=listener, origin=7)
+    assert seen == [7] and engine.chat_origin is None
