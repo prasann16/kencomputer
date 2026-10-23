@@ -591,7 +591,7 @@ async def handle_prompt(update: Update, prompt: str) -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("Got it — I’ll read this next. Your background tasks keep running.")
+        await update.effective_message.reply_text("Got it — I’ll read this next.")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -812,9 +812,9 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     if await ENGINE.stop_chat(HOME):
-        await update.effective_message.reply_text("🛑 Stopping this reply. Background tasks keep running; tell me which one to stop.")
+        await update.effective_message.reply_text("🛑 Stopping the current task.")
     else:
-        await update.effective_message.reply_text("No reply to stop. To stop background work, tell me which task.")
+        await update.effective_message.reply_text("Nothing is running.")
 
 
 def get_oauth_token() -> str:
@@ -862,23 +862,13 @@ def job_tag(job: dict) -> dict:
             "time": job.get("time", ""), "at": time.time()}
 
 
-async def scheduled_result(task: dict, text: str, failed: bool) -> None:
-    """A scheduled job finished: its result is Ken's message, in that chat and (Ken's own) on the phone."""
-    _, pid, name, when = (task.get("request_key") or "").split(":", 3)
-    job = {"name": name, "time": when.split(":", 1)[-1]}
-    if failed:
-        label = JOB_LABELS[name].split(" ", 1)[1].lower() if name in JOB_LABELS else name.replace("-", " ")
-        text = f"I couldn't do the {label} this time: {text.strip() or 'it stopped partway.'}"
-    if not text.strip() or text.strip() == "NOTHING_TO_SAY":
-        return
-    ENGINE.log_message(pid, "ken", text, job=job_tag(job))
-    if pid == HOME and PHONE.bot and ALLOWED_USER_ID:
-        await send_outbound(PHONE.bot, text)
-        await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
-
-
 async def run_outbound(job: dict) -> None:
-    """Scheduled work runs behind Ken without occupying the main conversation."""
+    """The initiative: a scheduled job hands the assistant the pen."""
+    async def deliver(text: str) -> None:
+        if PHONE.bot and ALLOWED_USER_ID:
+            await send_outbound(PHONE.bot, text)
+            await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
+
     nudge = ""
     if job.get("name") == "morning-brief":
         pending = unresolved_setup()
@@ -891,13 +881,13 @@ async def run_outbound(job: dict) -> None:
             )
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-        f"Instruction: {job.get('prompt', '')}{nudge} — do it now.)"
+        f"Instruction: {job.get('prompt', '')}{nudge} — do it now; your messages go straight to "
+        "the human (their app and Telegram). If this job's answer is genuinely not worth sending "
+        "right now, reply exactly NOTHING_TO_SAY.)"
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        ENGINE.tasks.create(job.get('name', 'Scheduled task').replace('-', ' ').capitalize(), prompt,
-                            criteria='Complete the scheduled instructions and report evidence or explain what blocked them.',
-                            resources=['browser'], request_key=f"schedule:home:{job.get('name')}:{time.strftime('%Y-%m-%d')}:{job.get('time')}")
+        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
@@ -1072,9 +1062,11 @@ async def scheduler() -> None:
                     crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
                     agent = job.get("agent") or job.get("project")
                     if agent:
-                        ENGINE.tasks.create(job.get('name', 'Scheduled task'), job.get('prompt', ''),
-                                            criteria='Complete the scheduled instructions and report evidence.', project=str(agent),
-                                            resources=['browser'], request_key=f"schedule:{agent}:{job.get('name')}:{time.strftime('%Y-%m-%d')}:{job.get('time')}")
+                        # An agent's job runs in that agent's own chat.
+                        asyncio.create_task(ENGINE.send_message(
+                            str(agent), "", log_user=False,
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
+                        ))
                     else:
                         asyncio.create_task(run_outbound(job))
         except Exception as e:
@@ -1103,7 +1095,6 @@ async def brain_connected(backend=None) -> None:
 
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.on_scheduled = scheduled_result
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.tools_prompt = lambda only: "\n\n".join(
@@ -1148,7 +1139,7 @@ async def start_engine() -> WebApp | None:
 
 
 async def notify_telegram(app) -> None:
-    """Approvals reach the phone with buttons; finished background work as one line."""
+    """Approvals reach the phone with buttons; an agent's finished run as one line."""
     q = ENGINE.subscribe()
     while True:
         ev = await q.get()
@@ -1170,8 +1161,6 @@ async def notify_telegram(app) -> None:
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}")
-            elif ev['type'] == 'message' and ev.get('task_notice') and ev.get('role') == 'ken':
-                await send_outbound(app.bot, ev['text'])
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 

@@ -59,9 +59,9 @@ hostname to replace saved credentials.
 
 The server needs power, an awake Mac, internet, and a signed-in user session.
 The installed app's LaunchAgent starts after login and keeps running when its
-window closes or the app quits. A server reboot interrupts current tasks; Ken
-keeps their history and waits for a resume request instead of automatically
-repeating side effects (legacy runs are marked stopped).
+window closes or the app quits. A server reboot stops whatever Ken was doing;
+the conversation is kept and Ken doesn't repeat it on its own (agent runs are
+marked stopped).
 Browser automation uses Chrome on the selected computer. Remote project paths
 refer to that computer; attach files to upload them or download results to the
 client. Files remain subject to your Cloudflare account's upload/timeout limits.

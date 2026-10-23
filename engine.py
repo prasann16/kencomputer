@@ -160,12 +160,6 @@ class Engine:
         self.run_sessions: dict[str, object] = {}
         self.run_slots = asyncio.Semaphore(4)
         self._bg: list[asyncio.Task] = []
-        from tasks import TaskManager
-        self.tasks = TaskManager(self)
-        self.on_scheduled = None  # async (task, text, failed): a finished scheduled job's message
-        self.foreground_waiters = 0
-        self._task_notice_active = False
-        self._task_notice_interrupted = False
 
     def configure_home(self, cwd: Path, system: Callable[[], str], project_system: Callable[[], str] | None = None) -> None:
         self.home_cwd = Path(cwd)
@@ -185,11 +179,9 @@ class Engine:
             "WHERE status IN ('running','queued')", (now,),
         )
         self._bg.append(asyncio.create_task(self._watch_requests()))
-        self.tasks.start()
 
     async def close(self) -> None:
-        """Drain workers before the process exits so their tools are not orphaned."""
-        await self.tasks.close()
+        """Stop what's running before the process exits so tools are not orphaned."""
         pending = set(self._bg) | set(self.run_tasks.values()) | self.chat_tasks
         for task in pending:
             task.cancel()
@@ -248,10 +240,6 @@ class Engine:
                 log.warning("couldn't carry Claude's history for %s: %s", new_dir.name, e)
 
     def busy(self) -> bool:
-        if any(not t.done() for t in self.tasks.drivers.values()):
-            return True
-        if any(t['state'] in {'queued', 'running', 'reviewing', 'steering', 'stopping', 'pausing'} for t in self.tasks.list(limit=None)):
-            return True
         if any(not t.done() for t in self.run_tasks.values()):
             return True
         return any(lock.locked() for lock in self.chat_locks.values())
@@ -484,9 +472,6 @@ class Engine:
         """Ken's own system prompt (the chief of staff); an agent gets a work prompt and only its own folder."""
         runtime = f"Runtime for this conversation: {self.backend(pid).capitalize()}."
         if pid == HOME:
-            if self.backend(pid) != "codex":
-                from tasks import SUPERVISOR
-                return f"{self.home_system()}\n\n{runtime}\n\n{self.kit(pid)}\n{SUPERVISOR}"
             return f"{self.home_system()}\n\n{runtime}\n\n{self.kit(pid)}"
         p = self.get_agent(pid)
         d = self._adir(pid)
@@ -904,16 +889,9 @@ class Engine:
             brain = self.brain_for(pid)
             self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
-                if self.backend(pid) != "codex":
-                    from task_tools import supervisor_tools
-                    s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
-                                      model_fn=lambda: self.model_for(pid),
-                                      mcp_fn=lambda: supervisor_tools(self.tasks), env_fn=lambda: self._key_values(pid))
-                    s.supervisor = True
-                else:
-                    s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
-                                           model_fn=lambda: self.model_for(pid),
-                                           mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+                s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
+                                  model_fn=lambda: self.model_for(pid),
+                                  mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
             else:
                 s = brain.session(
                     cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
@@ -954,43 +932,21 @@ class Engine:
         listener: Callable[[str], Awaitable[None]] | None = None,
         quiet: bool = False,
         job: dict | None = None,
-        task_notice: bool = False,
-        message_id: int | None = None,
     ) -> bool:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it)."""
         if pid != HOME:
             self.get_agent(pid)
         files = [f for f in (files or []) if f]
-        if task_notice and (self.chat_busy(HOME) or self.foreground_waiters):
-            return False
         if log_user:
-            message_id = self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))['id']
+            self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))
         body = prompt if prompt is not None else text
         if files and prompt is None:
             body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(files)})"
-        # User messages take priority over automatic progress announcements.
-        if pid == HOME and not task_notice:
-            self.foreground_waiters += 1
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
-        try:
-            if pid == HOME and not task_notice and self._task_notice_active:
-                self._task_notice_interrupted = True
-                await self.stop_chat(HOME)
-            await lock.acquire()
-        finally:
-            if pid == HOME and not task_notice:
-                self.foreground_waiters -= 1
+        await lock.acquire()
         try:
             self.chat_tasks.add(asyncio.current_task())
-            if task_notice and self.foreground_waiters:
-                return False
-            if pid == HOME:
-                self._task_notice_active = task_notice
-                self._task_notice_interrupted = False
-                self.tasks.origin = message_id
-                if self.backend(pid) != 'codex':
-                    body = self.tasks.brief() + '\n\nHuman message or engine event:\n' + body
             body = f"{await self.state(pid, via)}\n{body}"
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
@@ -1009,7 +965,7 @@ class Engine:
                     return
                 t = self.mask(pid, t)
                 if not quiet:
-                    self.log_message(pid, "ken", t, **({"job": job} if job else {}), **({'task_notice': True} if task_notice else {}))
+                    self.log_message(pid, "ken", t, **({"job": job} if job else {}))
                 if listener is not None:
                     await listener(t)
 
@@ -1044,11 +1000,8 @@ class Engine:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
                 self.broadcast("chat.busy", pid, busy=False)
-            return outcome == 'ok' and not (task_notice and self._task_notice_interrupted)
+            return outcome == 'ok'
         finally:
-            if pid == HOME:
-                self._task_notice_active = False
-                self.tasks.origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
 
@@ -1344,7 +1297,6 @@ class Engine:
             p["pending"] = sum(1 for a in approvals if a["project"] == p["id"])
         return {
             "agents": projects,
-            "tasks": self.tasks.list(),
             "approvals": approvals,
             "running": running,
             "done": self.list_runs(active=False, since=time.time() - 86400, limit=12),

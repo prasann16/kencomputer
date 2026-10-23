@@ -1,7 +1,6 @@
 // Ken: one conversation, with tools and settings available when needed.
 import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
 import { ComputerBar, ComputerSettings, computerUrl, computerStorage, isRemote } from '/computers.js';
-import { TaskCard, TaskSummary } from '/tasks.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -509,13 +508,10 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
-  // Scheduled jobs arrive as Ken's messages; only one waiting on you shows as a card.
-  const tasks = pid === 'home' ? (data?.tasks || []).filter((t) => !(t.request_key || '').startsWith('schedule:') || t.state === 'waiting') : [];
   const timeline = [
     ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
     ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast}/>` })),
-    ...tasks.filter(t=>t.updated>clearedAt || ['queued','running','reviewing','steering','stopping','pausing','waiting','interrupted','needs_review'].includes(t.state)).map(t=>({t:t.created,key:'task-'+t.id,el:html`<${TaskCard} task=${t} api=${api} toast=${toast} renderText=${md}/>`})),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
   // One continuous conversation, never a blank page. Opening a chat lands on the first unread
@@ -565,7 +561,6 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       </div>
     </div>
     <div class="chat-bottom">
-      <${TaskSummary} tasks=${tasks}/>
       ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}

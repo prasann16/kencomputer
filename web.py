@@ -385,34 +385,11 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", message_id=message['id']))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app"))
         return _json({"ok": True, "message": message})
 
     async def stop(self, request):
         return _json({"stopped": await self.engine.stop_chat(self._pid(request))})
-
-    async def tasks(self, request):
-        return _json(self.engine.tasks.list())
-
-    async def task(self, request):
-        try:
-            return _json(self.engine.tasks.get(request.match_info['tid'], details=True))
-        except KeyError:
-            return _json({'error': 'No such task.'}, 404)
-
-    async def task_control(self, request):
-        b = await self._body(request)
-        try:
-            # The UI sends the revision it displayed, so a stale click cannot
-            # stop or restart a newer attempt without the user seeing it first.
-            if type(b.get('expected_revision')) is not int:
-                return _json({'error': 'Refresh this task before controlling it.'}, 400)
-            task = self.engine.tasks.control(request.match_info['tid'], b.get('action'), b.get('instruction', ''), b['expected_revision'])
-            return _json(task)
-        except KeyError:
-            return _json({'error': 'No such task.'}, 404)
-        except ValueError as e:
-            return _json({'error': str(e)}, 409)
 
     async def upload(self, request):
         """Dropped files land in the chat's folder and Ken looks at them right away."""
@@ -693,9 +670,6 @@ class WebApp:
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
-        r.add_get('/api/tasks', self.tasks)
-        r.add_get('/api/tasks/{tid}', self.task)
-        r.add_post('/api/tasks/{tid}/control', self.task_control)
         r.add_get("/api/runs/{rid}", self.get_run)
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)
