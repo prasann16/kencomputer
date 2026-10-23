@@ -1,7 +1,7 @@
 import { html, useState, useEffect } from '/vendor/preact-htm.js';
 
 const ACTIVE = new Set(['queued', 'running', 'reviewing', 'steering', 'stopping', 'pausing']);
-const LABEL = {queued:'Queued', running:'Working', reviewing:'Checking work', steering:'Changing direction', stopping:'Stopping', pausing:'Pausing', paused:'Paused', stopped:'Stopped', interrupted:'Ready to resume', waiting:'Needs your input', needs_review:'Ready for review', done:'Verified', failed:'Needs attention', superseded:'Replaced by a new plan'};
+const LABEL = {queued:'Queued', running:'Working', reviewing:'Checking work', steering:'Changing direction', stopping:'Stopping', pausing:'Pausing', paused:'Paused', stopped:'Stopped', interrupted:'Paused when Ken restarted', waiting:'Needs your answer', needs_review:'Done, not double-checked', done:'Done and checked', failed:'Couldn’t finish', superseded:'Replaced by a new plan'};
 
 export function TaskSummary({ tasks }) {
   const active = tasks.filter(t => ACTIVE.has(t.state));
@@ -42,11 +42,11 @@ export function TaskCard({ task: t, api, toast, renderText }) {
       <span class="task-action-spacer"></span>
       ${active && !changing && html`<button class="btn sm ghost" disabled=${pending} onClick=${()=>control('pause')}>Pause</button><button class="btn sm" disabled=${pending} aria-label=${'Stop '+t.title} onClick=${()=>control('stop')}>Stop</button>`}
       ${['paused','stopped','interrupted','waiting'].includes(t.state) && html`<button class="btn sm" disabled=${pending} onClick=${()=>control('resume')}>Resume</button>`}
-      ${['needs_review','done'].includes(t.state) && html`<button class="btn sm" disabled=${pending} onClick=${()=>control('review')}>${t.state==='done'?'Check again':'Check the work'}</button>`}
+      ${['needs_review','done'].includes(t.state) && html`<button class="btn sm" disabled=${pending} onClick=${()=>control('review')}>${t.state==='done'?'Check again':'Double-check'}</button>`}
       ${['failed','needs_review'].includes(t.state) && html`<button class="btn sm" disabled=${pending} onClick=${()=>control('retry')}>Retry</button>`}
     </div>
     ${editing && html`<form class="task-edit" onSubmit=${e=>{e.preventDefault();if(instruction.trim())control('steer',instruction.trim());}}><label for=${'task-instruction-'+t.id}>${t.state==='waiting'?'Your answer':'What should change?'}</label><textarea id=${'task-instruction-'+t.id} value=${instruction} onInput=${e=>setInstruction(e.target.value)} placeholder="Tell Ken what to do differently…" rows="3"/><div class="row"><button class="btn sm primary" disabled=${pending||!instruction.trim()}>Send change</button><button type="button" class="btn sm ghost" onClick=${()=>setEditing(false)}>Cancel</button></div></form>`}
-    ${expanded && html`<div class="task-detail"><p><b>The brief</b></p><div>${renderText(t.objective)}</div>${t.criteria && html`<p><b>Success looks like</b></p><div>${renderText(t.criteria)}</div>`}${t.evidence && html`<p><b>Evidence</b></p><div>${renderText(t.evidence)}</div>`}
+    ${expanded && html`<div class="task-detail">${t.evidence && html`<p><b>How it was checked</b></p><div>${renderText(t.evidence)}</div>`}
       ${details?.attempts?.length>0 && html`<p><b>Work history</b></p><ol>${details.attempts.map(a=>html`<li>Attempt ${a.number}${a.mode==='review'?' · Review':''} · ${LABEL[a.state]||a.state}${a.summary && html`<p>${a.summary}</p>`}</li>`)}</ol>`}
     </div>`}
   </article>`;

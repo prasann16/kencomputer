@@ -509,7 +509,8 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
-  const tasks = pid === 'home' ? data?.tasks || [] : [];
+  // Scheduled jobs arrive as Ken's messages; only one waiting on you shows as a card.
+  const tasks = pid === 'home' ? (data?.tasks || []).filter((t) => !(t.request_key || '').startsWith('schedule:') || t.state === 'waiting') : [];
   const timeline = [
     ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.delivery && !m.audio && html`<div class="delivery" role="status">${m.delivery === 'failed' ? html`Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button>` : m.delivery === 'sending' ? 'Sending…' : 'Waiting for Ken…'}</div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),

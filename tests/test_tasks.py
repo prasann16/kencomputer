@@ -320,3 +320,20 @@ async def test_open_window_does_not_hold_engine_shutdown(engine, tmp_path, aioht
     async with asyncio.timeout(2):
         await client.server.close()
     assert not app.websockets
+
+
+async def test_scheduled_job_arrives_as_a_message_without_review(engine):
+    delivered = []
+    async def on_scheduled(task, text, failed):
+        delivered.append((task['request_key'], text, failed))
+    engine.on_scheduled = on_scheduled
+    t, worker = await start(engine, 'Morning brief', request_key='schedule:home:morning-brief:2026-10-23:07:00')
+    assert 'sent to the human word for word' in worker.system()
+    await worker.acknowledge()
+    await worker.report(summary='Dry, 15°C. Call with Alex at 2.', evidence='')
+    worker.release.set()
+    await eventually(lambda: delivered)
+    assert delivered == [('schedule:home:morning-brief:2026-10-23:07:00', 'Dry, 15°C. Call with Alex at 2.', False)]
+    done = engine.tasks.get(t['id'])
+    assert done['state'] == 'done' and not done['notice']
+    assert t['id'] not in engine.tasks.brief()  # main Ken doesn't relay it again
