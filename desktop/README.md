@@ -12,76 +12,6 @@ First-run setup lives in the engine (`onboarding.py`): Connect Claude runs `clau
 
 Closing the window hides it. Quitting the app leaves the service (and Telegram) running.
 
-## Connecting another Mac
-
-Ken works locally without any server setup. Use **Settings → Computers → Connect a
-computer** to use another Mac; once one is saved, a menu below the chat header
-switches between it and **This Mac**. Each computer owns its
-chats, memory, files, Claude account, tools, and schedules. Switching or quitting
-the client does not stop work already accepted by the server.
-
-Server access is optional and off by default. On the Mac that will stay running:
-
-1. Install Ken, connect Claude, and sign into the tools/browser you want it to use.
-2. Open **Settings → Computers → Use this Mac as a server** and enable remote connections.
-3. Follow **Set up Cloudflare** in Ken. It checks this Mac for `cloudflared`, a running
-   process, installed launch services, and local routes pointing at Ken. Choose
-   **Use this address** for a detected route, or follow the steps to add a route to
-   your existing tunnel. If cloudflared is missing, **Install with Homebrew** installs
-   it after you click; without Homebrew, Ken links to installation instructions.
-   Sign in to your own Cloudflare account and route a public HTTPS hostname to the
-   HTTP service address shown in Ken (normally `http://127.0.0.1:7777`). Keep the
-   engine bound to loopback and use a persistent tunnel service. **Test connection**
-   checks that the address reaches this Ken instance and opens its live WebSocket.
-   See [Cloudflare's setup guide](https://developers.cloudflare.com/tunnel/get-started/).
-4. On the client, choose **Connect a computer** and enter the HTTPS hostname and
-   server key. Ken checks the connection before saving it.
-5. If the hostname is protected by Cloudflare Access, create a service token and
-   allow it with a **Service Auth** policy. Expand **My tunnel uses Cloudflare Access**
-   on the client and enter both its Client ID and Client Secret. Interactive Access
-   login redirects aren't supported. See [service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/).
-
-Ken does not create or manage Cloudflare accounts, DNS, tunnels, or tunnel tokens.
-Account sign-in and route creation happen in Cloudflare's dashboard. Existing
-tunnel configurations and services are left intact. Detection checks standard
-config locations and paths named by cloudflared launch services; routes managed
-only in Cloudflare's dashboard must be entered manually. Installed/running status
-is not treated as proof of connectivity. Cloudflare Access credentials supplied
-for the server's connection check are used once, not saved. The verified hostname
-is remembered; reopening setup requires a new test to show it connected.
-The server key is a separate Ken credential. Treat it as access to the server's
-files and tools. **Replace server key** disconnects live clients and invalidates the
-old key; turning server access off does the same without stopping accepted work.
-Connection secrets are stored only in `~/.ken/computers.json`, with owner-only
-permissions, and are never included in URLs or computer listings. Remove a saved
-connection to delete its credentials from that client. Reconnect with the same
-hostname to replace saved credentials.
-
-The server needs power, an awake Mac, internet, and a signed-in user session.
-The installed app's LaunchAgent starts after login and keeps running when its
-window closes or the app quits. A server reboot stops whatever Ken was doing;
-the conversation is kept and Ken doesn't repeat it on its own (agent runs are
-marked stopped).
-Browser automation uses Chrome on the selected computer. Remote project paths
-refer to that computer; attach files to upload them or download results to the
-client. Files remain subject to your Cloudflare account's upload/timeout limits.
-
-The page and native controls always load from the local engine. Remote API and
-WebSocket requests go through an authenticated local gateway; a remote server
-cannot read client connection settings or forward requests to another saved
-computer. Views, file URLs, drafts, and voice retries are scoped to a computer.
-An unavailable server never falls back to local execution. The client can connect
-without a local Claude login, and can remain a client without enabling its server.
-Client and server must support the same Ken remote API protocol (currently 1).
-For local development and integration tests, HTTP addresses are also accepted
-when their hostname is loopback; deployed tunnels should always use HTTPS.
-
-Settings → Appearance offers System (the default), Light and Dark. The choice is
-saved on this device, applies immediately, and also themes the desktop loading
-screen and native controls. System follows appearance changes while Ken is open.
-
-Telegram and the Mac app share everything: the same conversation, the same `voice.py` transcription, and the same commands. `/model`, `/coffee` and `/decaf` are plain functions in `bot.py` exposed to the chat through `POST /api/command`. `/new` and `/stop` use the chat endpoints.
-
 ## Development
 
 To run this checkout alongside an installed Ken:
@@ -166,9 +96,7 @@ Download files keep fixed names, so `https://github.com/prasann16/kencomputer/re
 
 The workflow waits for that exact main commit's Mac and Windows tests, creates the beta tag, and starts the signed and notarized release build. After both architectures build and the Mac install, self-update and failed-install recovery checks pass, GitHub automatically publishes the prerelease. If a newer version was tagged during the build, the superseded beta stays a draft. Betas do **not** require the local chat-and-voice check. They never become GitHub's latest stable release; the weekly stable path and its local publish check are unchanged.
 
-In Ken, **Settings → Updates on this Mac → Beta · early releases** opts this Mac into beta updates. The choice is saved locally, including when using a remote Ken computer. Stable installs default to Stable; a freshly installed beta defaults to Beta unless a preference was already saved. Older builds without this setting need the first beta downloaded and installed once from [GitHub Releases](https://github.com/prasann16/kencomputer/releases).
-
-Switching back to Stable cancels any pending beta download and clears its install prompt. Ken waits for a stable version newer than the installed version; it never automatically downgrades. Beta users also receive newer stable releases. To run the real chat-and-voice check on a beta yourself, use `desktop/check-release.sh <beta-tag>`; adding `--publish` preserves its prerelease status.
+Ken has no in-app switch for betas: installed apps get stable releases. A freshly installed beta build stays on betas until a newer stable release arrives; it never automatically downgrades. To run the real chat-and-voice check on a beta yourself, use `desktop/check-release.sh <beta-tag>`; adding `--publish` preserves its prerelease status.
 
 **Weekly update.** `.github/workflows/weekly.yml` runs on Mondays: it moves the locked parts to their newest versions (a newer Claude Code above all), runs the tests, and opens or updates a dependency PR. If nothing changed, it does nothing. After that PR is merged, it waits for the merged commit's Mac and Windows tests, tags the next version, starts the release build, and opens an issue naming the publish command. It never pushes directly to protected `main` or tags an unmerged dependency update.
 

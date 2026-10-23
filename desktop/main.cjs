@@ -6,7 +6,7 @@ const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } =
 const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
-const { trustedFrame, localComputerFrame } = require('./security.cjs');
+const { trustedFrame } = require('./security.cjs');
 const { UpdateChecks, validChannel, acceptsVersion, initialChannel } = require('./updates.cjs');
 
 app.setName('Ken');
@@ -89,8 +89,7 @@ async function stopOtherEngine() {
   const command = await new Promise((resolve) => execFile('/bin/ps', ['-p', String(pid), '-o', 'command='], (_e, out) => resolve(String(out || ''))));
   if (!/ken-engine|bot\.py/.test(command)) return;  // gone, or the pid now belongs to something else
   try { process.kill(pid, 'SIGTERM'); } catch {}
-  // Workers drain their tools and reap CLI processes before Ken exits.
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 20; i++) {
     try { process.kill(pid, 0); } catch { return; }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -270,8 +269,7 @@ async function start() {
     callback(ours(wc) && permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')));
   win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); external(url); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    const target = new URL(url);
-    if (target.origin === origin && /^\/(?:remote\/[a-f0-9]{16}\/)?api\/chats\//.test(target.pathname) && target.pathname.includes('/files/')) win.webContents.downloadURL(url);
+    if (url.startsWith(origin + '/api/chats/') && url.includes('/files/')) win.webContents.downloadURL(url);
     else external(url);
     return { action: 'deny' };
   });
@@ -333,15 +331,15 @@ async function start() {
     });
   });
   ipcMain.handle('chrome:connect', (event) => {
-    if (!localComputerFrame(event, win, origin)) throw new Error('Open Chrome on the selected computer to connect it.');
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     connectChrome();
   });
   ipcMain.handle('folder:open', async (event, folder) => {
-    if (!localComputerFrame(event, win, origin)) throw new Error('This folder is on the remote computer.');
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (typeof folder === 'string' && existsSync(folder)) await shell.openPath(folder);
   });
   ipcMain.handle('folder:pick', async (event) => {
-    if (!localComputerFrame(event, win, origin)) throw new Error('Enter a folder path on the remote computer.');
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });
     return canceled ? '' : filePaths[0];
   });
@@ -385,7 +383,7 @@ function connectChrome() {
 }
 function buildMenus() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome on This Mac…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
     { role: 'windowMenu' },

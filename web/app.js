@@ -1,6 +1,5 @@
 // Ken: one conversation, with tools and settings available when needed.
 import { html, render, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from '/vendor/preact-htm.js';
-import { ComputerBar, ComputerSettings, computerUrl, computerStorage, isRemote } from '/computers.js';
 
 // ------------------------------------------------------------------ helpers
 
@@ -32,7 +31,7 @@ async function api(path, opts = {}) {
     init.body = opts.body;
   }
   if (opts.timeout) init.signal = AbortSignal.timeout(opts.timeout);
-  const r = await fetch(computerUrl(path), init);
+  const r = await fetch(path, init);
   if (r.status === 401) { location.reload(); throw new Error('signed out'); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || r.statusText);
@@ -227,11 +226,11 @@ function useRecorder(onAudio, toast) {
 }
 
 function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey }) {
-  const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem(computerStorage('ken-draft:') + storageKey) || '{}'); } catch { return {}; } })();
+  const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem('ken-draft:' + storageKey) || '{}'); } catch { return {}; } })();
   const [text, setText] = useState(savedDraft.text || '');
   const [files, setFiles] = useState(savedDraft.files || []);
   (savedDraft.files || []).forEach((name) => ATTACHED.add(name));
-  useEffect(() => { sessionStorage.setItem(computerStorage('ken-draft:') + storageKey, JSON.stringify({ text, files })); }, [text, files, storageKey]);
+  useEffect(() => { sessionStorage.setItem('ken-draft:' + storageKey, JSON.stringify({ text, files })); }, [text, files, storageKey]);
   useEffect(() => { if (draft) { setText(draft.text); onDraftUsed(); requestAnimationFrame(() => ta.current?.focus()); } }, [draft]);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -280,7 +279,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     ${recording && !recorder.heard && recorder.seconds>2 && html`<div class="mic-error" role="status">No sound from your microphone.${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Check input</button>`}</div>`}
     ${commands.length>0 && html`<div class="command-list" role="listbox" aria-label="Chat commands">${commands.map(([name,description],i)=>html`<button role="option" aria-selected=${i===commandIndex} onClick=${()=>{setText(name+' ');ta.current.focus();}}><b>${name}</b><span>${description}</span></button>`)}</div>`}
     ${uploading > 0 && html`<div class="upload-status" role="status">Attaching files…</div>`}
-    ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${computerUrl(`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`)} alt=${f}/>`:Icon.file}${f}
+    ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`} alt=${f}/>`:Icon.file}${f}
       <button class="x" aria-label=${'Remove ' + f} onClick=${() => setFiles(files.filter((x) => x !== f))}>${Icon.close}</button></span>`)}</div>`}
     <div class="composer" onClick=${(e) => { if (e.target === e.currentTarget) ta.current?.focus(); }}>
       ${voiceBusy ? html`<div class="recording-input"><button class="icon-btn" aria-label="Cancel recording" onClick=${()=>recorder.finish(false)}>${Icon.close}</button>${recording && html`<span class="recording-label"><i aria-hidden="true"></i>Recording</span>`}<${Waveform} stream=${recorder.stream} onPeak=${recorder.peak}/><span class="voice-time">${recorder.status==='requesting'?'Allow microphone…':durationLabel(recorder.seconds)}</span></div>` : html`<label class="sr" for=${id}>${placeholder}</label>
@@ -299,12 +298,12 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
 function Message({ m, label }) {
   const files = m.files || [];
   const content = useMemo(() => md(m.text), [m.text]);
-  const recording = m.audio || (m.voice && files.some(isAudio) ? {url:computerUrl(`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`),name:files.find(isAudio),...m.voice} : null);
+  const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
   if (m.role === 'you') {
     return html`<div class="msg you"><div class="stack">
       ${recording && html`<${VoiceNote} key="recording" src=${recording.url} peaks=${recording.peaks} seconds=${recording.seconds} transcript=${m.text} pending=${m.delivery==='listening'} failed=${m.delivery==='voice-failed'} onRetry=${m.retryVoice} failure=${m.voiceError}/>`}
       ${files.filter(f=>!recording || f!==recording.name).map((f) => {
-        const url = computerUrl(`/api/chats/${m.project}/files/${encodeURIComponent(f)}`);
+        const url = `/api/chats/${m.project}/files/${encodeURIComponent(f)}`;
         return isAudio(f) ? html`<${VoiceNote} src=${url} peaks=${m.voice?.peaks} seconds=${m.voice?.seconds}/>` : isImage(f)
           ? html`<a class="img" href=${url} target="_blank"><img src=${url} alt=${f} loading="lazy" /></a>`
           : html`<a class="filechip" href=${url} target="_blank">${Icon.file}${f}</a>`;
@@ -466,7 +465,7 @@ function Glyph(name) {
   };
   return html`<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[name] || paths.file}/></svg>`;
 }
-const fileUrl = (f) => computerUrl(`/api/chats/${f.project}/files/${encodeURIComponent(f.name)}`);
+const fileUrl = (f) => `/api/chats/${f.project}/files/${encodeURIComponent(f.name)}`;
 const isVideo = (name) => /\.(mp4|webm|mov)$/i.test(name);
 const isAudio = (name) => /\.(mp3|wav|m4a|ogg|oga|opus|flac|aac|aiff?)$/i.test(name) || /^voice-.*\.webm$/i.test(name);
 const isText = (name) => /\.(txt|md|csv|json|log|py|js|css|html)$/i.test(name);
@@ -669,15 +668,15 @@ function ToolList({ tools, onUse, onAddTool, switches = true }) {
     : connect;
   return html`<div class="tool-list">
     ${row(icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18'), 'Chrome', 'Browse websites, fill forms and post, using your signed-in Chrome.',
-      use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { !isRemote && window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
-      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { !isRemote && window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
+      use('browser', state.chrome, open !== 'chrome' && html`<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome'); }}>Connect</button>`),
+      state.chrome ? html`<div class="conn-list"><div>${on('Connected')}<button class="text-action" onClick=${() => { window.kenDesktop?.connectChrome?.(); setOpen('chrome-off'); }}>Disconnect</button></div></div>
         ${open === 'chrome' && html`<p class="conn-steps">The first time Ken uses Chrome, Chrome asks: click <b>Allow</b>.</p>`}
-        ${open === 'chrome-off' && html`<p class="conn-steps">${!isRemote && window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
+        ${open === 'chrome-off' && html`<p class="conn-steps">${window.kenDesktop ? 'In the Chrome tab that opened' : html`In Chrome, at <b>chrome://inspect/#remote-debugging</b>`}, switch off <b>Allow remote debugging</b>. <button class="text-action" onClick=${() => setOpen('')}>Cancel</button></p>`}`
       : open === 'chrome' && html`<div class="conn-form"><ol class="conn-steps">
-            <li>${isRemote ? 'On the remote computer, open' : window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${!isRemote && window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${!isRemote && window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
+            <li>${window.kenDesktop ? 'Ken opens' : 'In Chrome, open'} <b>chrome://inspect/#remote-debugging</b>${window.kenDesktop ? ' in Chrome. There' : '. There'}, switch on <b>Allow remote debugging</b>.${window.kenDesktop ? ' No tab? Paste that address into Chrome, it’s copied.' : ''}</li>
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
             <p class="conn-steps">Needs Chrome 144 or newer.</p>
-            <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${!isRemote && window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`)}
+            <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`)}
     ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
       use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
       html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
@@ -839,8 +838,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected }) {
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
-    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy'], ['computers', 'Computers']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
-    ${tab === 'computers' && html`<div class="set-body"><${ComputerSettings} server=${true}/></div>`}
+    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ['phone', 'Phone'], ['jobs', 'Jobs'], ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => html`<div><span>${setup?.providers?.[id]?.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${setup?.providers?.[id]?.connected ? `Reconnect ${label}` : `Connect ${label}`}</button></div>`)}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
@@ -1007,10 +1005,10 @@ function NewAgent({ onClose, onCreated, setup }) {
     <label class="np-label">Name<input class="np-input" autofocus value=${name} placeholder="Myreader" onInput=${(e) => setName(e.target.value)}/></label>
     <label class="np-label">What should it do?<textarea class="np-input" rows="4" value=${job} placeholder="Run Myreader for me: fix bugs, watch Stripe, send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
     ${more || path ? html`<div class="np-label">Folder <span class="np-optional">optional</span>
-      ${!isRemote && window.kenDesktop?.pickFolder
+      ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">${isRemote ? 'Use a folder path on the remote computer. ' : ''}Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
+      <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
       : html`<button class="text-action" onClick=${() => setMore(true)}>Point it to a code or info folder…</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
@@ -1055,7 +1053,7 @@ function App() {
   const projectMenu=async(e,id)=>{
     const native=window.kenDesktop; if(!native?.popupMenu)return;
     const project=chats.find((c)=>c.id===id); if(!project)return;
-    const choice=await native.popupMenu([...(!isRemote ? [{id:'open',label:'Open in Finder'}] : []),{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},...(!isRemote ? [{id:'folder',label:'Code or info folder…'}] : []),{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    const choice=await native.popupMenu([...[{id:'open',label:'Open in Finder'}],{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},...[{id:'folder',label:'Code or info folder…'}],{separator:true},{id:'remove',label:'Remove from Ken…'}]);
     if(choice==='open'){ const v=await api(`/api/agents/${id}`); native.openFolder(v.agent.workdir); }
     if(choice==='keys')setProjectDialog({kind:'keys',project});
     if(choice==='rename')setProjectDialog({kind:'rename',project});
@@ -1064,7 +1062,7 @@ function App() {
       try{ await api(`/api/agents/${id}`,{method:'PATCH',json:{path}}); toast(`${project.name} now knows its job is in ${path.replace(/^\/Users\/[^/]+/,'~')}.`); if(id===pid)loadProjectMeta(id); }catch(err){toast(err.message);} }
   };
   // Unread: a chat whose last message is newer than when it was last open.
-  const seen=()=>{try{return JSON.parse(localStorage.getItem(computerStorage('ken-seen'))||'{}');}catch{return {};}};
+  const seen=()=>{try{return JSON.parse(localStorage.getItem('ken-seen')||'{}');}catch{return {};}};
   const [seenAt,setSeenAt]=useState(seen);
   // A "Check for Updates…" the user asked for (Ken menu, menu-bar icon, Settings) answers with a
   // quiet toast; a downloaded update shows a bar with Restart now until it's installed.
@@ -1143,7 +1141,7 @@ function App() {
     let ws, timer, pending, closed = false, rev = null, retry = 0;
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
-      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + computerUrl('/api/events'));
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events');
       ws.onopen = () => { setOnline(true); retry = 0; refresh(); };
       ws.onmessage = (e) => {
         const ev = JSON.parse(e.data), project = ev.project;
@@ -1192,8 +1190,8 @@ function App() {
       }
     } finally { inFlight.current.delete(client_id); }
   };
-  const voiceDrafts = () => {try{return JSON.parse(sessionStorage.getItem(computerStorage('ken-voice-outbox'))||'{}');}catch{return {};}};
-  const saveVoiceDraft = (id,data) => {const saved=voiceDrafts();if(data)saved[id]=data;else delete saved[id];sessionStorage.setItem(computerStorage('ken-voice-outbox'),JSON.stringify(saved));};
+  const voiceDrafts = () => {try{return JSON.parse(sessionStorage.getItem('ken-voice-outbox')||'{}');}catch{return {};}};
+  const saveVoiceDraft = (id,data) => {const saved=voiceDrafts();if(data)saved[id]=data;else delete saved[id];sessionStorage.setItem('ken-voice-outbox',JSON.stringify(saved));};
   const sendVoice = (blob, peaks=[], seconds=0, restore=null) => {
     const target=restore?.project||pid, id=restore?.id||crypto.randomUUID(), audio={blob,peaks:waveformPeaks(peaks),seconds,url:URL.createObjectURL(blob),name:restore?.name||null,transcript:restore?.transcript??null};
     const persist=()=>{if(audio.name)saveVoiceDraft(id,{id,project:target,name:audio.name,peaks:audio.peaks,seconds:audio.seconds,transcript:audio.transcript});};
@@ -1227,7 +1225,7 @@ function App() {
   useEffect(()=>{
     if(restoredVoice.current)return;restoredVoice.current=true;
     for(const note of Object.values(voiceDrafts())){
-      fetch(computerUrl(`/api/chats/${note.project}/files/${encodeURIComponent(note.name)}`)).then(r=>{if(!r.ok)throw Error();return r.blob();}).then(blob=>sendVoice(blob,note.peaks,note.seconds,note)).catch(()=>toast('A saved voice note could not be reopened. The original file is still in your chat folder.'));
+      fetch(`/api/chats/${note.project}/files/${encodeURIComponent(note.name)}`).then(r=>{if(!r.ok)throw Error();return r.blob();}).then(blob=>sendVoice(blob,note.peaks,note.seconds,note)).catch(()=>toast('A saved voice note could not be reopened. The original file is still in your chat folder.'));
     }
   },[]);
   const command = async (text) => {
@@ -1258,7 +1256,7 @@ function App() {
     setClearing(true); generation.current++;
     try {
       const result = await api(`/api/chats/${pid}/reset`, { json: {} });
-      sessionStorage.removeItem(computerStorage('ken-draft:') + pid); setDraft(null); setChoices(null);
+      sessionStorage.removeItem('ken-draft:' + pid); setDraft(null); setChoices(null);
       for(const note of Object.values(voiceDrafts()))if(note.project===pid)saveVoiceDraft(note.id,null);
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
@@ -1270,7 +1268,7 @@ function App() {
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
-  useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem(computerStorage('ken-seen'),JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
+  useEffect(()=>{ if(!current)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts]);
   // When you last read this chat, as of opening it: where the first unread reply starts.
   const opened = useRef({ pid: null, ts: 0 });
   if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
@@ -1278,7 +1276,6 @@ function App() {
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
   return html`<div class=${'shell' + (sideOpen ? ' side-open' : '')}>${sideOpen && html`<${Sidebar} brain=${route.brain} pid=${pid} agents=${chats.filter((c) => c.id !== 'home')} onSettings=${()=>setConnections(true)}/>`}<main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onToggleSide=${toggleSide} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
-    <${ComputerBar} Modal=${Modal} online=${online}/>
     ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => changeRuntime({ backend })} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or Codex above. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
