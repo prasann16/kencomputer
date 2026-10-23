@@ -476,6 +476,12 @@ class WebApp:
         except KeyError:
             return _json({"error": "No such skill."}, 404)
 
+    async def skill(self, request):
+        try:
+            return _json(self.engine.read_skill(request.match_info["sid"]))
+        except KeyError:
+            return _json({"error": "No such skill."}, 404)
+
     async def note(self, request):
         pid, name = self._pid(request), request.match_info["name"]
         try:
@@ -656,6 +662,7 @@ class WebApp:
         r.add_put("/api/about/{pid}/context", self.put_about_context)
         r.add_route("*", "/api/about/{pid}/memory/{name}", self.note)
         r.add_delete("/api/skills/{sid}", self.remove_skill)
+        r.add_get("/api/skills/{sid}", self.skill)
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)

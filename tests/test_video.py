@@ -111,5 +111,8 @@ def test_brain_lists_kens_skills_and_removes_one(tmp_path):
     assert e.about("home")["skills"] == [{"id": "remotion", "name": "remotion-best-practices", "about": "Make videos in React"}]
     with pytest.raises(KeyError):
         e.remove_skill("../work")  # only a skill folder, never anything else
+    (tmp_path / "skills" / "remotion" / "create").mkdir()
+    page = e.read_skill("remotion")
+    assert page["name"] == "remotion-best-practices" and page["text"] == "body" and page["parts"] == ["create"]
     assert e.remove_skill("remotion") == []
     assert not (tmp_path / "skills" / "remotion").exists()

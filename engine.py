@@ -691,10 +691,24 @@ class Engine:
             out.append({"id": f.name, "name": meta.get("name") or f.name, "about": meta.get("description", "")[:200]})
         return out
 
-    def remove_skill(self, sid: str) -> list[dict]:
+    def _skill_dir(self, sid: str) -> Path:
         d = self.home / "skills" / sid
         if not sid or "/" in sid or "\\" in sid or sid.startswith(".") or not d.is_dir():
             raise KeyError(sid)
+        return d
+
+    def read_skill(self, sid: str) -> dict:
+        """A skill to read: its SKILL.md (without the front matter) and what else its folder holds."""
+        d = self._skill_dir(sid)
+        text = (d / "SKILL.md").read_text(errors="replace") if (d / "SKILL.md").is_file() else ""
+        if text.startswith("---"):
+            text = text.split("---", 2)[2] if text.count("---") >= 2 else text
+        meta = next((s for s in self.list_skills() if s["id"] == sid), {"name": sid, "about": ""})
+        parts = sorted(f.name for f in d.iterdir() if not f.name.startswith(".") and f.name not in ("SKILL.md", "LICENSE", "LICENSE.txt", "assets", "agents"))
+        return {**meta, "text": text.strip(), "parts": parts}
+
+    def remove_skill(self, sid: str) -> list[dict]:
+        d = self._skill_dir(sid)
         d.unlink() if d.is_symlink() else shutil.rmtree(d)
         return self.list_skills()
 

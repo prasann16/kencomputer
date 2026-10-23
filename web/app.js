@@ -895,7 +895,7 @@ const TOOL_NAMES = { browser: 'Chrome', email: 'Email', calendar: 'Calendar' };
 // of one line each; open a line to see and edit that part.
 function About({ pid, onClose, onPreview, page, onAddTool }) {
   const [a, setA] = useState(null), [conn, setConn] = useState(null), [jobs, setJobs] = useState([]), [section, setSection] = useState(null);
-  const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [skill, setSkill] = useState(null);
   const load = () => {
     api(`/api/about/${pid}`).then(setA).catch((e) => setError(e.message));
     api('/api/connections').then(setConn).catch(() => {});
@@ -912,6 +912,10 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     ? html`<div class="knows-page"><div class="knows-inner">${title && html`<h1>${title}</h1>`}${body}</div></div>`
     : html`<${Modal} wide title=${title || `About ${a ? a.name : ''}`} onClose=${edit ? () => setEdit(null) : onClose}>${body}<//>`;
   const back = (to, label) => html`<button class="text-action brain-back" onClick=${to}>‹ ${label}</button>`;
+  if (skill) return frame(skill.name, html`<div class="brain-section">${back(() => setSkill(null), 'Skills')}
+    ${skill.about && html`<p class="np-help">${skill.about}</p>`}
+    <div class="about-context">${skill.text ? doc(skill.text.replace(/\[([^\]]+)\]\((?!https?:)[^)]*\)/g, '$1')) : 'This skill has no main page.'}</div>
+    ${skill.parts.length > 0 && html`<p class="np-help skill-parts">Also includes: ${skill.parts.join(', ')}</p>`}</div>`);
   if (edit?.reading) return frame(edit.name.replace(/\.md$/, ''), html`<div class="brain-section">${back(() => setEdit(null), 'Memory')}
     <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ ...edit, reading: false })}>Edit</button></div>
     <div class="about-context">${edit.text.trim() ? doc(edit.text) : 'Empty note.'}</div>
@@ -946,7 +950,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
     pid === 'home' && { key: 'skills', title: 'Skills', summary: a.skills.length ? a.skills.map((s) => s.name).join(', ') : 'None yet', body: html`
         <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
-        ${a.skills.map((s) => html`<div class="skill-row"><div><b>${s.name}</b><span>${s.about}</span></div><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
+        ${a.skills.map((s) => html`<div class="skill-row"><button class="skill-open" onClick=${() => api(`/api/skills/${encodeURIComponent(s.id)}`).then(setSkill).catch((e) => setError(e.message))}><b>${s.name}</b><span>${s.about}</span></button><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
     jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
