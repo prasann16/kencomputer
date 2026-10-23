@@ -37,7 +37,7 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, Engine, first_contact_prompt
+from engine import HOME, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
@@ -111,10 +111,10 @@ def video_prompt() -> str:
         "and Shorts crop to 9:16 at 1080x1920 and burn in captions with the subtitles filter, from an .srt "
         "you write for that clip's own times. Never change the original; save clips next to it and say where. "
         "Show them the clips before anything is posted. "
-        "MAKING VIDEOS (promo, demo, explainer, social post): use your HyperFrames skills (HTML compositions "
-        "rendered to mp4, the default) or your Remotion skills (React, when they ask for it or the video is "
-        "data-driven). Work in a folder under videos/ in your workspace, render locally, one render at a time "
-        "(this computer has no GPU, so keep it to 720p or 1080p and under a minute unless they ask). Vertical "
+        "MAKING VIDEOS (promo, demo, explainer, social post): if you have a skill for it, follow it; "
+        "otherwise use what fits (ffmpeg for cuts and captions, Remotion when they want motion graphics). "
+        "Work in a folder under videos/ in your workspace, render locally, one render at a time, and keep it "
+        "to 1080p and under a minute unless they ask. Vertical "
         "1080x1920 for Reels, Shorts and X, square or 16:9 for LinkedIn. Watch your own output before sending: "
         "grab a few frames with ffmpeg and look at them. Then copy the mp4 to the outbox."
     )
@@ -295,6 +295,14 @@ SECRETS_RULE = (
     f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
 )
 
+SKILLS_RULE = (
+    f"SKILLS: skills in {KEN_HOME / 'skills'} (one folder per skill: a SKILL.md and its files) are yours in "
+    "every chat, whichever AI they use. Add one only when they ask: say in one line what it is and where "
+    "it comes from, and wait for their OK. Then put its folder there (for a package, run `npx skills add "
+    "<pkg>` in a temporary folder and move the skill folder over) and tell them it works from their next "
+    "message. Remove one by deleting its folder when they ask. Never add skills on your own. "
+)
+
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: who you are to them (your name and "
     "personality), what you know about them, their rules and their style. It is theirs as much "
@@ -350,7 +358,7 @@ SYSTEM_PROMPT = (
     "again the same afternoon. "
     f"(3) {HISTORY_DIR}/<date>.md — full verbatim transcripts, kept automatically by the "
     "harness. The receipts; open the file for a date when exact wording matters. "
-    + WORK_RULES + SECRETS_RULE +
+    + WORK_RULES + SECRETS_RULE + SKILLS_RULE +
     "KNOW YOURSELF: you can inspect your own body — read your harness at ~/.ken/app/bot.py, "
     "your config at ~/.ken/.env, your schedule at ~/.ken/jobs.json, your logs, and the "
     "machine you run on. When asked what you can do, answer from what you actually find "
@@ -1823,6 +1831,9 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
+    skills = prepare_skills(KEN_HOME)
+    if skills:
+        BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]
     crash.setup(KEN_HOME, _current_rev())
     try:
         asyncio.run(run())

@@ -10,8 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import video  # noqa: E402
-from brains import skills_plugin  # noqa: E402
-from engine import ensure_skills_plugin  # noqa: E402
+from engine import Engine, prepare_skills  # noqa: E402
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg not installed")
 
@@ -66,9 +65,22 @@ async def test_not_a_video_goes_as_a_file(tmp_path):
     assert await video.for_telegram(junk, 50 * 1024 * 1024) is None
 
 
-def test_workspace_skills_load_as_a_plugin_and_nothing_else_does(tmp_path):
-    assert skills_plugin(str(tmp_path)) == []  # a repo's own .claude is never picked up on its own
-    (tmp_path / ".claude" / "skills").mkdir(parents=True)
-    assert skills_plugin(str(tmp_path)) == []
-    ensure_skills_plugin(tmp_path)
-    assert skills_plugin(str(tmp_path)) == [{"type": "local", "path": str(tmp_path / ".claude")}]
+def test_skills_live_in_one_folder_that_claude_loads_as_a_plugin(tmp_path):
+    plugin = prepare_skills(tmp_path)
+    assert plugin == tmp_path / ".skills-plugin"
+    assert (plugin / ".claude-plugin" / "plugin.json").is_file()
+    assert (plugin / "skills").resolve() == (tmp_path / "skills").resolve()
+    (tmp_path / "skills" / "fruit").mkdir()
+    (tmp_path / "skills" / "fruit" / "SKILL.md").write_text("---\nname: fruit\n---\n")
+    assert (plugin / "skills" / "fruit" / "SKILL.md").is_file()  # what Claude sees is the shared folder
+    assert prepare_skills(tmp_path) == plugin  # every start: nothing to redo
+
+
+def test_adding_a_skill_reopens_open_chats(tmp_path):
+    import os
+    from test_engine import FakeBrain
+    e = Engine(tmp_path, FakeBrain())
+    prepare_skills(tmp_path)
+    before = e._tools_stamp("home")
+    os.utime(tmp_path / "skills", (1, 1))
+    assert e._tools_stamp("home") != before

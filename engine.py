@@ -107,21 +107,32 @@ async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
 BUILTIN_TOOLS = ("browser", "email", "calendar")
 
 
-def ensure_skills_plugin(workspace: Path) -> None:
-    """Make <workspace>/.claude a local plugin, so skills installed there with
-    `npx skills add <pkg> -a claude-code` (run in the workspace) reach Ken."""
-    manifest = workspace / ".claude" / ".claude-plugin" / "plugin.json"
-    if manifest.exists():
-        return
+def link_dir(link: Path, target: Path) -> None:
+    """A folder that shows another folder: a relative symlink, or a junction on Windows (no admin needed)."""
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
+
+
+def prepare_skills(home: Path) -> Path | None:
+    """Ken's skills live in <home>/skills, one folder per skill (SKILL.md and its files), shared by
+    every chat and both brains. Claude Code only finds skills inside a plugin, so a small hidden
+    plugin, <home>/.skills-plugin, points at that folder. Returns the plugin, or None if it can't be made."""
+    skills, plugin = home / "skills", home / ".skills-plugin"
     try:
-        (workspace / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
-        manifest.parent.mkdir(parents=True, exist_ok=True)
-        manifest.write_text(json.dumps({
-            "name": "ken-skills",
-            "description": "Skills installed in Ken's workspace (npx skills add <pkg> -a claude-code)",
-        }, indent=2) + "\n")
+        skills.mkdir(parents=True, exist_ok=True)
+        manifest = plugin / ".claude-plugin" / "plugin.json"
+        if not manifest.exists():
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps({"name": "ken-skills", "description": "Skills Ken has added"}, indent=2) + "\n")
+        if not (plugin / "skills").exists():
+            link_dir(plugin / "skills", skills)
+        return plugin
     except OSError as e:
         log.warning("couldn't set up the skills folder: %s", e)
+        return None
 
 
 def slugify(name: str) -> str:
@@ -186,7 +197,6 @@ class Engine:
         self.home_cwd = Path(cwd)
         self.home_system = system
         self.agent_base = project_system or system
-        ensure_skills_plugin(self.home_cwd)
 
     def start(self) -> None:
         try:
@@ -616,9 +626,9 @@ class Engine:
         return {**self.tools(set(cfg["use"]), self.backend(pid)), **cfg["mcp"]}
 
     def _tools_stamp(self, pid: str) -> tuple:
-        """Changes when its tools or keys do, so an open chat reopens with them."""
+        """Changes when its tools, keys or Ken's skills do, so an open chat reopens with them."""
         out = [self.backend(pid)]
-        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
+        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills"):
             try:
                 out.append(f.stat().st_mtime)
             except OSError:
