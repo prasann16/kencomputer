@@ -129,3 +129,4 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 .connect .connect-code-note{margin-top:6px;font-size:13px;color:var(--faint)}
 .top-tabs .ken-mark{width:22px;height:24px;margin-right:12px;flex-shrink:0}  /* the app's mark, on its own; Chat and Brain are equal tabs */
 .skill-row{display:flex;align-items:flex-start;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}.skill-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.skill-row span{font-size:13px;color:var(--faint)}
+.skill-row .skill-open{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}.skill-row .skill-open:hover b{text-decoration:underline}.skill-parts{margin-top:16px!important}
