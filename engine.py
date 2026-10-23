@@ -162,6 +162,7 @@ class Engine:
         self._bg: list[asyncio.Task] = []
         from tasks import TaskManager
         self.tasks = TaskManager(self)
+        self.on_scheduled = None  # async (task, text, failed): a finished scheduled job's message
         self.foreground_waiters = 0
         self._task_notice_active = False
         self._task_notice_interrupted = False

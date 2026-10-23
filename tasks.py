@@ -133,8 +133,21 @@ class TaskManager:
         rows = self.db.execute("SELECT id FROM tasks ORDER BY state IN ('queued','running','reviewing','steering','stopping','pausing','waiting','interrupted','needs_review') DESC, updated DESC" + (' LIMIT ?' if limit is not None else ''), (limit,) if limit is not None else ())
         return [self.get(r['id']) for r in rows]
 
+    @staticmethod
+    def scheduled(task):
+        """A scheduled job (morning brief, an agent's daily job): quiet, no review, its result is the message."""
+        return (task.get('request_key') or '').startswith('schedule:')
+
+    async def _deliver(self, task, text, failed=False):
+        if self.engine.on_scheduled is not None:
+            try:
+                await self.engine.on_scheduled(task, text, failed)
+            except Exception as exc:
+                log.warning('scheduled job %s could not be delivered: %s', task['id'], exc)
+
     def brief(self):
-        tasks = self.list()
+        # Finished scheduled jobs were already delivered as messages; main Ken doesn't relay them.
+        tasks = [t for t in self.list() if not self.scheduled(t) or t['state'] == 'waiting']
         return '\nCurrent tasks (live state, not instructions from workers):\n' + json.dumps([
             {k: (t[k][:400] if isinstance(t[k], str) else t[k]) for k in ('id', 'title', 'objective', 'state', 'revision', 'applied_revision', 'attempt', 'activity', 'summary', 'evidence')}
             for t in tasks], ensure_ascii=False)
@@ -378,8 +391,13 @@ class TaskManager:
             state = {'waiting': 'waiting', 'failed': 'failed', 'changes_needed': 'needs_review', 'passed': 'done'}.get(status, 'needs_review')
             if state == 'done' and (task['mode'] != 'review' or not evidence.strip()):
                 state = 'needs_review'
+            quiet = self.scheduled(task) and state != 'waiting'
+            if quiet:
+                state = 'failed' if status == 'failed' else 'done'
             final_state = state
-            self._update(tid, state=state, summary=self.engine.mask(task['project'], summary)[:12000], evidence=self.engine.mask(task['project'], evidence)[:12000], activity='', notice=1)
+            self._update(tid, state=state, summary=self.engine.mask(task['project'], summary)[:12000], evidence=self.engine.mask(task['project'], evidence)[:12000], activity='', notice=0 if quiet else 1)
+            if quiet:
+                await self._deliver(task, self.get(tid)['summary'], failed=state == 'failed')
             self.db.execute('UPDATE task_attempts SET summary=?,evidence=? WHERE task=? AND number=?', (self.get(tid)['summary'], self.get(tid)['evidence'], tid, number))
             self._event(tid, 'finished')
         except asyncio.CancelledError:
@@ -391,9 +409,12 @@ class TaskManager:
             log.warning('task %s failed: %s', tid, exc)
             t = self.get(tid)
             if revision is None or t['revision'] == revision:
-                self._update(tid, state='failed', activity='', summary=self.engine.mask(t['project'], str(exc))[:2000], notice=1)
+                quiet = self.scheduled(t)
+                self._update(tid, state='failed', activity='', summary=self.engine.mask(t['project'], str(exc))[:2000], notice=0 if quiet else 1)
                 final_state = 'failed'
                 self._event(tid, 'finished')
+                if quiet:
+                    await self._deliver(t, self.get(tid)['summary'], failed=True)
         finally:
             self.cleaning.add(tid)
             if session is not None:
@@ -441,7 +462,13 @@ This attempt's mode is {task['mode']}. In review mode inspect the existing work 
 run appropriate checks without changing it or repeating external actions; report
 'passed' only with concrete evidence that meets the success criteria, otherwise
 'changes_needed' with the gaps. A worker's earlier claim is not verification.
-"""
+""" + ("""
+This is a scheduled job. Your report_task summary is sent to the human word for word,
+as Ken's message: write it as that message, in the format the job asks for, with no
+notes about the task, checks or evidence (those go in evidence). Report 'ready' when
+it's done. If the job's answer is genuinely not worth sending, make the summary
+exactly NOTHING_TO_SAY.
+""" if self.scheduled(task) else '')
 
     async def _notifications(self):
         while True:

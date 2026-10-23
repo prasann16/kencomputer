@@ -258,8 +258,8 @@ WORK_RULES = (
     "right after it. When they wrote from the app, also say where the file is saved. "
 )
 SECRETS_RULE = (
-    "SECRETS: when you need a login or API key, ask them to add it in the app's Keys (the Brain tab at "
-    "the top, then Keys), never as a text file and never in chat. Keys added there reach you as environment "
+    "SECRETS: when you need a login or API key, ask them to add it in the app's Brain, under Accounts & "
+    "passwords (open the sidebar at the top left, then Brain), never as a text file and never in chat. Keys added there reach you as environment "
     "variables (listed below). Never repeat a secret back into the chat: Telegram history and your own "
     f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
 )
@@ -267,7 +267,7 @@ SECRETS_RULE = (
 SYSTEM_PROMPT = (
     "SOUL.md in your working directory is your soul file: who you are to them (your name and "
     "personality), what you know about them, their rules and their style. It is theirs as much "
-    "as yours, and they read it in the app's Brain tab, so keep it personal and short: "
+    "as yours, and they read it in the app's Brain, so keep it personal and short: "
     "how you and the app work lives in these instructions, never in SOUL.md. Its current contents "
     "are included below; edit the file itself to change who you are or what you know. "
     "You are their assistant, not a coding session. Voice notes are transcribed automatically, so "
@@ -278,12 +278,13 @@ SYSTEM_PROMPT = (
     "tools) to learn their world; show them what you wrote down. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
-    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer has "
-    "two tabs at the top: Chat (this conversation; Clear starts a fresh thread, memory and files stay) "
-    "and Brain (who you are, your memory notes, Tools: Chrome, email and calendar connected right there "
-    "plus any tool you add, Keys, Jobs and files, all of it viewable and editable). Settings, at the top "
-    "right, has AI accounts (connect Claude, Codex, or both), Phone and Jobs. Each chat's brain picker "
-    "chooses Claude or Codex without a restart. Ken on your phone is their own Telegram "
+    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer opens "
+    "on Chat (this conversation; the pencil at the top right starts a fresh thread, memory and files stay). "
+    "The button at the top left opens a sidebar with Chat and Brain (who you are, what you remember, and "
+    "Accounts & passwords for keys, all viewable and editable). Settings, the gear at the top right, has "
+    "AI accounts (connect Claude, Codex, or both), Tools (Chrome, email and calendar plus any tool you add), "
+    "Phone, Jobs and Privacy. The menu at the top of a chat chooses Claude or Codex and the model without "
+    "a restart. Ken on your phone is their own Telegram "
     "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
     "app, not a separate assistant. The header line of each message says where they wrote from. On their "
     "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
@@ -392,12 +393,12 @@ it; never ask that one again):
   THIS machine's clock, so convert if their city's time zone differs, then write it in {JOBS_FILE}.
 - tools: once you know their work, propose up to 3 tools that fit it (say what each would do for them)
   and set up the ones they want, one at a time. You install and add what's needed; they sign in and
-  paste keys in the Brain tab, Keys. Test each one and say what it now does for them.
+  paste keys in Brain, under Accounts & passwords. Test each one and say what it now does for them.
 Along the way, once each: ask "What's one thing you've been putting off that I could take off your
 plate?" and act on the answer right away, even just a real first step. Offer to look around this
 computer (projects, tools) to learn their world, and show them what you wrote down. Offer to connect
 calendar and email (it turns the morning brief from a guess into the real thing): follow the recipe in
-{KEN_HOME / 'app' / 'recipes'} or point them to the Brain tab, Tools; set those items too.
+{KEN_HOME / 'app' / 'recipes'} or point them to Settings → Tools; set those items too.
 Keep every message short: they may be on their phone.
 === end onboarding ==="""
 
@@ -861,6 +862,21 @@ def job_tag(job: dict) -> dict:
             "time": job.get("time", ""), "at": time.time()}
 
 
+async def scheduled_result(task: dict, text: str, failed: bool) -> None:
+    """A scheduled job finished: its result is Ken's message, in that chat and (Ken's own) on the phone."""
+    _, pid, name, when = (task.get("request_key") or "").split(":", 3)
+    job = {"name": name, "time": when.split(":", 1)[-1]}
+    if failed:
+        label = JOB_LABELS[name].split(" ", 1)[1].lower() if name in JOB_LABELS else name.replace("-", " ")
+        text = f"I couldn't do the {label} this time: {text.strip() or 'it stopped partway.'}"
+    if not text.strip() or text.strip() == "NOTHING_TO_SAY":
+        return
+    ENGINE.log_message(pid, "ken", text, job=job_tag(job))
+    if pid == HOME and PHONE.bot and ALLOWED_USER_ID:
+        await send_outbound(PHONE.bot, text)
+        await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
+
+
 async def run_outbound(job: dict) -> None:
     """Scheduled work runs behind Ken without occupying the main conversation."""
     nudge = ""
@@ -875,8 +891,7 @@ async def run_outbound(job: dict) -> None:
             )
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-        f"Instruction: {job.get('prompt', '')}{nudge} — do it now and report the result to main Ken. "
-        "Main Ken delivers useful results to the human in their app and Telegram.)"
+        f"Instruction: {job.get('prompt', '')}{nudge} — do it now.)"
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
@@ -1088,6 +1103,7 @@ async def brain_connected(backend=None) -> None:
 
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
+    ENGINE.on_scheduled = scheduled_result
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.tools_prompt = lambda only: "\n\n".join(
