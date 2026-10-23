@@ -84,3 +84,17 @@ def test_adding_a_skill_reopens_open_chats(tmp_path):
     before = e._tools_stamp("home")
     os.utime(tmp_path / "skills", (1, 1))
     assert e._tools_stamp("home") != before
+
+
+def test_codex_finds_kens_skills_in_kens_own_folders_only(tmp_path):
+    from test_engine import FakeBrain
+    e = Engine(tmp_path, FakeBrain())
+    prepare_skills(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    e._share_skills(work)
+    assert (work / ".agents" / "skills").resolve() == (tmp_path / "skills").resolve()
+    theirs = tmp_path.parent / (tmp_path.name + "-their-code")
+    theirs.mkdir()
+    e._share_skills(theirs)
+    assert not (theirs / ".agents").exists()  # a folder of theirs is never written to

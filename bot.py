@@ -1456,6 +1456,16 @@ COMMANDS = {
 }
 
 
+def prepare_codex_home(codex_home: Path) -> None:
+    """Ken's Codex has its own folder for the ChatGPT login made in Ken. Your own Codex settings,
+    instructions and skills (~/.codex) stay yours and never change how Ken works."""
+    os.environ.setdefault("KEN_CODEX_HOME", str(codex_home))
+    try:
+        codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as e:
+        log.warning("couldn't set up Ken's Codex folder: %s", e)
+
+
 def ensure_home() -> None:
     """First run without the installer (the Mac app): the same files install.sh creates."""
     import shutil
@@ -1834,6 +1844,7 @@ def main() -> None:
     skills = prepare_skills(KEN_HOME)
     if skills:
         BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]
+    prepare_codex_home(KEN_HOME / "codex")
     crash.setup(KEN_HOME, _current_rev())
     try:
         asyncio.run(run())

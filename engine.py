@@ -625,6 +625,19 @@ class Engine:
         cfg = self.tools_config(pid)
         return {**self.tools(set(cfg["use"]), self.backend(pid)), **cfg["mcp"]}
 
+    def _share_skills(self, cwd: Path) -> None:
+        """Codex finds skills in <folder>/.agents/skills: Ken's own folders point it at Ken's skills.
+        A folder of theirs (an agent's code or info folder) is never written to."""
+        skills, cwd = self.home / "skills", Path(cwd)
+        link = cwd / ".agents" / "skills"
+        if not skills.is_dir() or self.home.resolve() not in cwd.resolve().parents or link.exists() or link.is_symlink():
+            return
+        try:
+            link.parent.mkdir(exist_ok=True)
+            link_dir(link, skills)
+        except OSError as e:
+            log.warning("couldn't share Ken's skills with Codex in %s: %s", cwd, e)
+
     def _tools_stamp(self, pid: str) -> tuple:
         """Changes when its tools, keys or Ken's skills do, so an open chat reopens with them."""
         out = [self.backend(pid)]
@@ -919,6 +932,8 @@ class Engine:
             s = None
         if s is None:
             brain = self.brain_for(pid)
+            if brain.name == "codex":
+                self._share_skills(self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid)))
             self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
                 s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
