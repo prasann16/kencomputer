@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   botTokenFromClipboard: () => ipcRenderer.invoke('clipboard:bot-token'),
   updateFailed: () => ipcRenderer.invoke('update:failed'),
   updateStatus: () => ipcRenderer.invoke('update:status'),
-  setUpdateChannel: (channel) => ipcRenderer.invoke('update:channel', channel),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   onUpdateState: (callback) => { const listener = (_event, state) => callback(state); ipcRenderer.on('update:state', listener); return () => ipcRenderer.removeListener('update:state', listener); },

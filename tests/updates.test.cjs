@@ -142,13 +142,12 @@ test('packaged apps use version-aware GitHub updates while release checks keep t
   assert.equal(updater.channel, 'latest');
 });
 
-test('installing a beta preserves its channel when a later update is stable', () => {
-  const beta = mainProcess({ version: '0.1.22-beta.1' });
-  assert.equal(beta.files.get('update-channel'), 'beta');
-  assert.equal(mainProcess({ saved: beta.files.get('update-channel') }).updater.channel, 'beta');
-  const optedOut = mainProcess({ version: '0.1.22-beta.1', saved: 'stable' });
-  assert.equal(optedOut.updater.channel, 'latest');
-  assert.equal(optedOut.files.has('update-channel'), false);
+test('every Mac follows stable releases, even one that installed a beta or chose Beta', () => {
+  for (const options of [{}, { version: '0.1.22-beta.1' }, { saved: 'beta' }]) {
+    const { updater } = mainProcess(options);
+    assert.equal(updater.channel, 'latest');
+    assert.equal(updater.allowPrerelease, false);
+  }
 });
 
 test('quitting installs a ready update only after the engine is idle and stopped', async () => {

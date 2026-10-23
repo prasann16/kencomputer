@@ -7,7 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { requestMicrophone } = require('./microphone.cjs');
 const { trustedFrame } = require('./security.cjs');
-const { UpdateChecks, validChannel, acceptsVersion, initialChannel } = require('./updates.cjs');
+const { UpdateChecks, acceptsVersion } = require('./updates.cjs');
 
 app.setName('Ken');
 const home = path.resolve(process.env.KEN_HOME || path.join(os.homedir(), '.ken'));
@@ -145,15 +145,8 @@ function watchEngine() {
 // A check the user asked for (menu or Settings) reports what it found with a quiet toast.
 const quietRelaunch = path.join(home, 'desktop-data', 'updated');
 let updateReady = false, updateVersion = '', installing = false, updateChecks;
-const updateChannelFile = path.join(home, 'desktop-data', 'update-channel');
-let savedChannel = '';
-try { savedChannel = readFileSync(updateChannelFile, 'utf8').trim(); } catch {}
-let updateChannel = initialChannel(savedChannel, app.getVersion());
-function saveUpdateChannel(channel) {
-  mkdirSync(path.dirname(updateChannelFile), { recursive: true });
-  writeFileSync(updateChannelFile, channel);
-  savedChannel = channel;
-}
+// Everyone gets stable releases, including a Mac that installed a beta or once chose Beta.
+const updateChannel = 'stable';
 // If an update doesn't install, Ken must come back and say so rather than vanish and retry
 // forever: a note records the version being installed and which Ken.app was on disk, a
 // timer reopens Ken if the installer didn't, and the next start that finds the note with
@@ -205,8 +198,6 @@ function checkNow(manual) {
 }
 function checkForUpdates() {
   if (!app.isPackaged) return;
-  // Installing a beta opts in across subsequent stable updates, too.
-  if (updateChannel === 'beta' && !validChannel(savedChannel)) saveUpdateChannel(updateChannel);
   const { autoUpdater } = require('electron-updater');
   // The release check feeds the app a local "newer" copy of itself to prove it can update.
   if (process.env.KEN_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.KEN_UPDATE_URL });
@@ -292,15 +283,6 @@ async function start() {
   ipcMain.handle('update:status', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return { version: app.getVersion(), channel: updateChannel, ready: updateReady && updateVersion !== updateFailed ? updateVersion : null };
-  });
-  ipcMain.handle('update:channel', (event, channel) => {
-    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
-    if (!validChannel(channel)) throw new Error('Invalid update channel.');
-    if (installing) throw new Error('Wait for the update to finish installing.');
-    saveUpdateChannel(channel);
-    updateChannel = channel;
-    updateChecks?.select(channel);
-    return { channel };
   });
   ipcMain.handle('update:check', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');

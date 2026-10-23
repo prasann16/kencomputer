@@ -5,12 +5,7 @@ name: Release Mac app
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:  # weekly and manual beta preparation dispatch the version tag
-    inputs:
-      publish_beta:
-        description: "Publish a beta prerelease after the build and Mac update checks pass"
-        type: boolean
-        default: false
+  workflow_dispatch:  # the weekly update dispatches the version tag
 
 permissions:
   contents: read
@@ -28,7 +23,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      PUBLISH_BETA: ${{ inputs.publish_beta || false }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +32,6 @@ jobs:
         run: |
           [[ "$GITHUB_REF" = refs/tags/* ]] || { echo "::error::Run this workflow on a version tag"; exit 1; }
           channel="$(python3 desktop/release_version.py classify "$GITHUB_REF_NAME")"
-          [ "$PUBLISH_BETA" != true ] || [ "$channel" = beta ] || { echo "::error::Automatic publishing is only available for beta tags"; exit 1; }
           if draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
             [ "$draft" = true ] || { echo "::error::$GITHUB_REF_NAME is already published; use a new version"; exit 1; }
           fi
@@ -181,24 +174,3 @@ jobs:
           echo "===== app log"; cat ~/app.log; echo "===== app log, broken update"; cat ~/app2.log
           for f in ~/.ken/logs/*; do echo "===== $f"; tail -40 "$f"; done
           echo "===== installer logs"; for f in ~/Library/Caches/*ShipIt*/*.log; do echo "--- $f"; tail -40 "$f"; done
-
-  publish-beta:
-    needs: [validate, m1]
-    if: inputs.publish_beta && needs.validate.outputs.channel == 'beta'
-    runs-on: macos-15
-    concurrency: release-preparation
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Publish to the beta channel
-        run: |
-          # Builds may finish out of order. Keep superseded betas as drafts so an older
-          # release cannot become the first entry in the updater's GitHub release feed.
-          python3 desktop/release_version.py beta "$GITHUB_REF_NAME"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
-          echo "Published beta: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
