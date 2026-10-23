@@ -110,7 +110,7 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 .side-connections{margin-top:auto}
 @media(max-width:700px){.side{position:fixed;inset:0 auto 0 0;z-index:40;box-shadow:0 10px 40px #0000001f}}
 /* Header: sidebar button and page name, then quiet icon buttons. */
-.chat-header,html[data-desktop='darwin'] .chat-header{height:60px;padding:0 16px 0 14px;gap:8px;justify-content:flex-start;border-bottom:1px solid var(--line)}
+.chat-header,html[data-desktop='darwin'] .chat-header{height:61px;padding:0 16px 0 14px;gap:8px;justify-content:flex-start;border-bottom:1px solid var(--line)}
 html[data-desktop='darwin'] .shell:not(.side-open) .chat-header{padding-left:84px}
 .side-toggle,.hdr-btn{-webkit-app-region:no-drag;display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;border-radius:8px;background:none;color:var(--faint);cursor:pointer;flex-shrink:0}
 .side-toggle:hover,.hdr-btn:hover{background:var(--well);color:var(--ink-2)}.hdr-btn:disabled{opacity:.4;cursor:default}.hdr-btn.coffee.on{color:var(--coffee)}
