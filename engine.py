@@ -107,6 +107,34 @@ async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
 BUILTIN_TOOLS = ("browser", "email", "calendar")
 
 
+def link_dir(link: Path, target: Path) -> None:
+    """A folder that shows another folder: a relative symlink, or a junction on Windows (no admin needed)."""
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
+
+
+def prepare_skills(home: Path) -> Path | None:
+    """Ken's skills live in <home>/skills, one folder per skill (SKILL.md and its files), shared by
+    every chat and both brains. Claude Code only finds skills inside a plugin, so a small hidden
+    plugin, <home>/.skills-plugin, points at that folder. Returns the plugin, or None if it can't be made."""
+    skills, plugin = home / "skills", home / ".skills-plugin"
+    try:
+        skills.mkdir(parents=True, exist_ok=True)
+        manifest = plugin / ".claude-plugin" / "plugin.json"
+        if not manifest.exists():
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps({"name": "ken-skills", "description": "Skills Ken has added"}, indent=2) + "\n")
+        if not (plugin / "skills").exists():
+            link_dir(plugin / "skills", skills)
+        return plugin
+    except OSError as e:
+        log.warning("couldn't set up the skills folder: %s", e)
+        return None
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s[:40] or "project"
@@ -160,6 +188,10 @@ class Engine:
         self.run_sessions: dict[str, object] = {}
         self.run_slots = asyncio.Semaphore(4)
         self._bg: list[asyncio.Task] = []
+        # The phone message behind the turn in progress, and behind each run/approval it started, so
+        # their results can quote it in Telegram instead of whatever the human said last.
+        self.chat_origin: int | None = None
+        self.origins: dict[str, int] = {}
 
     def configure_home(self, cwd: Path, system: Callable[[], str], project_system: Callable[[], str] | None = None) -> None:
         self.home_cwd = Path(cwd)
@@ -593,10 +625,23 @@ class Engine:
         cfg = self.tools_config(pid)
         return {**self.tools(set(cfg["use"]), self.backend(pid)), **cfg["mcp"]}
 
+    def _share_skills(self, cwd: Path) -> None:
+        """Codex finds skills in <folder>/.agents/skills: Ken's own folders point it at Ken's skills.
+        A folder of theirs (an agent's code or info folder) is never written to."""
+        skills, cwd = self.home / "skills", Path(cwd)
+        link = cwd / ".agents" / "skills"
+        if not skills.is_dir() or self.home.resolve() not in cwd.resolve().parents or link.exists() or link.is_symlink():
+            return
+        try:
+            link.parent.mkdir(exist_ok=True)
+            link_dir(link, skills)
+        except OSError as e:
+            log.warning("couldn't share Ken's skills with Codex in %s: %s", cwd, e)
+
     def _tools_stamp(self, pid: str) -> tuple:
-        """Changes when its tools or keys do, so an open chat reopens with them."""
+        """Changes when its tools, keys or Ken's skills do, so an open chat reopens with them."""
         out = [self.backend(pid)]
-        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files"):
+        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills"):
             try:
                 out.append(f.stat().st_mtime)
             except OSError:
@@ -887,6 +932,8 @@ class Engine:
             s = None
         if s is None:
             brain = self.brain_for(pid)
+            if brain.name == "codex":
+                self._share_skills(self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid)))
             self.chat_tools[pid] = self._tools_stamp(pid)
             if pid == HOME:
                 s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
@@ -932,6 +979,7 @@ class Engine:
         listener: Callable[[str], Awaitable[None]] | None = None,
         quiet: bool = False,
         job: dict | None = None,
+        origin: int | None = None,
     ) -> bool:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it)."""
@@ -947,6 +995,8 @@ class Engine:
         await lock.acquire()
         try:
             self.chat_tasks.add(asyncio.current_task())
+            if pid == HOME:
+                self.chat_origin = origin
             body = f"{await self.state(pid, via)}\n{body}"
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
@@ -1002,6 +1052,8 @@ class Engine:
                 self.broadcast("chat.busy", pid, busy=False)
             return outcome == 'ok'
         finally:
+            if pid == HOME:
+                self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
 
@@ -1142,9 +1194,11 @@ class Engine:
         args.append(limit)
         return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
-    def start_run(self, pid: str, title: str, prompt: str, source: str = "you") -> dict:
+    def start_run(self, pid: str, title: str, prompt: str, source: str = "you", origin: int | None = None) -> dict:
         self.get_agent(pid)
         rid = uuid.uuid4().hex[:10]
+        if origin or self.chat_origin:
+            self.origins[rid] = origin or self.chat_origin
         self.db.execute(
             "INSERT INTO runs (id, project, title, prompt, source, status, created, activity) VALUES (?,?,?,?,?,?,?,?)",
             (rid, pid, title.strip()[:120] or "Task", prompt, source, "queued", time.time(), "waiting to start"),
@@ -1206,7 +1260,8 @@ class Engine:
             if self._run_row(rid)["status"] == "stopped":
                 status = "stopped"
             self._set_run(rid, status=status, finished=time.time(), summary=summary[:4000], activity="")
-            self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600])
+            self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
+                      origin=self.origins.pop(rid, None))
             if status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
 
@@ -1240,7 +1295,9 @@ class Engine:
              next_step.strip()[:2000], "pending", time.time()),
         )
         a = self.get_approval(aid)
-        self.emit("approval.created", project=pid, approval=a)
+        if self.chat_origin:
+            self.origins[aid] = self.chat_origin
+        self.emit("approval.created", project=pid, approval=a, origin=self.chat_origin)
         return a
 
     def get_approval(self, aid: str) -> dict:
@@ -1257,6 +1314,7 @@ class Engine:
         if a["status"] != "pending":
             return a
         approved = decision == "approve"
+        origin = self.origins.pop(aid, None)
         final = (body if body is not None else a["body"]).strip()
         self.db.execute(
             "UPDATE approvals SET status=?, resolved=?, final_body=? WHERE id=?",
@@ -1270,7 +1328,7 @@ class Engine:
             if a["project"] == HOME:
                 asyncio.create_task(self.send_message(HOME, "", prompt=go, log_user=False))
             else:
-                self.start_run(a["project"], a["title"], go, source="approval")
+                self.start_run(a["project"], a["title"], go, source="approval", origin=origin)
         return a
 
     # ------------------------------------------------------------------- views

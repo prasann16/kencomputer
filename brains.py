@@ -120,6 +120,7 @@ class ClaudeSession(Session):
             # plugins, CLAUDE.md or MCP servers, only the tools Ken passes in.
             setting_sources=[],
             strict_mcp_config=True,
+            plugins=self.brain.plugins,  # Ken's skills (~/.ken/skills), the same in every chat
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
@@ -260,6 +261,7 @@ class ClaudeBrain(Brain):
         self.permission_mode = permission_mode
         self.can_use_tool = can_use_tool
         self.mcp_factory = mcp_factory
+        self.plugins: list[dict] = []
 
     def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None, env_fn=None) -> Session:
         return ClaudeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
