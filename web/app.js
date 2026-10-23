@@ -712,11 +712,12 @@ function PhoneSteps({ toast, onPaired }) {
   const [phone, setPhone] = useState(null);
   const [botToken, setBotToken] = useState(''), [found, setFound] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const waiting = phone && !phone.paired && !phone.connected;
+  const [noHandoff, setNoHandoff] = useState(false);  // the QR couldn't be made: show the steps instead
   useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
   // Send it from the phone (encrypted, through kencomputer.dev): a QR while they're on this step.
   useEffect(() => {
     if (!waiting || phone.handoff) return;
-    api('/api/phone/handoff', { json: {} }).then((h) => setPhone((p) => ({ ...p, handoff: h }))).catch(() => {});
+    api('/api/phone/handoff', { json: {} }).then((h) => setPhone((p) => ({ ...p, handoff: h }))).catch(() => setNoHandoff(true));
   }, [waiting, !!phone?.handoff]);  // and again after "No, it isn't"
   useEffect(() => () => { api('/api/phone/handoff', { method: 'DELETE' }).catch(() => {}); }, []);
   // Every 2s: has the phone sent the code, or tapped Start on the new bot?
@@ -760,7 +761,8 @@ function PhoneSteps({ toast, onPaired }) {
   if (phone.connected) return html`<div class="phone-last-step"><p>Last step: on your phone, open <a class="text-action" href=${phone.link} target="_blank" rel="noopener">@${phone.bot}</a> and say hi.</p>
     <button class="text-action" disabled=${busy} onClick=${() => act({ method: 'DELETE' })}>Use a different bot</button></div>`;
   return html`<div class="phone-steps-box">
-    ${phone.handoff?.qr ? html`<div class="phone-lead">
+    ${!phone.handoff && !noHandoff ? html`<div class="phone-lead phone-lead-wait" aria-busy="true"></div><p class="phone-lead-note">Scan with your phone\u2019s camera. It walks you through making your Telegram bot, about 2 minutes.</p>`
+    : phone.handoff?.qr ? html`<div class="phone-lead">
         <div class="phone-lead-qr" dangerouslySetInnerHTML=${{ __html: phone.handoff.qr }}></div>
         <video class="phone-video" src="/media/botfather.mp4" autoplay muted loop playsinline aria-label="What you'll do in Telegram"></video>
       </div>
