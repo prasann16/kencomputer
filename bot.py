@@ -657,7 +657,7 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        await update.effective_message.reply_text("Got it — I’ll read this next.", do_quote=True, allow_sending_without_reply=True)
+        await update.effective_message.reply_text("Got it — I’ll read this next. Send /stop if you want me to drop what I’m doing first.", do_quote=True, allow_sending_without_reply=True)
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
