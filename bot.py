@@ -935,8 +935,13 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
+    jobs = ENGINE.list_runs(project=HOME, active=True)
     if await ENGINE.stop_chat(HOME):
         await update.effective_message.reply_text("🛑 Stopping the current task.")
+    elif jobs:  # nothing in the chat: /stop means the work in the background
+        for run in jobs:
+            asyncio.create_task(ENGINE.stop_run(run["id"]))
+        await update.effective_message.reply_text("🛑 Stopping " + ", ".join(r["title"] for r in jobs) + ".")
     else:
         await update.effective_message.reply_text("Nothing is running.")
 
@@ -1304,12 +1309,12 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
                                            **quoting(ev.get("origin")))
-            elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
+            elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME:
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
                                     reply_to=ev.get("origin"))
-            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") == "app":
+            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""

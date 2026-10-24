@@ -107,7 +107,9 @@ class ClaudeSession(Session):
             permission_mode=self.brain.permission_mode,
             can_use_tool=self.brain.can_use_tool,
             mcp_servers=self.mcp_fn() if self.mcp_fn else {},
-            env=self.env_fn() if self.env_fn else {},
+            # No Claude Code background helpers: their results arrive after Ken's reply has ended and are
+            # lost. Long work goes to Ken's own background jobs, which report back (engine.start_run).
+            env={**(self.env_fn() if self.env_fn else {}), "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
             include_partial_messages=True,
             cwd=self.cwd,
             model=model or None,
