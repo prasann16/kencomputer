@@ -176,6 +176,15 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .drawer .result { padding: 14px 16px; white-space: pre-wrap; }
 .drawer .typing { padding-left: 0; }
 .drawer footer { padding: 16px 24px; border-top: 1px solid var(--line); }
+.drawer.doc-viewer { width: min(760px, 100%); }
+.doc-page { display: block !important; font-size: 15px; line-height: 1.6; padding: 20px 28px !important; }
+.doc-page h2 { font-size: 21px; margin: 4px 0 12px; }
+.doc-page h3 { font-size: 16px; margin: 22px 0 6px; }
+.doc-page p { margin: 0 0 12px; }
+.doc-page ul { margin: 0 0 12px; padding-left: 22px; }
+.doc-page li { margin: 3px 0; }
+.doc-page pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--track); padding: 12px 14px; border-radius: 8px; font-size: 13px; }
+.doc-page .table { margin: 0 0 14px; }
 .modal { width: min(560px, 100%); max-height: 100%; overflow-y: auto; background: var(--bg); border-radius: 16px; padding: 26px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .25); }
 .modal h2 { margin: 0; font: 400 30px/1.1 var(--serif); }
 .form { display: flex; flex-direction: column; gap: 14px; }
