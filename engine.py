@@ -1053,7 +1053,7 @@ class Engine:
                     return
                 t = self.mask(pid, t)
                 if not quiet:
-                    self.log_message(pid, "ken", t, **({"job": job} if job else {}))
+                    self.log_message(pid, "ken", t, **({"job": job} if job else {}), **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(t)
 
@@ -1078,7 +1078,7 @@ class Engine:
                 await session.close()
                 self.chats.pop(pid, None)
                 msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else friendly_error(e, self.backend(pid).capitalize())
-                self.log_message(pid, "ken", msg, error=True)
+                self.log_message(pid, "ken", msg, error=True, **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(msg)
             finally:
@@ -1119,9 +1119,9 @@ class Engine:
         ))
 
     async def files_dropped(self, pid: str, names: list[str]) -> None:
-        self.log_message(pid, "you", "", files=names)
+        self.log_message(pid, "you", "", files=names, via="app")
         await self.send_message(
-            pid, "", log_user=False, prompt=f"(They dropped in {', '.join(names)}, saved in {self.files_dir(pid)}.)"
+            pid, "", log_user=False, via="app", prompt=f"(They dropped in {', '.join(names)}, saved in {self.files_dir(pid)}.)"
         )
 
     async def stop_chat(self, pid: str) -> bool:
