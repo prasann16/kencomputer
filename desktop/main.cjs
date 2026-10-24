@@ -299,6 +299,10 @@ async function start() {
     const found = String(await clipboard.readText()).match(/\b\d{6,}:[A-Za-z0-9_-]{30,}/);
     return found ? found[0] : null;
   });
+  ipcMain.handle('clipboard:write', (event, text) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    clipboard.writeText(String(text).slice(0, 1000000));
+  });
   ipcMain.handle('microphone:permission', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     return requestMicrophone(systemPreferences, process.platform);

@@ -496,3 +496,54 @@ async def test_files_picked_in_the_mac_app_are_copied_by_path(engine, tmp_path, 
     assert (engine.files_dir(HOME) / "receipt.pdf").read_bytes() == b"%PDF-1"
     assert (await client.post("/api/chats/home/files/paths", json={"paths": [str(picked)]})).status == 400  # a folder isn't a file
     assert (await client.post("/api/chats/home/files/paths", json={"paths": []})).status == 400
+
+
+async def test_ken_hands_long_work_to_a_background_job_that_reports_back(engine):
+    assert "BACKGROUND JOBS" in engine.system(HOME)
+    f = engine.requests_dir / "job.json"
+    f.write_text(json.dumps({"type": "run", "title": "🎬 Reel", "prompt": "edit /tmp/v.mp4 into a reel"}))
+    old = time.time() - 5
+    os.utime(f, (old, old))
+    engine._ingest(f)
+    await settle(engine)
+    for _ in range(50):  # the report wakes Ken in the background
+        await asyncio.sleep(0.02)
+        if all(t.done() for t in engine._bg):
+            break
+    run = engine.list_runs(project=HOME)[0]
+    assert run["status"] == "done" and run["source"] == "ken"
+    job, report = engine.brain.asks[0], engine.brain.asks[1]
+    assert job["prompt"] == "edit /tmp/v.mp4 into a reel"  # only the brief, never the conversation
+    assert job["cwd"] == str(engine.home_cwd) and "You are a background job" in job["system"]
+    assert 'background job "🎬 Reel" finished' in report["prompt"] and "did it" in report["prompt"]
+    last = engine.messages(HOME)[-1]
+    assert last["role"] == "ken" and last["via"] == "background"
+    assert not [m for m in engine.messages(HOME) if m["role"] == "you"]
+
+
+async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
+    gate = asyncio.Event()
+    ask = FakeSession.ask
+
+    async def slow(self, prompt, on_text, on_tool=None, on_delta=None):
+        if prompt.startswith("job"):
+            await gate.wait()
+        return await ask(self, prompt, on_text, on_tool, on_delta)
+
+    FakeSession.ask = slow
+    try:
+        runs = [engine.start_run(HOME, f"Job {i}", f"job {i}", source="ken") for i in range(3)]
+        await asyncio.sleep(0.05)
+        assert [engine._run_row(r["id"])["status"] for r in runs] == ["running", "running", "queued"]
+        assert f'{runs[0]["id"]} "Job 0"' in await engine.state(HOME)
+        engine.handle_request({"type": "stop", "run": runs[2]["id"]})
+        await asyncio.sleep(0.05)
+        assert engine._run_row(runs[2]["id"])["status"] == "stopped"
+        assert engine.messages(HOME)[-1]["text"] == '■ Stopped the background job "Job 2".'
+        assert 'stopped, not finished: "Job 2"' in await engine.state(HOME)
+        assert "stopped, not finished" not in await engine.state(HOME)  # said once
+        gate.set()
+        await settle(engine)
+    finally:
+        FakeSession.ask = ask
+    assert [engine._run_row(r["id"])["status"] for r in runs] == ["done", "done", "stopped"]

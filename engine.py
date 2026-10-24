@@ -64,6 +64,9 @@ DEFAULT_AUTONOMY = {
 APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 # Work runs as long as it needs; only a brain that has said nothing for this long is stopped.
 IDLE_LIMIT = 45 * 60
+# Background jobs share the subscription with the chat: two at a time, an hour at most each.
+RUN_SLOTS = 2
+RUN_LIMIT = 60 * 60
 
 
 
@@ -186,7 +189,7 @@ class Engine:
         self._greeting: set[str] = set()
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
-        self.run_slots = asyncio.Semaphore(4)
+        self.run_slots = asyncio.Semaphore(RUN_SLOTS)
         self._bg: list[asyncio.Task] = []
         # The phone message behind the turn in progress, and behind each run/approval it started, so
         # their results can quote it in Telegram instead of whatever the human said last.
@@ -206,6 +209,8 @@ class Engine:
         self.agents_dir.mkdir(parents=True, exist_ok=True)
         self.requests_dir.mkdir(parents=True, exist_ok=True)
         now = time.time()  # a restart ends whatever was running; say so instead of leaving ghosts
+        for r in self.db.execute("SELECT title FROM runs WHERE project=? AND status IN ('running','queued')", (HOME,)).fetchall():
+            self.log_message(HOME, "ken", f'■ Ken restarted, which stopped the background job "{r["title"]}".', via="background")
         self.db.execute(
             "UPDATE runs SET status='stopped', finished=?, summary=COALESCE(summary,'Interrupted by a restart.') "
             "WHERE status IN ('running','queued')", (now,),
@@ -543,7 +548,18 @@ class Engine:
     def kit(self, pid: str) -> str:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
-        return (
+        background = "" if pid != HOME else (
+            "BACKGROUND JOBS: when something will take more than a few minutes (editing a video, long research, "
+            "building something), don't do it here, where it would keep them waiting. Hand it to a background job: write "
+            f'{{"type": "run", "title": "a few words, maybe an emoji", "prompt": "the brief"}} into {self.requests_dir}/, '
+            "then tell them in a line that it's running and they can keep talking to you. The job starts fresh and sees only "
+            "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
+            "conversation that matters. When it finishes, its report comes back to you as a message; tell them the result "
+            f"then. Up to {RUN_SLOTS} run at once and the rest wait their turn; each stops after an hour. Running jobs are "
+            f'listed in the line at the top of each message; to stop one, write {{"type": "stop", "run": "<id>"}} there '
+            "too. Quick things, and anything that needs their answers along the way, you do yourself, here.\n"
+        )
+        return background + (
             f"FEEDBACK FOR THE PEOPLE WHO MAKE KEN: when they want to tell the Ken team something (a bug, an idea, a "
             f"complaint), write it up in their words, show them exactly what will be sent, and only after they say yes "
             f'write {{"type": "feedback", "text": "...", "email": "their email, only if they want a reply"}} into '
@@ -895,6 +911,17 @@ class Engine:
         parts = [time.strftime("%a %d %b %H:%M")]
         if via in WHERE:
             parts.append(WHERE[via])
+        jobs = self.list_runs(project=pid, active=True) if pid == HOME else []
+        if pid == HOME:  # stopped by them or by a restart: Ken hears it once, so it never says one is still going
+            seen = float(self.kv_get("jobs:seen") or 0)
+            stopped = [r["title"] for r in self.list_runs(project=HOME, active=False, since=time.time() - 86400)
+                       if r["status"] == "stopped" and (r["finished"] or 0) > seen]
+            self.kv_set("jobs:seen", str(time.time()))
+            if stopped:
+                parts.append("background jobs stopped, not finished: " + ", ".join(f'"{t}"' for t in stopped))
+        if jobs:
+            parts.append("background jobs running: " + ", ".join(
+                f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
         if pid != HOME:
             since = self._last_message_ts(pid)
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
@@ -1194,12 +1221,20 @@ class Engine:
             a = self.create_agent(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
             self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))
             return
-        pid = str(req.get("agent", req.get("project", "")))
+        if kind == "stop":
+            self._bg.append(asyncio.create_task(self.stop_run(str(req.get("run", "")))))
+            return
+        pid = str(req.get("agent", req.get("project", ""))) or HOME
+        if kind == "run" and pid.lower() == "ken":
+            pid = HOME
         if pid != HOME:
             pid = self.find_agent(pid) or pid
             self.get_agent(pid)
-        if kind == "run" and pid != HOME:
-            self.start_run(pid, str(req.get("title") or "Task")[:120], str(req["prompt"]), source="agent")
+        if kind == "run":
+            if pid == HOME and len(self.list_runs(project=HOME, active=True)) >= 2 * RUN_SLOTS:
+                raise ValueError("too many background jobs waiting already")
+            self.start_run(pid, str(req.get("title") or "Task")[:120], str(req["prompt"]),
+                           source="ken" if pid == HOME else "agent")
         elif kind == "approval":
             self.create_approval(pid, str(req.get("kind", "other")), str(req["title"]), str(req.get("body", "")), str(req.get("next", "")))
         else:
@@ -1233,7 +1268,8 @@ class Engine:
         return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
     def start_run(self, pid: str, title: str, prompt: str, source: str = "you", origin: int | None = None) -> dict:
-        self.get_agent(pid)
+        if pid != HOME:
+            self.get_agent(pid)
         rid = uuid.uuid4().hex[:10]
         if origin or self.chat_origin:
             self.origins[rid] = origin or self.chat_origin
@@ -1257,10 +1293,22 @@ class Engine:
                 return
             self._set_run(rid, status="running", started=time.time(), activity="starting")
             self.emit("run.started", project=pid, run=rid)
+            cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
+            if self.brain_for(pid).name == "codex":
+                self._share_skills(cwd)
+            note = (f'\n\nBackground run: "{run["title"]}". Nobody is watching; '
+                    "don't ask questions. End with 1-3 lines on what happened, with links.")
+            if pid == HOME:
+                note = (f'\n\n=== You are a background job: "{run["title"]}" ===\nKen handed you this job so the chat stays '
+                        "free; the brief is the message below. Do the work yourself, start to finish. Nobody is watching, so "
+                        "don't ask questions: make sensible choices and say what you chose. Don't start other background jobs, "
+                        "don't message them and don't use the outbox; Ken tells them the result. Things that need their OK "
+                        "(sending, posting, spending) you prepare and leave for Ken to ask about. Save what you make in your "
+                        "working folder. End with a short report for Ken: what you did, what you chose, and the full path "
+                        "of every file you made.")
             session = self.brain_for(pid).session(
-                cwd=str(self.workdir(self.get_agent(pid))),
-                system=lambda: self.system(pid) + f'\n\nBackground run: "{run["title"]}". Nobody is watching; '
-                "don't ask questions. End with 1-3 lines on what happened, with links.",
+                cwd=str(cwd),
+                system=lambda: self.system(pid) + note,
                 model_fn=lambda: self.model_for(pid),
                 mcp_fn=lambda: self.agent_tools(pid),
                 env_fn=lambda: self._key_values(pid),
@@ -1280,34 +1328,48 @@ class Engine:
                 self._set_run(rid, activity=line)
                 self.emit("run.tool", project=pid, run=rid, text=line)
 
-            status, summary = "failed", ""
+            status, summary, began = "failed", "", time.monotonic()
             try:
-                final = await until_idle(session, session.ask(run["prompt"], on_text, on_tool))
+                final = await asyncio.wait_for(until_idle(session, session.ask(run["prompt"], on_text, on_tool)), RUN_LIMIT)
                 status, summary = "done", self.mask(pid, (final or last or "Finished.").strip())
             except asyncio.CancelledError:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                summary = "Stopped: Ken went quiet for 45 minutes." if isinstance(e, asyncio.TimeoutError) else f"Failed: {e}"
+                if isinstance(e, asyncio.TimeoutError):
+                    summary = ("Stopped: it hit the one-hour limit." if time.monotonic() - began >= RUN_LIMIT - 60
+                               else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
+                else:
+                    summary = f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
                 try:
                     await session.close()
                 except Exception:
                     pass
-            if self._run_row(rid)["status"] == "stopped":
+            row = self._run_row(rid)
+            if row["status"] == "stopped":
                 status = "stopped"
-            self._set_run(rid, status=status, finished=time.time(), summary=summary[:4000], activity="")
+            self._set_run(rid, status=status, finished=row["finished"] if status == "stopped" and row["finished"] else time.time(),
+                          summary=summary[:4000], activity="")
             self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
                       origin=self.origins.pop(rid, None))
-            if status != "stopped":
+            if status != "stopped" and pid == HOME:
+                # Like a helper reporting back: Ken reads the result and tells them, wherever they are.
+                self._bg.append(asyncio.create_task(self.send_message(HOME, "", log_user=False, via="background", prompt=(
+                    f'(Your background job "{run["title"]}" {"finished" if status == "done" else "did not finish"}. Its report:\n'
+                    f"{summary[:4000]}\n\nTell them the result now in a short message, with links, and send any files "
+                    "they'd want as you normally do. Don't redo the work.)"))))
+            elif status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
 
     async def stop_run(self, rid: str) -> None:
         run = self._run_row(rid)
         if run["status"] not in ("queued", "running"):
             return
-        self._set_run(rid, status="stopped")
+        self._set_run(rid, status="stopped", finished=time.time())
+        if run["project"] == HOME:  # so a promised result isn't left hanging, here or on the phone
+            self.log_message(HOME, "ken", f'■ Stopped the background job "{run["title"]}".', via="background")
         session = self.run_sessions.get(rid)
         if session is not None:
             try:
@@ -1320,7 +1382,7 @@ class Engine:
             if not task.done():
                 task.cancel()
         if run["status"] == "queued":
-            self._set_run(rid, finished=time.time(), summary="Stopped before it started.")
+            self._set_run(rid, summary="Stopped before it started.")
             self.emit("run.finished", project=run["project"], run=rid, status="stopped", title=run["title"], summary="Stopped.")
 
     # ------------------------------------------------------------ approvals
