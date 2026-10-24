@@ -1357,6 +1357,8 @@ class Engine:
         if run["status"] not in ("queued", "running"):
             return
         self._set_run(rid, status="stopped")
+        if run["project"] == HOME:  # so a promised result isn't left hanging, here or on the phone
+            self.log_message(HOME, "ken", f'■ Stopped the background job "{run["title"]}".', via="background")
         session = self.run_sessions.get(rid)
         if session is not None:
             try:

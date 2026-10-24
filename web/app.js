@@ -550,7 +550,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   return html`<section class="conversation-body" aria-label="Conversation"
 >
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
-      onScroll=${() => { if (atEnd(thread.current)) setBelow(false); }}>
+      onScroll=${() => { if (thread.current && atEnd(thread.current)) setBelow(false); }}>
       <div class="thread conversation-thread">
         ${!chat && html`<p class="quiet-copy" role="status">Loading your conversation…</p>`}
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
