@@ -162,3 +162,32 @@ def test_a_swipe_reply_tells_ken_what_it_points_at():
     part = type("Q", (), {"text": "v2"})()
     assert '"v2"' in bot.reply_context(msg(earlier("Draft: shipped v2"), part))
     assert "their own" in bot.reply_context(msg(earlier("my note", is_bot=False)))
+
+
+async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import bot
+    monkeypatch.setattr(bot, "authorized", lambda update: True)
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path)
+    prompts, replies = [], []
+    async def handle_prompt(update, prompt):
+        prompts.append(prompt)
+    monkeypatch.setattr(bot, "handle_prompt", handle_prompt)
+    monkeypatch.setattr(bot, "log_history", lambda *a: None)
+    class File:
+        async def download_to_drive(self, path):
+            open(path, "wb").write(b"mp4")
+    def update(size):
+        async def get_file():
+            return File()
+        async def reply_text(text):
+            replies.append(text)
+        async def send_action(action):
+            pass
+        video = SimpleNamespace(file_name="clip.mp4", file_size=size, get_file=get_file)
+        msg = SimpleNamespace(video=video, video_note=None, animation=None, document=None, caption="add captions", reply_text=reply_text)
+        return SimpleNamespace(effective_message=msg, effective_chat=SimpleNamespace(send_action=send_action))
+    await bot.on_file(update(5 * 1024 * 1024), None)
+    assert (tmp_path / "clip.mp4").read_bytes() == b"mp4" and "add captions" in prompts[0]
+    await bot.on_file(update(180 * 1024 * 1024), None)  # over Telegram's 20 MB bot limit: say so, don't go quiet
+    assert len(prompts) == 1 and "20 MB" in replies[0]
