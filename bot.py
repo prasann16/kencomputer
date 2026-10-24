@@ -1284,7 +1284,8 @@ async def start_engine() -> WebApp | None:
 
 
 async def notify_telegram(app) -> None:
-    """Approvals reach the phone with buttons; an agent's finished run as one line."""
+    """Approvals reach the phone with buttons; an agent's finished run as one line; and what's said
+    in the app shows on the phone too, so it's one conversation wherever you look."""
     q = ENGINE.subscribe()
     while True:
         ev = await q.get()
@@ -1308,6 +1309,14 @@ async def notify_telegram(app) -> None:
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
                                     reply_to=ev.get("origin"))
+            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") == "app":
+                words, files = (ev.get("text") or "").strip(), ev.get("files") or []
+                if ev.get("role") == "you":
+                    attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
+                    await send_outbound(app.bot, "💻 In the app: " + words[:3500] + attached)
+                elif ev.get("role") == "ken" and words:
+                    await send_outbound(app.bot, words)
+                    await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 

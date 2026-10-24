@@ -191,3 +191,27 @@ async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monk
     assert (tmp_path / "clip.mp4").read_bytes() == b"mp4" and "add captions" in prompts[0]
     await bot.on_file(update(180 * 1024 * 1024), None)  # over Telegram's 20 MB bot limit: say so, don't go quiet
     assert len(prompts) == 1 and "20 MB" in replies[0]
+
+
+async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    import bot
+    from engine import HOME
+    sent = []
+    async def send_outbound(b, text, reply_to=None):
+        sent.append(text)
+    async def flush_outbox(b, chat_id):
+        pass
+    monkeypatch.setattr(bot, "send_outbound", send_outbound)
+    monkeypatch.setattr(bot, "flush_outbox", flush_outbox)
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 1)
+    task = asyncio.create_task(bot.notify_telegram(SimpleNamespace(bot=None)))
+    await asyncio.sleep(0)
+    bot.ENGINE.emit("message", project=HOME, role="you", text="edit this for Instagram", files=["IMG_5208.MOV"], via="app")
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="On it.", via="app")
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="Answer on the phone", via="telegram")  # already delivered there
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+    task.cancel()
+    assert sent == ["💻 In the app: edit this for Instagram\n📎 IMG_5208.MOV", "On it."]
