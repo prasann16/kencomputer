@@ -427,12 +427,26 @@ class WebApp:
             self._spawn(self.engine.files_dropped(pid, saved))
         return _json({"saved": saved})
 
-    async def download(self, request):
-        pid = self._pid(request)
+    async def open_file(self, request):
+        """A file named in the chat: where it is, so the Mac app can open it."""
+        data = await request.json()
         try:
-            path = self.engine.file_path(pid, request.match_info["name"])
+            path = self.engine.shared_file(str(data.get("path", "")))
+        except KeyError:
+            return _json({"error": "Ken can't find that file any more."}, 404)
+        return _json({"path": str(path), "name": path.name, "folder": path.is_dir()})
+
+    async def shared_file(self, request):
+        """The same file for a browser, which can't open it in an app: shown or downloaded."""
+        try:
+            path = self.engine.shared_file(request.query.get("path", ""))
         except KeyError:
             raise web.HTTPNotFound()
+        if not path.is_file():
+            raise web.HTTPNotFound()
+        return self._serve(path)
+
+    def _serve(self, path):
         from urllib.parse import quote
         # Active documents must not execute under Ken's authenticated origin.
         inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf"}
@@ -441,6 +455,14 @@ class WebApp:
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "sandbox; default-src 'none'",
         })
+
+    async def download(self, request):
+        pid = self._pid(request)
+        try:
+            path = self.engine.file_path(pid, request.match_info["name"])
+        except KeyError:
+            raise web.HTTPNotFound()
+        return self._serve(path)
 
     async def reset(self, request):
         pid = self._pid(request)
@@ -668,6 +690,8 @@ class WebApp:
         r.add_post("/api/chats/{pid}/files", self.upload)
         r.add_post("/api/chats/{pid}/files/paths", self.attach_paths)
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
+        r.add_post("/api/open", self.open_file)
+        r.add_get("/api/file", self.shared_file)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_get("/api/today", self.today)

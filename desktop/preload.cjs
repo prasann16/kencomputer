@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   pickFolder: () => ipcRenderer.invoke('folder:pick'),
   pickFiles: () => ipcRenderer.invoke('files:pick'),
   openFolder: (folder) => ipcRenderer.invoke('folder:open', folder),
+  openFile: (file) => ipcRenderer.invoke('file:open', file),
   popupMenu: (items) => ipcRenderer.invoke('menu:popup', items),
   connectChrome: () => ipcRenderer.invoke('chrome:connect'),
   botTokenFromClipboard: () => ipcRenderer.invoke('clipboard:bot-token'),

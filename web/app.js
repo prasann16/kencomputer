@@ -67,12 +67,42 @@ const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [
 
 // Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
+// Files Ken names open on click: [name](/path), `work/report.md`, or a full path in the text.
+const LINK_RE = /\[([^\]\n]+)\]\(<?([^()\s<>]+|[^()<>\n]+(?=>))>?\)/g;
+const PATH_RE = /((?:~|\/)[^\s<>()`'"*]*\/[^\s<>()`'"*]*\.[A-Za-z0-9]{1,5})(?![\w/])/g;
+const isPath = (s) => /^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) && !/^\/\//.test(s);
+let notify = () => {}, showDoc = () => {};
+const sharedUrl = (path) => `/api/file?path=${encodeURIComponent(path)}`;
+async function openFile(path) {
+  try {
+    const found = await api('/api/open', { json: { path } });
+    if (/\.(md|markdown)$/i.test(found.path)) {  // a write-up reads best right here, formatted
+      const r = await fetch(sharedUrl(found.path));
+      if (r.ok) return showDoc({ ...found, text: await r.text() });
+    }
+    if (window.kenDesktop?.openFile) await window.kenDesktop.openFile(found.path);
+    else if (!found.folder) window.open(sharedUrl(found.path), '_blank', 'noopener');
+    else notify('That’s a folder on the computer Ken runs on: ' + found.path);
+  } catch (e) { notify(e.message); }
+}
+const fileLink = (path, label) => html`<a class="file-link" href="#" title=${path} onClick=${(e) => { e.preventDefault(); openFile(path); }}>${label}</a>`;
+function words(text) {
+  return text.split(URL_RE).map((part, j) => {
+    if (j % 2) return html`<a href=${part} target="_blank" rel="noopener">${part}</a>`;
+    return part.split(PATH_RE).map((p, k) => k % 2 ? fileLink(p, p.split('/').pop())
+      : p.split(/\*\*([^*\n]+)\*\*/g).map((b, n) => (n % 2 ? html`<b>${b}</b>`
+        : b.split(/(?<![*\w])\*([^*\s][^*\n]*?)\*(?![*\w])/g).map((t, q) => (q % 2 ? html`<i>${t}</i>` : t)))));
+  });
+}
 function inline(text) {
   return text.split(/(`[^`\n]+`)/g).map((seg, i) => {
-    if (i % 2) return html`<code>${seg.slice(1, -1)}</code>`;
-    return seg.split(URL_RE).map((part, j) => {
-      if (j % 2) return html`<a href=${part} target="_blank" rel="noopener">${part}</a>`;
-      return part.split(/\*\*([^*\n]+)\*\*/g).map((p, k) => (k % 2 ? html`<b>${p}</b>` : p));
+    if (i % 2) { const code = seg.slice(1, -1); return isPath(code) ? fileLink(code, html`<code>${code}</code>`) : html`<code>${code}</code>`; }
+    const parts = seg.split(LINK_RE);
+    return parts.map((part, j) => {
+      if (j % 3 === 1) return null;
+      if (j % 3 === 2) { const label = parts[j - 1];
+        return /^https?:\/\//.test(part) ? html`<a href=${part} target="_blank" rel="noopener">${label}</a>` : isPath(part) || part.startsWith('/') ? fileLink(part, label) : label; }
+      return words(part);
     });
   });
 }
@@ -108,6 +138,33 @@ function doc(text) {
   }
   flush();
   return blocks;
+}
+
+// A whole Markdown file: headings, lists and paragraphs, plus tables and code blocks.
+function page(text) {
+  return String(text || '').split(/```[^\n]*\n?([\s\S]*?)```/g).map((block, i) => i % 2
+    ? html`<pre><code>${block.replace(/\n$/, '')}</code></pre>`
+    : block.split(/((?:^\|.*\|[ \t]*(?:\n|$)){2,})/m).map((part, j) => {
+      const lines = part.trim().split('\n');
+      if (j % 2 === 0 || !/^\|[\s:|-]+\|$/.test(lines[1] || '')) return doc(part);
+      return html`<div class="table"><table><thead><tr>${cells(lines[0]).map((c) => html`<th>${inline(c)}</th>`)}</tr></thead>
+        <tbody>${lines.slice(2).map((l) => html`<tr>${cells(l).map((c) => html`<td>${inline(c)}</td>`)}</tr>`)}</tbody></table></div>`;
+    }));
+}
+
+function DocViewer({ file, onClose }) {
+  useEffect(() => { const esc = (e) => e.key === 'Escape' && onClose(); addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, []);
+  const elsewhere = () => window.kenDesktop?.openFile ? window.kenDesktop.openFile(file.path) : window.open(sharedUrl(file.path), '_blank', 'noopener');
+  return html`<div class="scrim" onClick=${(e) => e.target === e.currentTarget && onClose()}>
+    <aside class="drawer doc-viewer" role="dialog" aria-label=${file.name}>
+      <header>
+        <div style="flex:1;min-width:0"><div class="meta ellipsis" title=${file.path}>${file.path}</div><h2>${file.name}</h2></div>
+        <button class="icon-btn" aria-label="Close" onClick=${onClose}>${Icon.close}</button>
+      </header>
+      <div class="log doc-page">${file.text.trim() ? page(file.text) : 'This file is empty.'}</div>
+      <footer><button class="btn" onClick=${elsewhere}>${window.kenDesktop ? 'Open in another app' : 'Download'}</button></footer>
+    </aside>
+  </div>`;
 }
 
 // -------------------------------------------------------------------- icons
@@ -1106,6 +1163,9 @@ function App() {
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
   useEffect(()=>{warm(pid);},[pid]);
   const toast = useCallback((m) => setToastMsg(m), []);
+  notify = toast;
+  const [docFile, setDocFile] = useState(null);
+  showDoc = setDocFile;
   useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);
@@ -1280,6 +1340,7 @@ function App() {
   return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button></div>`}<${ChatHeader} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — the selected computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>
     ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
+    ${docFile && html`<${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/>`}
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${connections && html`<${Settings} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${()=>setConnections(false)} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
