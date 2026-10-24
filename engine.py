@@ -209,6 +209,8 @@ class Engine:
         self.agents_dir.mkdir(parents=True, exist_ok=True)
         self.requests_dir.mkdir(parents=True, exist_ok=True)
         now = time.time()  # a restart ends whatever was running; say so instead of leaving ghosts
+        for r in self.db.execute("SELECT title FROM runs WHERE project=? AND status IN ('running','queued')", (HOME,)).fetchall():
+            self.log_message(HOME, "ken", f'■ Ken restarted, which stopped the background job "{r["title"]}".', via="background")
         self.db.execute(
             "UPDATE runs SET status='stopped', finished=?, summary=COALESCE(summary,'Interrupted by a restart.') "
             "WHERE status IN ('running','queued')", (now,),
@@ -910,6 +912,13 @@ class Engine:
         if via in WHERE:
             parts.append(WHERE[via])
         jobs = self.list_runs(project=pid, active=True) if pid == HOME else []
+        if pid == HOME:  # stopped by them or by a restart: Ken hears it once, so it never says one is still going
+            seen = float(self.kv_get("jobs:seen") or 0)
+            stopped = [r["title"] for r in self.list_runs(project=HOME, active=False, since=time.time() - 86400)
+                       if r["status"] == "stopped" and (r["finished"] or 0) > seen]
+            self.kv_set("jobs:seen", str(time.time()))
+            if stopped:
+                parts.append("background jobs stopped, not finished: " + ", ".join(f'"{t}"' for t in stopped))
         if jobs:
             parts.append("background jobs running: " + ", ".join(
                 f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
@@ -1338,9 +1347,11 @@ class Engine:
                     await session.close()
                 except Exception:
                     pass
-            if self._run_row(rid)["status"] == "stopped":
+            row = self._run_row(rid)
+            if row["status"] == "stopped":
                 status = "stopped"
-            self._set_run(rid, status=status, finished=time.time(), summary=summary[:4000], activity="")
+            self._set_run(rid, status=status, finished=row["finished"] if status == "stopped" and row["finished"] else time.time(),
+                          summary=summary[:4000], activity="")
             self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
                       origin=self.origins.pop(rid, None))
             if status != "stopped" and pid == HOME:
@@ -1356,7 +1367,7 @@ class Engine:
         run = self._run_row(rid)
         if run["status"] not in ("queued", "running"):
             return
-        self._set_run(rid, status="stopped")
+        self._set_run(rid, status="stopped", finished=time.time())
         if run["project"] == HOME:  # so a promised result isn't left hanging, here or on the phone
             self.log_message(HOME, "ken", f'■ Stopped the background job "{run["title"]}".', via="background")
         session = self.run_sessions.get(rid)
@@ -1371,7 +1382,7 @@ class Engine:
             if not task.done():
                 task.cancel()
         if run["status"] == "queued":
-            self._set_run(rid, finished=time.time(), summary="Stopped before it started.")
+            self._set_run(rid, summary="Stopped before it started.")
             self.emit("run.finished", project=run["project"], run=rid, status="stopped", title=run["title"], summary="Stopped.")
 
     # ------------------------------------------------------------ approvals

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   popupMenu: (items) => ipcRenderer.invoke('menu:popup', items),
   connectChrome: () => ipcRenderer.invoke('chrome:connect'),
   botTokenFromClipboard: () => ipcRenderer.invoke('clipboard:bot-token'),
+  copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   updateFailed: () => ipcRenderer.invoke('update:failed'),
   updateStatus: () => ipcRenderer.invoke('update:status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),

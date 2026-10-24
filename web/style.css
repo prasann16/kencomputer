@@ -89,6 +89,13 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .msg.err .txt { color: var(--accent-ink); }
 .from-run { font-size: 13px; font-weight: 600; color: var(--go-ink); margin-bottom: 2px; }
 .msg.you { justify-content: flex-end; }
+.msg-body { min-width: 0; }
+.copy-msg { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 2px 0 0 -6px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.msg.you .copy-msg { margin: -4px 0 0; }
+.msg:hover .copy-msg, .copy-msg:focus-visible { opacity: 1; }
+.copy-msg:hover { color: var(--ink); background: var(--track); }
+.copy-msg:focus { outline: none; }
+@media (hover: none) { .copy-msg { opacity: 1; } }
 .msg.you .stack { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: 78%; }
 .msg.you .bubble { background: var(--primary); color: var(--primary-ink); border-radius: 16px 16px 4px 16px; padding: 12px 18px; font-size: 16px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.you .bubble a { color: inherit; }

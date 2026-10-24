@@ -540,6 +540,8 @@ async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
         await asyncio.sleep(0.05)
         assert engine._run_row(runs[2]["id"])["status"] == "stopped"
         assert engine.messages(HOME)[-1]["text"] == '■ Stopped the background job "Job 2".'
+        assert 'stopped, not finished: "Job 2"' in await engine.state(HOME)
+        assert "stopped, not finished" not in await engine.state(HOME)  # said once
         gate.set()
         await settle(engine)
     finally:

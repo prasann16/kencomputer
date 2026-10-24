@@ -113,6 +113,8 @@ function doc(text) {
 // -------------------------------------------------------------------- icons
 
 const Icon = {
+  copy: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>`,
+  check: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
   sun: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
   plus: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   clip: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>`,
@@ -295,7 +297,20 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
   </div>`;
 }
 
+// Copy a message as it reads on screen: plain text, without the markdown marks.
+async function copyText(text) {
+  if (window.kenDesktop?.copyText) return window.kenDesktop.copyText(text);
+  try { await navigator.clipboard.writeText(text); }
+  catch { const area = document.createElement('textarea'); area.value = text; document.body.append(area); area.select(); document.execCommand('copy'); area.remove(); }
+}
+function CopyButton({ from }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => { const el = from.current; if (!el) return; await copyText(el.innerText.trim()); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+  return html`<button class="copy-msg" title=${copied ? 'Copied' : 'Copy'} aria-label=${copied ? 'Copied' : 'Copy message'} onClick=${copy}>${copied ? Icon.check : Icon.copy}</button>`;
+}
+
 function Message({ m, label }) {
+  const body = useRef(null);
   const files = m.files || [];
   const content = useMemo(() => md(m.text), [m.text]);
   const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
@@ -308,15 +323,16 @@ function Message({ m, label }) {
           ? html`<a class="img" href=${url} target="_blank"><img src=${url} alt=${f} loading="lazy" /></a>`
           : html`<a class="filechip" href=${url} target="_blank">${Icon.file}${f}</a>`;
       })}
-      ${m.text && !recording && html`<div class="bubble">${content}</div>`}
+      ${m.text && !recording && html`<div class="bubble" ref=${body}>${content}</div>`}
+      ${m.text && !recording && html`<${CopyButton} from=${body}/>`}
     </div></div>`;
   }
   // A scheduled job's report says what it is, so Ken never seems to talk out of nowhere.
   return html`<div class=${'msg' + (m.error ? ' err' : '') + (m.job ? ' from-job' : '')}>
     ${label && html`<div class="job-label">${m.job.label}${m.job.time && html`<span> · ${m.job.time}</span>`}<a class="text-action" href="#/brain" title="Turn it off or change its time">Change</a></div>`}
-    <div class="txt">
+    <div class="msg-body"><div class="txt">
     ${m.run_title && html`<div class="from-run">${m.run_status === 'done' ? '✓' : '✕'} ${m.run_title}</div>`}
-    ${content}</div></div>`;
+    <div ref=${body}>${content}</div></div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
