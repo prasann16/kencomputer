@@ -67,12 +67,36 @@ const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [
 
 // Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
+// Files Ken names open on click: [name](/path), `work/report.md`, or a full path in the text.
+const LINK_RE = /\[([^\]\n]+)\]\(<?([^()\s<>]+|[^()<>\n]+(?=>))>?\)/g;
+const PATH_RE = /((?:~|\/)[^\s<>()`'"*]*\/[^\s<>()`'"*]*\.[A-Za-z0-9]{1,5})(?![\w/])/g;
+const isPath = (s) => /^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) && !/^\/\//.test(s);
+let notify = () => {};
+async function openFile(path) {
+  try {
+    const found = await api('/api/open', { json: { path } });
+    if (window.kenDesktop?.openFile) await window.kenDesktop.openFile(found.path);
+    else if (!found.folder) window.open(`/api/file?path=${encodeURIComponent(found.path)}`, '_blank', 'noopener');
+    else notify('That’s a folder on the computer Ken runs on: ' + found.path);
+  } catch (e) { notify(e.message); }
+}
+const fileLink = (path, label) => html`<a class="file-link" href="#" title=${path} onClick=${(e) => { e.preventDefault(); openFile(path); }}>${label}</a>`;
+function words(text) {
+  return text.split(URL_RE).map((part, j) => {
+    if (j % 2) return html`<a href=${part} target="_blank" rel="noopener">${part}</a>`;
+    return part.split(PATH_RE).map((p, k) => k % 2 ? fileLink(p, p.split('/').pop())
+      : p.split(/\*\*([^*\n]+)\*\*/g).map((b, n) => (n % 2 ? html`<b>${b}</b>` : b)));
+  });
+}
 function inline(text) {
   return text.split(/(`[^`\n]+`)/g).map((seg, i) => {
-    if (i % 2) return html`<code>${seg.slice(1, -1)}</code>`;
-    return seg.split(URL_RE).map((part, j) => {
-      if (j % 2) return html`<a href=${part} target="_blank" rel="noopener">${part}</a>`;
-      return part.split(/\*\*([^*\n]+)\*\*/g).map((p, k) => (k % 2 ? html`<b>${p}</b>` : p));
+    if (i % 2) { const code = seg.slice(1, -1); return isPath(code) ? fileLink(code, html`<code>${code}</code>`) : html`<code>${code}</code>`; }
+    const parts = seg.split(LINK_RE);
+    return parts.map((part, j) => {
+      if (j % 3 === 1) return null;
+      if (j % 3 === 2) { const label = parts[j - 1];
+        return /^https?:\/\//.test(part) ? html`<a href=${part} target="_blank" rel="noopener">${label}</a>` : isPath(part) || part.startsWith('/') ? fileLink(part, label) : label; }
+      return words(part);
     });
   });
 }
@@ -1106,6 +1130,7 @@ function App() {
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
   useEffect(()=>{warm(pid);},[pid]);
   const toast = useCallback((m) => setToastMsg(m), []);
+  notify = toast;
   useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);

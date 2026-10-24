@@ -324,6 +324,14 @@ async function start() {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     if (typeof folder === 'string' && existsSync(folder)) await shell.openPath(folder);
   });
+  // A file Ken named in the chat opens in its own app. Anything that would run instead (an app, a
+  // script, an installer) is only shown in Finder.
+  ipcMain.handle('file:open', async (event, file) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (typeof file !== 'string' || !existsSync(file)) return;
+    if (/\.(app|command|sh|bash|zsh|tool|terminal|pkg|mpkg|dmg|scpt|applescript|workflow|jar|py|rb|pl|js|exe|bat|ps1)$/i.test(file)) shell.showItemInFolder(file);
+    else await shell.openPath(file);
+  });
   ipcMain.handle('folder:pick', async (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });

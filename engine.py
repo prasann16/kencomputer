@@ -483,6 +483,26 @@ class Engine:
         ]
         return sorted(items, key=lambda f: -f["mtime"])
 
+    def shared_file(self, ref: str) -> Path:
+        """A file or folder Ken named in the chat, if it's one they may open: anything in Ken's work, inbox,
+        outbox or agents, or in their own home outside hidden folders. Never Ken's keys or settings."""
+        ref = ref.strip().strip("`").removeprefix("file://")
+        p = Path(os.path.expanduser(ref))
+        tries = [p] if p.is_absolute() else [self.home_cwd / p, self.home / p]
+        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.agents_dir]
+        user, ken = Path.home().resolve(), self.home.resolve()
+        for t in tries:
+            try:
+                r = t.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if any(r.is_relative_to(root.resolve()) for root in roots if root.exists()):
+                return r
+            if r.is_relative_to(user) and not r.is_relative_to(ken) and not any(
+                    part.startswith(".") for part in r.relative_to(user).parts):
+                return r
+        raise KeyError(ref)
+
     def file_path(self, pid: str, name: str) -> Path:
         clean = safe_filename(name)
         p = self.files_dir(pid) / clean

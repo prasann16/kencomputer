@@ -547,3 +547,27 @@ async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
     finally:
         FakeSession.ask = ask
     assert [engine._run_row(r["id"])["status"] for r in runs] == ["done", "done", "stopped"]
+
+
+def test_files_named_in_chat_open_but_never_keys_or_hidden_folders(engine, tmp_path_factory, monkeypatch):
+    user = tmp_path_factory.mktemp("user")
+    monkeypatch.setenv("HOME", str(user))
+    report = engine.home_cwd / "reports" / "lighthouses.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Lighthouses")
+    assert engine.shared_file("reports/lighthouses.md") == report.resolve()
+    assert engine.shared_file("work/reports/lighthouses.md") == report.resolve()
+    assert engine.shared_file(f"`{report}`") == report.resolve()
+    doc = user / "Documents" / "plan.pdf"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("pdf")
+    assert engine.shared_file("~/Documents/plan.pdf") == doc.resolve()
+    (user / ".ssh").mkdir()
+    (user / ".ssh" / "id_rsa").write_text("secret")
+    (engine.home / ".env").write_text("TOKEN=x")
+    engine.keys_dir(HOME).mkdir(parents=True)
+    (engine.keys_dir(HOME) / "keys.json").write_text("{}")
+    for bad in ("~/.ssh/id_rsa", str(engine.home / ".env"), str(engine.keys_dir(HOME) / "keys.json"),
+                "reports/../../.env", "/etc/hosts", "missing.md"):
+        with pytest.raises(KeyError):
+            engine.shared_file(bad)
