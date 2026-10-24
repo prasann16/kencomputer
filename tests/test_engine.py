@@ -552,6 +552,7 @@ async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
 def test_files_named_in_chat_open_but_never_keys_or_hidden_folders(engine, tmp_path_factory, monkeypatch):
     user = tmp_path_factory.mktemp("user")
     monkeypatch.setenv("HOME", str(user))
+    monkeypatch.setenv("USERPROFILE", str(user))  # Windows finds home here
     report = engine.home_cwd / "reports" / "lighthouses.md"
     report.parent.mkdir(parents=True)
     report.write_text("# Lighthouses")
