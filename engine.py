@@ -1426,7 +1426,7 @@ class Engine:
                 if changed >= since:
                     found.append((changed, path))
         found.sort(reverse=True)
-        return [str(p.relative_to(self.home_cwd)) for _, p in found[:most]]
+        return [p.relative_to(self.home_cwd).as_posix() for _, p in found[:most]]
 
     # ------------------------------------------------------------ approvals
 
