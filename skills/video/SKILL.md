@@ -21,57 +21,63 @@ video goes into that note right away, so they never say it twice.
 
 ## 1. Transcribe
 
-Copy the video in as `source.<ext>`. Run `transcribe_media` on it: you get the transcript, an `.srt`
-and `source.words.json` with every word's timing. Fix words Whisper mishears, especially names and
-product names (check their memory for the right spellings).
+Copy the video into `videos/<short-name>/` as `source.<ext>`. Run `transcribe_media` on it: you get the
+transcript, an `.srt` and `source.words.json` with every word's timing. Fix words Whisper mishears in
+`source.words.json`, especially names and product names (check their memory for the right spellings).
 
 ## 2. Cut
 
-Make a cut list of source-time ranges `[[start, end], ...]` that keeps everything they meant to say and
-drops dead air, ums, false starts and retakes (when they repeat a line, keep the last good take). Keep
-the length they asked for; don't shorten their message to hit a number. Then cut and join with ffmpeg
-(trim + concat, `loudnorm` on the audio), vertical 1080x1920 at 30 fps, into `public/cut.mp4`.
-Shift the word timings onto the cut timeline (subtract the gaps) so captions line up with `cut.mp4`.
+    <ken> --video-cut videos/<short-name>                 (the exact command is in your instructions)
 
-If they only want cuts and plain captions, you can stop here: burn in captions with ffmpeg's
-`subtitles` filter and skip Remotion.
+prints the transcript with every word numbered and the pauses marked. Pick what to keep as word ranges
+and cut:
 
-## 3. Cards and captions (Remotion)
+    <ken> --video-cut videos/<short-name> 0-40,45-80      (or `all` to keep every word)
 
-Remotion isn't installed until it's first needed. If `--video-new` says it's setting up, that's the
-one-time download (a few minutes): tell them in one line, and run it as a background job if you're in
-the chat.
+It finds where their voice really starts and stops, so no word gets clipped, shortens long pauses to a
+breath, punches in a little on every other part (add `--no-zoom` if they don't want that), and makes
+`public/cut.mp4` (vertical 1080x1920) plus `reel.json` with every kept word timed on the new video.
+Edit like a person, not a stopwatch:
 
-    <ken> --video-new videos/<short-name>        (the exact command is in your instructions)
+- Cut between whole thoughts, at the end of a sentence or at a pause. Never in the middle of one.
+- Drop false starts and retakes (keep the last good take), dead air, and an "um", "so" or "yeah"
+  that sits on its own between pauses.
+- Keep small fillers inside a flowing sentence: cutting those makes it sound choppy and rushed.
+- Don't tighten for speed; the tool already shortens long pauses. Keep their pace and their jokes.
+- When it says a cut lands mid-speech, move that cut to a pause or keep the word, and cut again.
 
-That folder now has `reel.json`, `src/`, `public/`. Put `cut.mp4` in `public/`, then fill in
-`reel.json`; don't rewrite the code for a normal video:
+Cutting again rewrites the word timings in `reel.json`; move the cards to match.
 
-- `duration`: length of `cut.mp4` in seconds. `cuts`: the cut boundaries on the cut timeline (each
-  other cut gets a small punch-in zoom). `words`: the shifted word timings.
-- `style`: from their style note (`font`: Montserrat, Inter, Poppins, Bebas Neue or Instrument Serif;
-  `accent`; `captions` top/size/uppercase/perPage).
+## 3. Captions and cards: reel.json
+
+Fill in `reel.json`; don't write code for a normal video:
+
+- `style`: from their style note. `font`: Montserrat, Inter, Poppins, Bebas Neue or Instrument Serif;
+  `accent` colour; `captions`: `top` (pixels from the top), `size`, `uppercase`, `perPage` (words at a
+  time), `show: false` for none. Fix a misheard word in `words` here.
 - `scenes`: a card every few seconds while they make a point, timed to the words that say it. Each has
   `from`/`to` and any of: `kicker` (small label), `title` (`*word*` for the accent colour), `text`,
   `chips`, `bars`, `checks` (lists of `{label, at}` that pop in as they say each one), `big` (a URL or
-  number), `image` (a file in `public/`). Short words on cards; the captions carry the sentence.
-- `end`: a closing card (their handle, site or call to action), if they want one.
+  number), `image` (a file in `public/`), `top` (pixels from the top; keep cards off their face). Short
+  words on cards; the captions carry the sentence. No cards for a plain captioned cut.
+- `end`: a closing card `{from, title, subtitle}` (their handle, site or call to action), if they want one.
 
 Only when a video needs something these cards can't do, add a component to `src/Reel.tsx`.
 
-## 4. Preview, then render
+## 4. Render
 
-Before the full render, show them 3-4 stills: `npx remotion still src/index.ts Reel still.png
---frame=<n>` at a few moments with cards. Send them and ask "like this?". Change what they say
-(and note it in their style). Then render in the project folder, as a background job if it's long:
+    <ken> --video-render videos/<short-name>
 
-    npx remotion render src/index.ts Reel out.mp4
+makes `reel.mp4`, ready to post. Captions are drawn by ffmpeg and each card is rendered once and kept,
+so after the first render a change to the captions, the style or one card takes about a minute, not a
+whole new render. Never render the whole video in Remotion yourself. The first video with cards sets
+up Remotion (a one-time download, a few minutes): tell them in one line, and run the first render as a
+background job.
 
-Re-encode for upload: `ffmpeg -i out.mp4 -c:v libx264 -crf 21 -maxrate 10M -bufsize 20M -c:a aac
--b:a 192k -movflags +faststart reel.mp4`. Watch it: grab frames from the start, middle and end
-and look at them. Then send `reel.mp4` and say where it's saved.
+Watch it before sending: grab frames from the start, middle, end and every card with ffmpeg and look at
+them. Then send `reel.mp4` and say where it's saved.
 
 ## Small fixes later
 
-"Make the captions bigger", "change the card at 0:40": edit `reel.json` and render again. A change to
-the cut means redoing step 2 and shifting the word timings again.
+"Make the captions bigger", "change the card at 0:40", "drop that bit": edit `reel.json` (or cut again)
+and run `--video-render` again. Note every correction in their style note.

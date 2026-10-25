@@ -1,8 +1,9 @@
-// A talking-head reel: the cut footage, word-by-word captions, and infographic cards on top.
-// Everything it shows comes from reel.json; change that file, not this one, for a normal video.
-// Add a new kind of card here only when a video needs one the cards below can't make.
+// The infographic cards of a reel, on a transparent background. Ken renders each card on its own
+// (`only`) and lays it on the footage with ffmpeg, which also draws the captions. Everything here
+// comes from reel.json; change that file, not this one, for a normal video. Add a new kind of card
+// here only when a video needs one the cards below can't make.
 import React from 'react';
-import {AbsoluteFill, Easing, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Easing, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {loadFont as montserrat} from '@remotion/google-fonts/Montserrat';
 import {loadFont as inter} from '@remotion/google-fonts/Inter';
 import {loadFont as poppins} from '@remotion/google-fonts/Poppins';
@@ -10,7 +11,6 @@ import {loadFont as bebas} from '@remotion/google-fonts/BebasNeue';
 import {loadFont as serif} from '@remotion/google-fonts/InstrumentSerif';
 import reel from '../reel.json';
 
-type Word = {w: string; s: number; e: number};
 type Item = {label: string; at: number};
 type Scene = {
   from: number; to: number; top?: number;
@@ -18,10 +18,9 @@ type Scene = {
   chips?: Item[]; bars?: Item[]; checks?: Item[]; big?: string; image?: string;
 };
 type Reel = {
-  video?: string; duration: number; cuts?: [number, number][]; words?: Word[]; scenes?: Scene[];
+  duration: number; scenes?: Scene[];
   end?: {from: number; title: string; subtitle?: string};
-  style?: {font?: string; accent?: string; text?: string; card?: string; zoom?: boolean;
-    captions?: {show?: boolean; top?: number; size?: number; uppercase?: boolean; perPage?: number}};
+  style?: {font?: string; accent?: string; text?: string; card?: string};
 };
 
 const R = reel as Reel;
@@ -44,21 +43,6 @@ const usePop = (at: number) => {
 };
 // *word* in a title or text is drawn in the accent colour.
 const accent = (s: string) => s.split(/\*([^*]+)\*/g).map((p, i) => (i % 2 ? <span key={i} style={{color: ACCENT}}>{p}</span> : p));
-
-// The footage, with a slow push-in and a punch-in on every other cut so long takes stay alive.
-const Footage = () => {
-  const t = useT();
-  if (!R.video) return null;
-  const cuts = R.cuts ?? [[0, R.duration]];
-  const i = Math.max(0, cuts.findIndex(([a, b]) => t >= a && t < b));
-  const [a, b] = cuts[i] ?? [0, R.duration];
-  const zoom = R.style?.zoom === false ? 1 : (i % 2 === 1 ? 1.12 : 1) + 0.025 * ((t - a) / Math.max(0.1, b - a));
-  return (
-    <AbsoluteFill style={{transform: `scale(${zoom})`, transformOrigin: '50% 42%'}}>
-      <OffthreadVideo src={staticFile(R.video)} />
-    </AbsoluteFill>
-  );
-};
 
 const Chip: React.FC<Item> = ({label, at}) => {
   const p = usePop(at);
@@ -128,43 +112,9 @@ const EndCard = () => {
   );
 };
 
-// Captions: a few words at a time, the one being said highlighted. Times are in the cut video's seconds.
-const PAGES: Word[][] = (() => {
-  const words = R.words ?? [], most = R.style?.captions?.perPage ?? 3, out: Word[][] = [];
-  let cur: Word[] = [];
-  words.forEach((w, i) => {
-    const prev = words[i - 1];
-    if (cur.length && (cur.length >= most || (prev && w.s - prev.e > 0.3) || /[.,?!]$/.test(prev?.w ?? ''))) { out.push(cur); cur = []; }
-    cur.push(w);
-  });
-  if (cur.length) out.push(cur);
-  return out;
-})();
-
-const Captions = () => {
-  const t = useT(), c = R.style?.captions ?? {};
-  const idx = PAGES.findIndex((p, i) => t >= p[0].s - 0.05 && t < (PAGES[i + 1]?.[0].s ?? p[p.length - 1].e + 0.4) - 0.05);
-  const p = usePop(idx >= 0 ? PAGES[idx][0].s - 0.05 : 0);
-  if (c.show === false || idx < 0 || (R.end && t >= R.end.from)) return null;
-  return (
-    <div style={{position: 'absolute', top: c.top ?? 1330, left: 50, right: 50, textAlign: 'center', fontFamily, transform: `scale(${0.9 + 0.1 * p})`}}>
-      {PAGES[idx].map((w, i, page) => {
-        const on = t >= w.s - 0.03, active = on && t < (page[i + 1]?.s ?? w.e + 0.3);
-        return <span key={i} style={{display: 'inline-block', margin: '0 18px', fontWeight: 900, fontSize: c.size ?? 82,
-          textTransform: c.uppercase === false ? 'none' : 'uppercase', color: active ? ACCENT : INK, opacity: on ? 1 : 0.55,
-          WebkitTextStroke: '3px rgba(0,0,0,0.9)', paintOrder: 'stroke fill', textShadow: '0 6px 18px rgba(0,0,0,0.6)',
-          transform: active ? 'scale(1.08)' : 'none'}}>{w.w.replace(/[,.]$/, '')}</span>;
-      })}
-    </div>
-  );
-};
-
-export const Reel = () => (
-  <AbsoluteFill style={{background: 'black'}}>
-    <Footage />
-    <AbsoluteFill style={{background: 'linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 35%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.45) 100%)'}} />
-    {(R.scenes ?? []).map((s, i) => <Card key={i} s={s} />)}
-    <Captions />
-    <EndCard />
+export const Cards: React.FC<{only?: number | 'end'}> = ({only}) => (
+  <AbsoluteFill>
+    {(R.scenes ?? []).map((s, i) => (only === undefined || only === i) && <Card key={i} s={s} />)}
+    {(only === undefined || only === 'end') && <EndCard />}
   </AbsoluteFill>
 );
