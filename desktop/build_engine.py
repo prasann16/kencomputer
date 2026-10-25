@@ -17,5 +17,6 @@ subprocess.run([
     # Optional extras Ken never uses: Whisper's silence filter (off in voice.py) and a download accelerator.
     '--exclude-module', 'onnxruntime', '--exclude-module', 'hf_xet',
     *data('web', 'web'), *data('SOUL.template.md'), *data('jobs.default.json'),
+    *data('skills', 'skills'), *data('video/kit', 'video/kit'),
     str(root / 'bot.py'),
 ], check=True, cwd=root)

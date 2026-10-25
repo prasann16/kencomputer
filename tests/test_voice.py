@@ -24,7 +24,7 @@ def test_cached_model_reused_and_quiet_speech_preserved(monkeypatch):
     assert voice.transcribe('recording.webm') == 'quiet speech'
     assert voice.transcribe('attachment.m4a') == 'quiet speech'
     assert loads == [('small', dict(device='cpu', compute_type='int8', local_files_only=True))]
-    opts = {'vad_filter': False, 'condition_on_previous_text': False}
+    opts = {'vad_filter': False, 'condition_on_previous_text': False, 'word_timestamps': False}
     assert calls == [('recording.webm', opts), ('attachment.m4a', opts)]
 
 
@@ -81,11 +81,14 @@ def test_captions_write_subtitles_next_to_the_file(tmp_path, monkeypatch):
 
     video = tmp_path / "podcast.mp4"
     video.write_bytes(b"")
-    segs = [NS(start=0.0, end=3.58, text=" This week we chased every late invoice."), NS(start=3725.5, end=3727.0, text=" Bye.")]
-    monkeypatch.setattr(voice, "_segments", lambda path: (segs, NS(duration=3727.0)))
+    segs = [NS(start=0.0, end=3.58, text=" This week we chased every late invoice.", words=[NS(word=" This", start=0.0, end=0.31)]),
+            NS(start=3725.5, end=3727.0, text=" Bye.", words=[NS(word=" Bye.", start=3725.5, end=3726.004)])]
+    monkeypatch.setattr(voice, "_segments", lambda path, words=False: (segs, NS(duration=3727.0)))
     out = voice.captions(str(video))
     assert (tmp_path / "podcast.srt").read_text().startswith("1\n00:00:00,000 --> 00:00:03,580\nThis week we chased every late invoice.\n")
     assert "01:02:05,500 --> 01:02:07,000" in (tmp_path / "podcast.srt").read_text()
     assert "62.1 minutes" in out and "[01:02:05–01:02:07] Bye." in out
+    import json
+    assert json.loads((tmp_path / "podcast.words.json").read_text()) == [{"w": "This", "s": 0.0, "e": 0.31}, {"w": "Bye.", "s": 3725.5, "e": 3726.0}]
     with pytest.raises(ValueError, match="No file"):
         voice.captions(str(tmp_path / "missing.mp4"))

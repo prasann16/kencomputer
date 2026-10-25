@@ -581,3 +581,23 @@ def test_files_named_in_chat_open_but_never_keys_or_hidden_folders(engine, tmp_p
                 "reports/../../.env", "/etc/hosts", "missing.md"):
         with pytest.raises(KeyError):
             engine.shared_file(bad)
+
+
+def test_skills_ken_ships_with_update_unless_made_their_own_or_removed(engine, tmp_path):
+    from engine import prepare_skills
+    shipped = tmp_path / "shipped"
+    (shipped / "video").mkdir(parents=True)
+    (shipped / "video" / "SKILL.md").write_text("---\nname: video\ndescription: reels\n---\nv1")
+    prepare_skills(engine.home, shipped)
+    assert engine.read_skill("video")["text"] == "v1" and engine.read_skill("video")["parts"] == []
+    (shipped / "video" / "SKILL.md").write_text("---\nname: video\n---\nv2")
+    prepare_skills(engine.home, shipped)
+    assert engine.read_skill("video")["text"] == "v2"  # updates with Ken
+    (engine.home / "skills" / "video" / ".from-ken").unlink()
+    (shipped / "video" / "SKILL.md").write_text("---\nname: video\n---\nv3")
+    prepare_skills(engine.home, shipped)
+    assert engine.read_skill("video")["text"] == "v2"  # made their own: left alone
+    (engine.home / "skills" / "video" / ".from-ken").touch()
+    engine.remove_skill("video")
+    prepare_skills(engine.home, shipped)
+    assert engine.list_skills() == []  # removed stays removed
