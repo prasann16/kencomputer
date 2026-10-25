@@ -466,14 +466,16 @@ const elapsed = (run) => { const a = ago(run.started || run.created); return a =
 const stopRun = async (id, toast) => { try { await api(`/api/runs/${id}/stop`, { json: {} }); toast('Stopping…'); } catch (e) { toast(e.message); } };
 
 function RunCard({ run, project, openRun, toast, showProject = true }) {
+  const step = run.status === 'queued' ? 'Waiting for a free slot' : run.activity || 'Working';
   return html`<div class="card run">
-    ${showProject && html`<div class="row meta small"><span style=${{ color: project ? project.color : 'inherit', fontWeight: 600 }}>${project ? project.name : run.project}</span><span style="margin-left:auto">${elapsed(run)}</span></div>`}
-    <div class="row"><span class="dot go"></span><span class="title" style="flex:1">${run.title}</span>${!showProject && html`<span class="meta">${elapsed(run)}</span>`}</div>
-    <div class="mono ellipsis">${run.status === 'queued' ? 'waiting for a free slot' : run.activity || 'working'}</div>
-    <div class="bar"><i></i></div>
-    <div class="row">
-      <button class="btn sm" onClick=${() => openRun(run.id)}>Watch live</button>
-      <button class="btn sm ghost" onClick=${() => stopRun(run.id, toast)}>Stop</button>
+    <span class="run-dot" aria-hidden="true"></span>
+    <div class="run-text">
+      <div class="title ellipsis">${run.title}</div>
+      <div class="run-step ellipsis" key=${step}>${showProject && project ? project.name + ' · ' : ''}${step} · ${elapsed(run)}</div>
+    </div>
+    <div class="run-actions">
+      <button class="text-action" onClick=${() => openRun(run.id)}>Watch</button>
+      <button class="text-action" onClick=${() => stopRun(run.id, toast)}>Stop</button>
     </div>
   </div>`;
 }
