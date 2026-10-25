@@ -119,13 +119,22 @@ def link_dir(link: Path, target: Path) -> None:
         link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
 
 
-def prepare_skills(home: Path) -> Path | None:
+def prepare_skills(home: Path, builtin: Path | None = None) -> Path | None:
     """Ken's skills live in <home>/skills, one folder per skill (SKILL.md and its files), shared by
     every chat and both brains. Claude Code only finds skills inside a plugin, so a small hidden
-    plugin, <home>/.skills-plugin, points at that folder. Returns the plugin, or None if it can't be made."""
+    plugin, <home>/.skills-plugin, points at that folder. Returns the plugin, or None if it can't be made.
+    The skills Ken ships with (`builtin`) are copied in and kept up to date, unless the copy lost its
+    .from-ken mark (someone made it their own)."""
     skills, plugin = home / "skills", home / ".skills-plugin"
     try:
         skills.mkdir(parents=True, exist_ok=True)
+        for src in sorted(builtin.iterdir()) if builtin and builtin.is_dir() else []:
+            dest = skills / src.name
+            removed = skills / f".removed-{src.name}"  # they removed it in Brain: it stays gone
+            if src.is_dir() and not removed.exists() and (not dest.exists() or (dest / ".from-ken").exists()):
+                shutil.rmtree(dest, ignore_errors=True)
+                shutil.copytree(src, dest)
+                (dest / ".from-ken").write_text("Ships with Ken and updates with it. Delete this file to keep your own changes.\n")
         manifest = plugin / ".claude-plugin" / "plugin.json"
         if not manifest.exists():
             manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -745,6 +754,8 @@ class Engine:
 
     def remove_skill(self, sid: str) -> list[dict]:
         d = self._skill_dir(sid)
+        if (d / ".from-ken").exists():
+            (d.parent / f".removed-{sid}").touch()
         d.unlink() if d.is_symlink() else shutil.rmtree(d)
         return self.list_skills()
 

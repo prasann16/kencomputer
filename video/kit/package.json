@@ -1,0 +1,12 @@
+{
+  "name": "ken-video-kit",
+  "private": true,
+  "description": "Remotion for Ken's videos. Installed into ~/.ken/tools/remotion-kit the first time someone asks for one.",
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "@remotion/google-fonts": "4.0.538",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.538"
+  }
+}
