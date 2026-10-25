@@ -599,7 +599,7 @@ class WebApp:
 
     async def stop_run(self, request):
         try:
-            await self.engine.stop_run(request.match_info["rid"])
+            await self.engine.stop_run(request.match_info["rid"], by="you")
         except KeyError:
             raise web.HTTPNotFound()
         return _json({"ok": True})

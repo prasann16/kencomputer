@@ -1253,7 +1253,7 @@ class Engine:
             self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))
             return
         if kind == "stop":
-            self._bg.append(asyncio.create_task(self.stop_run(str(req.get("run", "")))))
+            self._bg.append(asyncio.create_task(self.stop_run(str(req.get("run", "")), by="Ken")))
             return
         pid = str(req.get("agent", req.get("project", ""))) or HOME
         if kind == "run" and pid.lower() == "ken":
@@ -1394,13 +1394,17 @@ class Engine:
             elif status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
 
-    async def stop_run(self, rid: str) -> None:
+    async def stop_run(self, rid: str, by: str = "") -> None:
         run = self._run_row(rid)
         if run["status"] not in ("queued", "running"):
             return
         self._set_run(rid, status="stopped", finished=time.time())
         if run["project"] == HOME:  # so a promised result isn't left hanging, here or on the phone
-            self.log_message(HOME, "ken", f'■ Stopped the background job "{run["title"]}".', via="background")
+            who = {"you": "You stopped", "Ken": "Ken stopped"}.get(by, "Stopped")
+            made = self.made_since(run["started"]) if run["started"] else []
+            self.log_message(HOME, "ken", f'■ {who} the background job "{run["title"]}".' + (
+                "\nIt had made: " + ", ".join(f"`{p}`" for p in made) + "\nAsk Ken to carry on and it picks up from there."
+                if made else ""), via="background")
         session = self.run_sessions.get(rid)
         if session is not None:
             try:
@@ -1415,6 +1419,25 @@ class Engine:
         if run["status"] == "queued":
             self._set_run(rid, summary="Stopped before it started.")
             self.emit("run.finished", project=run["project"], run=rid, status="stopped", title=run["title"], summary="Stopped.")
+
+    def made_since(self, since: float, most: int = 4) -> list[str]:
+        """The newest files in Ken's working folder changed since `since`: what a stopped job got done."""
+        found, seen = [], 0
+        for root, dirs, files in os.walk(self.home_cwd):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__")]
+            for name in files:
+                seen += 1
+                if name.startswith(".") or seen > 20000:
+                    continue
+                path = Path(root) / name
+                try:
+                    changed = path.stat().st_mtime
+                except OSError:
+                    continue
+                if changed >= since:
+                    found.append((changed, path))
+        found.sort(reverse=True)
+        return [p.relative_to(self.home_cwd).as_posix() for _, p in found[:most]]
 
     # ------------------------------------------------------------ approvals
 

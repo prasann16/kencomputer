@@ -960,7 +960,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("🛑 Stopping the current task.")
     elif jobs:  # nothing in the chat: /stop means the work in the background
         for run in jobs:
-            asyncio.create_task(ENGINE.stop_run(run["id"]))
+            asyncio.create_task(ENGINE.stop_run(run["id"], by="you"))
         await update.effective_message.reply_text("🛑 Stopping " + ", ".join(r["title"] for r in jobs) + ".")
     else:
         await update.effective_message.reply_text("Nothing is running.")
@@ -1421,14 +1421,25 @@ _coffee = None
 def _coffee_pid() -> int | None:
     import subprocess
 
-    if _coffee is not None:
-        return _coffee.pid if _coffee.poll() is None else None
+    if _coffee is not None and _coffee.poll() is None:
+        return _coffee.pid
+    if sys.platform != "darwin":
+        return None
     try:
         pid = int(AWAKE_PID.read_text())
+        name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if name.endswith("caffeinate"):
+            return pid
     except (OSError, ValueError):
-        return None
-    name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-    return pid if name.endswith("caffeinate") else None
+        pass
+    # A Ken that lost track of its coffee (its note deleted, or a Ken since removed) left it running
+    # with nobody owning it: same command, adopted by the system. That one is Ken's to switch off too.
+    out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        pid, ppid, command = (line.split(None, 2) + ["", ""])[:3]
+        if ppid == "1" and command.strip() == "caffeinate -dimsu":
+            return int(pid)
+    return None
 
 
 def is_awake() -> bool:
