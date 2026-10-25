@@ -539,14 +539,23 @@ async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
         engine.handle_request({"type": "stop", "run": runs[2]["id"]})
         await asyncio.sleep(0.05)
         assert engine._run_row(runs[2]["id"])["status"] == "stopped"
-        assert engine.messages(HOME)[-1]["text"] == '■ Stopped the background job "Job 2".'
+        assert engine.messages(HOME)[-1]["text"] == '■ Ken stopped the background job "Job 2".'
         assert 'stopped, not finished: "Job 2"' in await engine.state(HOME)
         assert "stopped, not finished" not in await engine.state(HOME)  # said once
+        # Stopped halfway: it says who stopped it and what it had made, so nothing is lost.
+        (engine.home_cwd / "videos").mkdir(parents=True, exist_ok=True)
+        (engine.home_cwd / "videos" / "cut.mp4").write_bytes(b"x")
+        (engine.home_cwd / "videos" / "node_modules").mkdir()
+        (engine.home_cwd / "videos" / "node_modules" / "dep.js").write_text("x")
+        await engine.stop_run(runs[0]["id"], by="you")
+        stopped = engine.messages(HOME)[-1]["text"]
+        assert stopped.startswith('■ You stopped the background job "Job 0".')
+        assert "`videos/cut.mp4`" in stopped and "dep.js" not in stopped
         gate.set()
         await settle(engine)
     finally:
         FakeSession.ask = ask
-    assert [engine._run_row(r["id"])["status"] for r in runs] == ["done", "done", "stopped"]
+    assert [engine._run_row(r["id"])["status"] for r in runs] == ["stopped", "done", "stopped"]
 
 
 def test_files_named_in_chat_open_but_never_keys_or_hidden_folders(engine, tmp_path_factory, monkeypatch):

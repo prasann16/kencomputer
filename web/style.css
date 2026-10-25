@@ -294,3 +294,4 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .settings-feedback{align-self:flex-start;margin-top:4px;font-size:12.5px;color:var(--faint)}.feedback .feedback-text{height:120px!important;padding:10px 12px!important;resize:vertical;margin-bottom:8px}.feedback .np-input{margin-top:0}.feedback .np-actions{margin-top:12px}
 .msg.from-job{flex-direction:column;gap:6px}
 .phone-lead-wait{height:190px}
+.msg-media{margin-top:10px}.msg-media video,.msg-media img{display:block;max-width:min(100%,360px);max-height:480px;border-radius:12px;background:#000}.msg-media img{cursor:zoom-in}

@@ -370,6 +370,7 @@ function Message({ m, label }) {
   const body = useRef(null);
   const files = m.files || [];
   const content = useMemo(() => md(m.text), [m.text]);
+  const media = useMemo(() => (m.role === 'you' ? [] : mediaIn(m.text)), [m.text, m.role]);
   const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
   if (m.role === 'you') {
     return html`<div class="msg you"><div class="stack">
@@ -389,7 +390,26 @@ function Message({ m, label }) {
     ${label && html`<div class="job-label">${m.job.label}${m.job.time && html`<span> · ${m.job.time}</span>`}<a class="text-action" href="#/brain" title="Turn it off or change its time">Change</a></div>`}
     <div class="msg-body"><div class="txt">
     ${m.run_title && html`<div class="from-run">${m.run_status === 'done' ? '✓' : '✕'} ${m.run_title}</div>`}
-    <div ref=${body}>${content}</div></div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
+    <div ref=${body}>${content}</div>${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
+}
+
+// A video or picture Ken names is shown right in its message, ready to watch.
+const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i;
+function mediaIn(text) {
+  const found = [], names = new Set();
+  const add = (p) => { const name = p.split('/').pop(); if (MEDIA_RE.test(p) && isPath(p) && !names.has(name)) { names.add(name); found.push(p); } };
+  for (const [, code] of String(text || '').matchAll(/`([^`\n]+)`/g)) add(code);
+  for (const [, , target] of String(text || '').matchAll(LINK_RE)) add(target.trim());
+  for (const [p] of String(text || '').replace(/`[^`\n]+`/g, '').matchAll(PATH_RE)) add(p);
+  return found.slice(0, 3);
+}
+function Media({ path }) {
+  const [gone, setGone] = useState(false);
+  if (gone) return null;
+  const url = sharedUrl(path), name = path.split('/').pop();
+  return html`<div class="msg-media">${/\.(mp4|mov|webm|m4v)$/i.test(name)
+    ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
+    : html`<img src=${url} alt=${name} loading="lazy" onClick=${() => openFile(path)} onError=${() => setGone(true)}/>`}</div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
@@ -662,7 +682,7 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
 function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onProjectMenu, jobs = [], onJobs }) {
   return html`<header class="chat-header"><nav class="top-tabs" aria-label="Ken"><img class="ken-mark" src="/ken.svg" alt="Ken"/>${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${jobs.length > 0 && html`<button class="ken-status jobs-pill" title=${jobs.map((r) => r.title).join(', ')} onClick=${onJobs}><i></i>${jobs.length === 1 ? '1 job' : jobs.length + ' jobs'} in the background</button>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep the selected computer awake" data-tip=${awake ? 'Coffee’s on — the selected computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${jobs.length > 0 && html`<button class="ken-status jobs-pill" title=${jobs.map((r) => r.title).join(', ')} onClick=${onJobs}><i></i>${jobs.length === 1 ? (jobs[0].status === 'running' && jobs[0].activity ? `${jobs[0].title} · ${jobs[0].activity}` : `${jobs[0].title} · in the background`) : jobs.length + ' jobs in the background'}</button>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep the selected computer awake" data-tip=${awake ? 'Coffee’s on — the selected computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // First run: the selected backend owns its sign-in flow.
