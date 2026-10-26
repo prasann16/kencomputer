@@ -96,16 +96,31 @@ async function stopOtherEngine() {
   try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
+// The pid of the engine launchd runs for the app, or 0 if none is running.
+function agentPid() {
+  return new Promise((resolve) => execFile('/bin/launchctl', ['print', `gui/${process.getuid()}/${appAgent}`],
+    (_e, out) => resolve(Number((String(out || '').match(/^\s*pid = (\d+)/m) || [])[1] || 0))));
+}
+
+function loadingNote(text) {
+  win?.webContents.executeJavaScript(`document.querySelector('[role=status]').textContent = ${JSON.stringify(text)}`).catch(() => {});
+}
+
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
-async function connect() {
+// An engine that is still starting is waited for, never restarted: the first time a downloaded
+// Ken runs, macOS checks it ("Verifying Ken…"), which can take minutes on a slow Mac, and
+// killing the engine mid-check starts the check over, so that window never goes away.
+async function connect(force = false) {
   // When the app runs its own engine, the engine must be this app version.
   const want = app.isPackaged ? app.getVersion() : null;
   const ready = (rev) => rev !== null && (want === null || rev === want);
-  if (ready(await running(service()))) return service();
-  await startService();
-  for (let i = 0; i < 120; i++) {
+  const rev = await running(service());
+  if (ready(rev)) return service();
+  if (force || rev !== null || !app.isPackaged || !(await agentPid())) await startService();
+  for (let i = 0; i < 360; i++) {
     if (ready(await running(service()))) return service();
-    if (i === 40) await startService();  // nothing after 20 seconds: start it over once
+    if (i === 20) loadingNote('Still starting. The first time, macOS checks Ken first, which can take a minute or two.');
+    if (i % 40 === 39 && app.isPackaged && !(await agentPid())) await startService();  // it stopped: start it again
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
@@ -113,8 +128,8 @@ async function connect() {
 
 // Connect, or tell the user plainly and let them try again. Null if they chose Quit.
 async function connectOrAsk() {
-  for (;;) {
-    try { return await connect(); } catch (error) {
+  for (let retry = false; ; retry = true) {
+    try { return await connect(retry); } catch (error) {
       const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
       if (response !== 0) return null;
     }
