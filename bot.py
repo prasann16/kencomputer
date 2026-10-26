@@ -47,7 +47,7 @@ from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import HOME, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
-from connections import Calendars, Connections
+from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
 from ken_mcp import external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
@@ -1022,7 +1022,7 @@ async def run_outbound(job: dict) -> None:
             await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
 
     brief = job.get("name") == "morning-brief"
-    extra, facts = "", ""
+    extra = ""
     if brief:
         pending = unresolved_setup()
         if pending:
@@ -1032,9 +1032,6 @@ async def run_outbound(job: dict) -> None:
                 "(calendar or email first: they make tomorrow's brief real). One item, "
                 "one line, no pressure; mark it declined if they say no."
             )
-        facts = await asyncio.to_thread(brief_facts)
-        if facts:
-            extra += f"\n\nAlready looked up for you (use it, don't fetch it again):\n{facts}"
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
         f"Instruction: {job.get('prompt', '')}{extra}\n\nDo it now. Only your final message is sent "
@@ -1045,30 +1042,9 @@ async def run_outbound(job: dict) -> None:
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, must_answer=brief,
-                             fallback=f"Morning. Nothing pressing on my side today.\n{facts}".strip() if brief else "")
+        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver)
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
-
-
-def brief_facts() -> str:
-    """Today's weather and calendar, looked up by code so the brief never depends on a search."""
-    lines = []
-    city = home_city()
-    if city:
-        try:
-            r = httpx.get(f"https://wttr.in/{city.replace(' ', '+')}", params={"format": "%C %t"}, timeout=10)
-            if r.status_code == 200 and len(r.text) < 80 and "<" not in r.text:
-                lines.append(f"Weather in {city}: {r.text.strip()}")
-        except Exception as e:
-            log.warning("brief weather failed: %s", e)
-    cals = CONNECTIONS.load().get("calendars")
-    if cals:
-        try:
-            lines.append("Calendar today:\n" + Calendars(cals).events())
-        except Exception as e:
-            log.warning("brief calendar failed: %s", e)
-    return "\n".join(lines)
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
