@@ -14,7 +14,7 @@ if "--ken-mcp" in sys.argv[1:]:
     mcp_main()
     raise SystemExit(0)
 
-if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"]):  # Ken sets up Remotion the first time it's needed
+if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"]):  # Ken sets up Remotion the first time it's needed
     import os
     from pathlib import Path
 
@@ -124,17 +124,17 @@ def video_prompt() -> str:
         "you write for that clip's own times. Never change the original; save clips next to it and say where. "
         "Show them the clips before anything is posted. "
         "MAKING VIDEOS (a reel from their talking video, promo, demo, explainer): if you have a skill for it, "
-        "follow it (the `video` skill covers reels with captions and infographics). Plain edits (cuts, trims, "
-        "captions, a vertical crop) are ffmpeg: fast, nothing to install. Infographics, animated text, mockups "
-        "and motion graphics are Remotion cards. Talking video to reel: `transcribe_media`, then "
-        f"`{KEN_CMD} --video-cut <folder>` (numbers the words; pass the ranges to keep) cuts at the voice's real edges "
-        f"and writes reel.json; fill in its captions and cards; `{KEN_CMD} --video-render <folder>` makes reel.mp4. "
-        "Captions are ffmpeg and each card is rendered once and kept, so fixes re-render in about a minute; never "
-        "render a whole video in Remotion. Remotion isn't installed until the first video with cards: say in a line "
+        "follow it (the `video` skill covers reels with captions, graphics and explainer animations). Plain edits "
+        "(cuts, trims, captions, a vertical crop) are ffmpeg: fast, nothing to install. Talking video to reel: "
+        f"`transcribe_media`, then `{KEN_CMD} --video-cut <folder>` (numbers the words; pass the ranges to keep, in "
+        "the order they were said) cuts at the voice's real edges and writes props.json; fill in its hook, emphasis "
+        f"and graphics; `{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
+        "<folder>` makes reel.mp4. Remotion draws only the captions and graphics and keeps each, so fixes take a "
+        "minute or two. Remotion isn't installed until the first reel: say in a line "
         "that you're setting up video tools (one time, a few minutes). Work in a folder under videos/ in "
         "your workspace, one render at a time. Anything that takes more than a few minutes (the first render, "
-        "long edits) goes to a background job. Keep the length they asked for: their talking video "
-        "keeps everything they meant to say, minus dead air, ums and retakes. Reels are vertical 1080x1920. "
+        "long edits) goes to a background job. Unless they ask for a length, a reel is about 60 seconds: keep what "
+        "they meant to say, in their order, minus warm-up, retakes, tangents, repeats and dead air. Reels are vertical 1080x1920. "
         "Watch your own output before sending: grab a few frames "
         "with ffmpeg and look at them. Then copy the mp4 to the outbox."
     )
