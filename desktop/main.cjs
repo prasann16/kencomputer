@@ -370,6 +370,7 @@ async function start() {
   tray.setToolTip('Ken');
   tray.on('click', show);
   buildMenus();
+  checkCoffee(); setInterval(checkCoffee, 10000);
   checkForUpdates();
   watchEngine();
 }
@@ -398,6 +399,19 @@ function connectChrome() {
     });
   });
 }
+// Coffee keeps the Mac awake and is easy to forget, so while it's on the menu-bar icon carries
+// a small cup and its menu offers Decaf. Coffee can be turned on from the chat or the phone too,
+// so the icon asks the engine every few seconds.
+let awake = false;
+async function checkCoffee(text = '/awake') {
+  try {
+    const { origin, token } = service();
+    const r = await fetch(origin + '/api/command', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }), signal: AbortSignal.timeout(5000) });
+    const on = (await r.json()).awake === true;
+    if (on !== awake) { awake = on; buildMenus(); }
+  } catch {}
+}
 function buildMenus() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
@@ -405,7 +419,11 @@ function buildMenus() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
     { role: 'windowMenu' },
   ]));
-  if (tray) tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
+  if (!tray) return;
+  tray.setTitle(awake ? '☕' : '');
+  tray.setToolTip(awake ? 'Ken · Coffee’s on, your Mac stays awake' : 'Ken');
+  tray.setContextMenu(Menu.buildFromTemplate([...(awake ? [{ label: 'Coffee’s on · Decaf', click: () => checkCoffee('/decaf') }, { type: 'separator' }] : []),
+    { label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
 }
 
 // Closing the window only hides Ken, but a quit asked for by macOS (log out, shut down),
