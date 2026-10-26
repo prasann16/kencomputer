@@ -950,6 +950,10 @@ class Engine:
             self.kv_set("jobs:seen", str(time.time()))
             if stopped:
                 parts.append("background jobs stopped, not finished: " + ", ".join(f'"{t}"' for t in stopped))
+        said = json.loads(self.kv_get(f"jobs:said:{pid}") or "[]")
+        if said:
+            self.kv_set(f"jobs:said:{pid}", "[]")
+            parts.append("since your last turn your scheduled jobs sent them: " + " | ".join(said))
         if jobs:
             parts.append("background jobs running: " + ", ".join(
                 f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
@@ -1152,6 +1156,44 @@ class Engine:
                 self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
+
+    async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
+                      listener: Callable[[str], Awaitable[None]] | None = None) -> str:
+        """A scheduled job in a fresh session of its own, so nothing left over in the chat can steer
+        it, and only its final answer reaches them."""
+        cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
+        session = self.brain_for(pid).session(
+            cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+        last = ""
+
+        async def on_text(t: str) -> None:
+            nonlocal last
+            last = t
+
+        try:
+            final = await until_idle(session, session.ask(f"[{time.strftime('%a %d %b %H:%M')}]\n{prompt}", on_text))
+            text = (final or last or "").strip()
+        except Exception as e:
+            log.warning("job %s failed: %s", (job or {}).get("name", "job"), e)
+            text = ""
+        finally:
+            try:
+                await session.close()
+            except Exception:
+                pass
+        if text == "NOTHING_TO_SAY":
+            text = ""
+        text = self.mask(pid, text)
+        if not text:
+            return ""
+        self.log_message(pid, "ken", text, **({"job": job} if job else {}))
+        # The chat's own session didn't see this; it hears it with their next message.
+        said = json.loads(self.kv_get(f"jobs:said:{pid}") or "[]")[-4:]
+        self.kv_set(f"jobs:said:{pid}", json.dumps(said + [f'{(job or {}).get("label", "Scheduled job")}: {text[:1500]}']))
+        if listener is not None:
+            await listener(text)
+        return text
 
     async def on_open(self, pid: str) -> None:
         """A chat was opened: warm up, and if it's been a while, speak first."""

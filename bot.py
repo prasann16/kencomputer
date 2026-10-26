@@ -1021,11 +1021,12 @@ async def run_outbound(job: dict) -> None:
             await send_outbound(PHONE.bot, text)
             await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
 
-    nudge = ""
-    if job.get("name") == "morning-brief":
+    brief = job.get("name") == "morning-brief"
+    extra = ""
+    if brief:
         pending = unresolved_setup()
         if pending:
-            nudge = (
+            extra = (
                 f" Setup nudge: {', '.join(pending)} still unset in {SETUP_FILE} — end the "
                 "brief with ONE short line offering the single most useful of them "
                 "(calendar or email first: they make tomorrow's brief real). One item, "
@@ -1033,13 +1034,15 @@ async def run_outbound(job: dict) -> None:
             )
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-        f"Instruction: {job.get('prompt', '')}{nudge} — do it now; your messages go straight to "
-        "the human (their app and Telegram). If this job's answer is genuinely not worth sending "
-        "right now, reply exactly NOTHING_TO_SAY.)"
+        f"Instruction: {job.get('prompt', '')}{extra}\n\nDo it now. Only your final message is sent "
+        "to them (their app and Telegram), so make it the whole thing, written for them. Leave out "
+        "your own housekeeping: searches, notes, tools or anything that failed along the way."
+        + ("" if brief else " If this job's answer is genuinely not worth sending right now, reply "
+           "exactly NOTHING_TO_SAY.") + ")"
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
+        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver)
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
