@@ -42,17 +42,21 @@ export async function oneAtATime(label) {
 
 // The bundle (code + the files the reel uses), built once and reused until the code or those files change.
 // Only the files props.json points at go in, linked rather than copied, so a work folder full of checks and
-// rendered pieces doesn't get copied every time.
-export async function cachedBundle(work, props) {
-  const wanted = new Set([props.video]);
+// rendered pieces doesn't get copied every time. compose.mjs never shows the video itself ({video: false}), so for
+// a reel without pictures the bundle is the same for every reel: it's kept next to the code, where the box image
+// builds it ahead of time.
+export async function cachedBundle(work, props, { video = true } = {}) {
+  const wanted = new Set(video ? [props.video] : []);
   for (const g of props.graphics ?? []) if (typeof g.props?.src === "string") wanted.add(g.props.src);
-  const files = [...wanted].filter((f) => f && existsSync(join(work, f)));
+  const files = [...wanted].filter((f) => f && work && existsSync(join(work, f)));
   const key = hash([codeHash(), files.map((f) => [f, statSync(join(work, f)).size, statSync(join(work, f)).mtimeMs])]).slice(0, 16);
-  const out = join(work, ".bundle", key);
+  // KEN_BUNDLE_DIR: where a machine built with the kit keeps the bundle it made ahead of time.
+  const root = files.length ? join(work, ".bundle") : resolve(process.env.KEN_BUNDLE_DIR ?? ".bundle");
+  const out = join(root, key);
   if (existsSync(join(out, "index.html"))) return out;
 
-  rmSync(join(work, ".bundle"), { recursive: true, force: true });
-  const pub = join(work, ".bundle", "public");
+  rmSync(root, { recursive: true, force: true });
+  const pub = join(root, "public");
   mkdirSync(pub, { recursive: true });
   for (const f of files) {
     mkdirSync(join(pub, f, ".."), { recursive: true });

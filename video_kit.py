@@ -40,10 +40,13 @@ def node_dir(home: Path) -> Path:
 
 
 def kit_dir(home: Path) -> Path:
-    return home / "tools" / "remotion-kit"
+    # A machine built with the kit already installed (Ken's cloud computers) says where with KEN_VIDEO_KIT.
+    return Path(os.environ["KEN_VIDEO_KIT"]) if os.environ.get("KEN_VIDEO_KIT") else home / "tools" / "remotion-kit"
 
 
 def ready(home: Path) -> bool:
+    if os.environ.get("KEN_VIDEO_KIT"):
+        return (kit_dir(home) / "node_modules").is_dir()
     stamp = kit_dir(home) / ".ready"
     return stamp.exists() and stamp.read_text() == _kit_version()
 
@@ -416,7 +419,8 @@ def _props(folder: Path) -> dict:
 
 def _node(home: Path, folder: Path, args: list[str]) -> int:
     """Runs one of the kit's scripts in the reel's folder, its output going straight to Ken."""
-    return subprocess.run([str(node_dir(home) / "bin" / "node"), *args], cwd=folder, env=_env(home)).returncode
+    node = node_dir(home) / "bin" / "node"
+    return subprocess.run([str(node) if node.exists() else "node", *args], cwd=folder, env=_env(home)).returncode
 
 
 def render(home: Path, folder: Path, say=print, plan: bool = False) -> Path:
