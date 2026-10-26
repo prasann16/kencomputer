@@ -181,6 +181,7 @@ async function restartIntoUpdate(quiet, reservedByQuit = false) {
   quitting = true;
   writeFileSync(installingNote, `${updateVersion}\n${bundleStamp()}`);
   require('node:child_process').spawn('/bin/sh', ['-c', 'sleep 120; pgrep -x Ken >/dev/null || open "$0"', bundlePath], { detached: true, stdio: 'ignore' }).unref();
+  tellPage({ state: 'restarting', version: updateVersion });  // stopping the engine is expected, not an error
   await stopService();
   require('electron-updater').autoUpdater.quitAndInstall(true, true);
 }
