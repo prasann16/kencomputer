@@ -6,8 +6,8 @@
 // --plan only says how much would be drawn, without drawing anything.
 // Whip pans (chapters) aren't done here; render.mjs still does everything in Chrome if a reel needs them.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
@@ -71,7 +71,6 @@ if (style.captions !== false) {
 const firstOf = new Map();
 for (const l of looks) if (l && !firstOf.has(l.key)) firstOf.set(l.key, l.frame);
 const capFile = (key) => join(layers, "captions", `${key}.png`);
-const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
 
 // ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook).
 const hookSeconds = props.hookSeconds ?? props.titleSeconds ?? 2.8;
@@ -94,8 +93,33 @@ const clips = stretches.map(([a, b]) => {
     graphics.filter((g) => g.start < t1 && g.end > t0).map((g) => ({ ...g, start: rel(g.start), end: rel(g.end) })),
     hook && hookSeconds > t0 ? [hook, rel(hookSeconds)] : null,
   ]).slice(0, 24);
-  return { a, b, key, file: join(layers, "graphics", `${key}.mov`) };
+  const file = join(layers, "graphics", `${key}.mov`);
+  const small = join(layers, "graphics", `${key}.webm`);
+  return { a, b, key, file: existsSync(file) || !existsSync(small) ? file : small };
 });
+
+// Ken's cloud computers start fresh on every job, so what was drawn for a reel before lives in a store instead
+// (KEN_LAYER_STORE: a URL that takes GET and PUT of <name>): fetched before drawing, filled after. Graphics go
+// there as small VP9 clips with transparency (a few hundred KB, where the ProRes drawn here is hundreds of MB).
+// On a Mac there's no store and the folder keeps everything.
+const store = process.env.KEN_LAYER_STORE;
+const inBatches = async (items, fn) => {
+  for (let i = 0; i < items.length; i += 16) await Promise.all(items.slice(i, i + 16).map(fn));
+};
+const fetchLayer = async (file) => {
+  const res = await fetch(`${store}/${basename(file)}`).catch(() => null);
+  if (res?.ok) writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+};
+const saveLayer = (file) => fetch(`${store}/${basename(file)}`, { method: "PUT", body: readFileSync(file) }).catch(() => null);
+if (store) {
+  await inBatches([...firstOf.keys()].filter((key) => !existsSync(capFile(key))).map(capFile), fetchLayer);
+  await inBatches(clips.filter((c) => !existsSync(c.file)), async (c) => {
+    c.file = join(layers, "graphics", `${c.key}.webm`);
+    await fetchLayer(c.file);
+    if (!existsSync(c.file)) c.file = join(layers, "graphics", `${c.key}.mov`);
+  });
+}
+const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
 const clipTodo = clips.filter((c) => !existsSync(c.file));
 
 console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips (${clips.reduce((n, c) => n + c.b - c.a, 0)} frames), ${clipTodo.length} to draw`);
@@ -105,7 +129,7 @@ if (plan) process.exit(0);
 const started = Date.now();
 if (capTodo.length || clipTodo.length) {
   await oneAtATime("compose");
-  const serveUrl = await cachedBundle(work, props);
+  const serveUrl = await cachedBundle(work, props, { video: false });
   const browser = await openBrowser("chrome");
   try {
     if (capTodo.length) {
@@ -139,7 +163,18 @@ if (capTodo.length || clipTodo.length) {
   } finally {
     await browser.close({ silent: true });
   }
+  if (store) {
+    for (const c of clipTodo) {
+      const small = join(layers, "graphics", `${c.key}.webm`);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-i", c.file, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-deadline", "realtime",
+        "-cpu-used", "8", "-row-mt", "1", "-b:v", "0", "-crf", "32", "-an", small]);
+    }
+    await inBatches([...capTodo.map(([key]) => capFile(key)), ...clipTodo.map((c) => join(layers, "graphics", `${c.key}.webm`))], saveLayer);
+  }
 }
+// Graphics clips this reel no longer uses go, so a folder edited many times doesn't fill the disk.
+const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`]));
+for (const f of readdirSync(join(layers, "graphics"))) if (!used.has(f)) rmSync(join(layers, "graphics", f), { force: true });
 
 // ---- The captions as one transparent video: each look held until the next one.
 const blank = join(layers, "blank.png");
@@ -188,7 +223,8 @@ const sfx = [
 
 // ---- One pass: footage, graphics, captions, grain, sound.
 const inputs = ["-i", join(work, props.video), "-f", "concat", "-safe", "0", "-i", capList];
-clips.forEach((c) => inputs.push("-itsoffset", (c.a / FPS).toFixed(4), "-i", c.file));
+// VP9 keeps its transparency only through libvpx's own decoder.
+clips.forEach((c) => inputs.push(...(c.file.endsWith(".webm") ? ["-c:v", "libvpx-vp9"] : []), "-itsoffset", (c.a / FPS).toFixed(4), "-i", c.file));
 sfx.forEach((s) => inputs.push("-i", join(resolve("sfx"), `${s.sound}.wav`)));
 // Frames exactly every 1/30 s from zero, a missing one filled by repeating the last and the end padded to the full
 // length, so frame n is time n/30 for the expressions above and the overlays.

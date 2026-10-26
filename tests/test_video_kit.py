@@ -98,3 +98,12 @@ def test_a_reel_from_the_older_tools_asks_to_be_cut_again(tmp_path):
     (tmp_path / "reel.json").write_text("{}")
     with pytest.raises(SystemExit, match="Cut it again"):
         v.render(tmp_path, tmp_path)
+
+
+def test_a_machine_built_with_the_kit_skips_setup(tmp_path, monkeypatch):
+    kit = tmp_path / "kit"
+    (kit / "node_modules").mkdir(parents=True)
+    monkeypatch.setenv("KEN_VIDEO_KIT", str(kit))
+    assert v.kit_dir(tmp_path) == kit
+    assert v.ready(tmp_path)
+    assert v.setup(tmp_path, say=lambda *_: None) == kit  # no Node download, no npm
