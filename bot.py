@@ -47,7 +47,7 @@ from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import HOME, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
-from connections import Connections
+from connections import Calendars, Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
 from ken_mcp import external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
@@ -1021,27 +1021,54 @@ async def run_outbound(job: dict) -> None:
             await send_outbound(PHONE.bot, text)
             await flush_outbox(PHONE.bot, ALLOWED_USER_ID)
 
-    nudge = ""
-    if job.get("name") == "morning-brief":
+    brief = job.get("name") == "morning-brief"
+    extra, facts = "", ""
+    if brief:
         pending = unresolved_setup()
         if pending:
-            nudge = (
+            extra = (
                 f" Setup nudge: {', '.join(pending)} still unset in {SETUP_FILE} — end the "
                 "brief with ONE short line offering the single most useful of them "
                 "(calendar or email first: they make tomorrow's brief real). One item, "
                 "one line, no pressure; mark it declined if they say no."
             )
+        facts = await asyncio.to_thread(brief_facts)
+        if facts:
+            extra += f"\n\nAlready looked up for you (use it, don't fetch it again):\n{facts}"
     prompt = (
         f"(Scheduled job \"{job.get('name', 'job')}\" just fired at {time.strftime('%H:%M')}. "
-        f"Instruction: {job.get('prompt', '')}{nudge} — do it now; your messages go straight to "
-        "the human (their app and Telegram). If this job's answer is genuinely not worth sending "
-        "right now, reply exactly NOTHING_TO_SAY.)"
+        f"Instruction: {job.get('prompt', '')}{extra}\n\nDo it now. Only your final message is sent "
+        "to them (their app and Telegram), so make it the whole thing, written for them. Leave out "
+        "your own housekeeping: searches, notes, tools or anything that failed along the way."
+        + ("" if brief else " If this job's answer is genuinely not worth sending right now, reply "
+           "exactly NOTHING_TO_SAY.") + ")"
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.send_message(HOME, "", prompt=prompt, log_user=False, listener=deliver, job=job_tag(job))
+        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, must_answer=brief,
+                             fallback=f"Morning. Nothing pressing on my side today.\n{facts}".strip() if brief else "")
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
+
+
+def brief_facts() -> str:
+    """Today's weather and calendar, looked up by code so the brief never depends on a search."""
+    lines = []
+    city = home_city()
+    if city:
+        try:
+            r = httpx.get(f"https://wttr.in/{city.replace(' ', '+')}", params={"format": "%C %t"}, timeout=10)
+            if r.status_code == 200 and len(r.text) < 80 and "<" not in r.text:
+                lines.append(f"Weather in {city}: {r.text.strip()}")
+        except Exception as e:
+            log.warning("brief weather failed: %s", e)
+    cals = CONNECTIONS.load().get("calendars")
+    if cals:
+        try:
+            lines.append("Calendar today:\n" + Calendars(cals).events())
+        except Exception as e:
+            log.warning("brief calendar failed: %s", e)
+    return "\n".join(lines)
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late

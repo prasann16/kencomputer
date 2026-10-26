@@ -177,6 +177,38 @@ async def test_hidden_prompts_and_quiet(engine):
     assert engine.brain.asks[0]["prompt"].endswith("(job fired)")
 
 
+async def test_job_runs_apart_from_the_chat_and_sends_only_its_answer(engine):
+    heard = []
+
+    async def listener(t):
+        heard.append(t)
+
+    tag = {"name": "morning-brief", "label": "Morning brief"}
+    assert await engine.run_job(HOME, "(brief)", job=tag, listener=listener) == "did it"
+    assert heard == ["did it"] and HOME not in engine.chats  # a fresh session, not the chat's
+    assert engine.messages(HOME)[-1]["job"] == tag
+    await engine.send_message(HOME, "thanks")
+    assert "Morning brief: did it" in engine.brain.asks[-1]["prompt"]  # the chat hears it once
+    await engine.send_message(HOME, "and?")
+    assert "Morning brief" not in engine.brain.asks[-1]["prompt"]
+
+
+async def test_a_job_that_must_answer_retries_then_falls_back(engine):
+    replies = iter(["NOTHING_TO_SAY", "", "NOTHING_TO_SAY", ""])
+
+    async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
+        self.brain.asks.append({"prompt": prompt})
+        return next(replies)
+
+    FakeSession.ask, real = ask, FakeSession.ask
+    try:
+        assert await engine.run_job(HOME, "(brief)", must_answer=True, fallback="Morning.") == "Morning."
+        assert len(engine.brain.asks) == 2
+        assert await engine.run_job(HOME, "(review)") == "" and engine.messages(HOME)[-1]["text"] == "Morning."
+    finally:
+        FakeSession.ask = real
+
+
 async def test_open_speaks_first_only_after_a_while(engine):
     engine.create_agent("P")
     await engine.on_open("p")
