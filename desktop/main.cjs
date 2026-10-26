@@ -218,6 +218,18 @@ function external(url) {
   try { if (['https:', 'http:', 'mailto:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch {}
 }
 
+// The disk image Ken was installed from stays open until it's ejected or the Mac restarts, and
+// Spotlight and Launchpad then offer its old copy of Ken next to the real one. Opening that copy
+// by mistake once left macOS's "Verifying Ken…" window stuck for days. So once Ken runs from
+// Applications, any Ken installer still open is ejected.
+function ejectInstallers() {
+  execFile('/usr/bin/hdiutil', ['info'], (_e, out) => {
+    const volumes = String(out || '').split('\n').map((line) => line.split('\t').pop().trim())
+      .filter((v) => /^\/Volumes\/Ken( |$)/.test(v) && existsSync(path.join(v, 'Ken.app')));
+    for (const v of new Set(volumes)) execFile('/usr/bin/hdiutil', ['detach', v], () => {});
+  });
+}
+
 function show() { if (win) { win.show(); win.focus(); } }
 
 async function start() {
@@ -226,6 +238,7 @@ async function start() {
     const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
     if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
   }
+  if (app.isPackaged && process.platform === 'darwin') ejectInstallers();
   // Restore before opening the loading page, which follows nativeTheme via CSS.
   try {
     const saved = readFileSync(themeFile, 'utf8').trim();
@@ -357,6 +370,7 @@ async function start() {
   tray.setToolTip('Ken');
   tray.on('click', show);
   buildMenus();
+  checkCoffee(); setInterval(checkCoffee, 10000);
   checkForUpdates();
   watchEngine();
 }
@@ -385,6 +399,19 @@ function connectChrome() {
     });
   });
 }
+// Coffee keeps the Mac awake and is easy to forget, so while it's on the menu-bar icon carries
+// a small cup and its menu offers Decaf. Coffee can be turned on from the chat or the phone too,
+// so the icon asks the engine every few seconds.
+let awake = false;
+async function checkCoffee(text = '/awake') {
+  try {
+    const { origin, token } = service();
+    const r = await fetch(origin + '/api/command', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }), signal: AbortSignal.timeout(5000) });
+    const on = (await r.json()).awake === true;
+    if (on !== awake) { awake = on; buildMenus(); }
+  } catch {}
+}
 function buildMenus() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: app.name, submenu: [{ role: 'about' }, updateItem(), { type: 'separator' }, { label: 'Connect Chrome…', click: connectChrome }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
@@ -392,7 +419,11 @@ function buildMenus() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] },
     { role: 'windowMenu' },
   ]));
-  if (tray) tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
+  if (!tray) return;
+  tray.setTitle(awake ? '☕' : '');
+  tray.setToolTip(awake ? 'Ken · Coffee’s on, your Mac stays awake' : 'Ken');
+  tray.setContextMenu(Menu.buildFromTemplate([...(awake ? [{ label: 'Coffee’s on · Decaf', click: () => checkCoffee('/decaf') }, { type: 'separator' }] : []),
+    { label: 'Open Ken', click: show }, updateItem(), { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
 }
 
 // Closing the window only hides Ken, but a quit asked for by macOS (log out, shut down),
