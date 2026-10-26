@@ -218,6 +218,18 @@ function external(url) {
   try { if (['https:', 'http:', 'mailto:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch {}
 }
 
+// The disk image Ken was installed from stays open until it's ejected or the Mac restarts, and
+// Spotlight and Launchpad then offer its old copy of Ken next to the real one. Opening that copy
+// by mistake once left macOS's "Verifying Ken…" window stuck for days. So once Ken runs from
+// Applications, any Ken installer still open is ejected.
+function ejectInstallers() {
+  execFile('/usr/bin/hdiutil', ['info'], (_e, out) => {
+    const volumes = String(out || '').split('\n').map((line) => line.split('\t').pop().trim())
+      .filter((v) => /^\/Volumes\/Ken( |$)/.test(v) && existsSync(path.join(v, 'Ken.app')));
+    for (const v of new Set(volumes)) execFile('/usr/bin/hdiutil', ['detach', v], () => {});
+  });
+}
+
 function show() { if (win) { win.show(); win.focus(); } }
 
 async function start() {
@@ -226,6 +238,7 @@ async function start() {
     const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
     if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
   }
+  if (app.isPackaged && process.platform === 'darwin') ejectInstallers();
   // Restore before opening the loading page, which follows nativeTheme via CSS.
   try {
     const saved = readFileSync(themeFile, 'utf8').trim();
