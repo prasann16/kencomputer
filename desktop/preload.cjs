@@ -16,5 +16,6 @@ contextBridge.exposeInMainWorld('kenDesktop', {
   updateStatus: () => ipcRenderer.invoke('update:status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  coffeeChanged: () => ipcRenderer.invoke('coffee:check'),
   onUpdateState: (callback) => { const listener = (_event, state) => callback(state); ipcRenderer.on('update:state', listener); return () => ipcRenderer.removeListener('update:state', listener); },
 });

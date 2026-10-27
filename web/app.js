@@ -1231,6 +1231,7 @@ function App() {
       ws.onmessage = (e) => {
         const ev = JSON.parse(e.data), project = ev.project;
         if (ev.type === 'hello') { if (rev === null) rev = ev.rev; else if (ev.rev !== rev) location.reload(); return; }
+        if (ev.type === 'coffee') { setAwake(ev.awake); window.kenDesktop?.coffeeChanged?.(); return; }
         if (ev.type === 'chat.runtime') { if(project===pidRef.current)loadModel(); return; }
         if (ev.type === 'chat.delta') { setStream((s) => ({ ...s, [project]: ev.text })); return; }
         if (ev.type === 'chat.tool') { setActivity((a) => ({ ...a, [project]: ev.text })); return; }
