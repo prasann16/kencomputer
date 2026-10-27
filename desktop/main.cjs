@@ -32,7 +32,8 @@ async function running({ origin, token }) {
   catch { return null; }
 }
 
-const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
+// Capped, so a start command that never returns can't leave the window on "Opening…": connect() then says so.
+const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home }, timeout: 30000 }, () => resolve()));
 // install.sh puts its own copy of Ken (and a venv) in the Ken home.
 const terminalInstall = path.join(home, 'app', 'bot.py');
 const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), 'Library/LaunchAgents', appAgent + '.plist');
@@ -96,6 +97,9 @@ async function stopOtherEngine() {
   try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
+// /kill on the phone leaves this note; Ken stays off until it's turned on in the app.
+const offNote = path.join(home, 'off');
+
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
 async function connect() {
   // When the app runs its own engine, the engine must be this app version.
@@ -104,6 +108,7 @@ async function connect() {
   if (ready(await running(service()))) return service();
   await startService();
   for (let i = 0; i < 120; i++) {
+    if (existsSync(offNote)) throw new Error('Ken is off.');  // turned off meanwhile: ask, don't keep starting it
     if (ready(await running(service()))) return service();
     if (i === 40) await startService();  // nothing after 20 seconds: start it over once
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -112,9 +117,17 @@ async function connect() {
 }
 
 // Connect, or tell the user plainly and let them try again. Null if they chose Quit.
+// After /kill on the phone, Ken stays off until they turn it on here.
+// Keep Off is the default, so a stray Return can't turn it back on.
 async function connectOrAsk() {
   for (;;) {
+    if (existsSync(offNote)) {
+      const { response } = await dialog.showMessageBox({ type: 'info', message: 'Ken is off.', detail: 'You turned Ken off from Telegram with /kill. Nothing runs, Telegram included, until you turn it back on.', buttons: ['Keep Off', 'Turn Ken On'], defaultId: 0, cancelId: 0 });
+      if (response !== 1) return null;
+      rmSync(offNote, { force: true });
+    }
     try { return await connect(); } catch (error) {
+      if (existsSync(offNote)) continue;
       const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
       if (response !== 0) return null;
     }
