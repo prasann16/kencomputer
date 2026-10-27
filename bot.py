@@ -352,7 +352,8 @@ SYSTEM_PROMPT = (
     "app, not a separate assistant. The header line of each message says where they wrote from. On their "
     "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
     "button, the model menu and the coffee cup; in Telegram /stop (stop the current reply), /new (fresh "
-    "thread), /model (switch models), /coffee and /decaf. Never suggest Esc or Ctrl+C. COFFEE keeps this "
+    "thread), /model (switch models), /coffee and /decaf, and /kill (turns you off completely, an emergency off switch; "
+    "they turn you on again at the computer). Never suggest Esc or Ctrl+C. COFFEE keeps this "
     "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
     "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
     "While the Mac sleeps you can't run or answer. Suggest coffee, once, when they want something done "
@@ -964,6 +965,54 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("🛑 Stopping " + ", ".join(r["title"] for r in jobs) + ".")
     else:
         await update.effective_message.reply_text("Nothing is running.")
+
+
+# /kill is the off switch for when Ken misbehaves and they're away: it stops all work and turns
+# the engine off until they turn it on again at the computer (the app, or `ken start`). The note
+# keeps whatever normally restarts Ken (launchd, systemd, winrun.py) from bringing it back.
+OFF_NOTE = KEN_HOME / "off"
+
+
+async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(update):
+        return
+    await update.effective_message.reply_text(
+        "Turn Ken off? Everything stops, and Ken stays off, Telegram included, until you turn it on again on the computer.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Turn Ken off", callback_data="kill:yes")]]),
+    )
+
+
+async def on_kill_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    await q.answer("Turning Ken off")
+    OFF_NOTE.write_text(time.strftime("%Y-%m-%d %H:%M") + " from Telegram\n")
+    log.warning("turned off from Telegram with /kill")
+    for pid in list(ENGINE.chats):
+        await ENGINE.stop_chat(pid)
+    await asyncio.gather(*(ENGINE.stop_run(r["id"], by="you") for r in ENGINE.list_runs(active=True)), return_exceptions=True)
+    decaf()
+    back = "Open Ken on your Mac and click Turn Ken On" if os.environ.get("KEN_APP_VERSION") else "Run ken start on the computer"
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+        await q.message.reply_text(f"🛑 Ken is off. {back} to bring it back.")
+    except Exception:
+        pass
+    turn_off()
+
+
+def turn_off() -> None:
+    """Stop this engine and the service that keeps it running."""
+    import subprocess
+
+    label = os.environ.get("XPC_SERVICE_NAME", "")  # launchd's name for the service running us
+    if sys.platform == "darwin" and label.startswith("dev.kencomputer."):
+        subprocess.Popen(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], start_new_session=True)
+    elif os.environ.get("INVOCATION_ID"):  # systemd
+        subprocess.Popen(["systemctl", "--user", "stop", "ken"], start_new_session=True)
+    time.sleep(3)
+    os._exit(0)
 
 
 def get_oauth_token() -> str:
@@ -1832,10 +1881,11 @@ class Phone:
     async def start(self, token: str) -> None:
         app = Application.builder().token(token).concurrent_updates(True).build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
+        app.add_handler(CallbackQueryHandler(on_kill_pick, pattern=r"^kill:"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
@@ -1852,6 +1902,7 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
+                ("kill", "Turn Ken off in an emergency"),
             ])
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
@@ -1965,6 +2016,9 @@ async def run() -> None:
 
 
 def main() -> None:
+    if OFF_NOTE.exists():
+        print("Ken is off (turned off with /kill). Open the app or run `ken start` to turn it on.", flush=True)
+        turn_off()
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()

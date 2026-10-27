@@ -22,7 +22,7 @@ HIDDEN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 def main() -> None:
     (HOME / "logs").mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "KEN_HOME": str(HOME), "PYTHONUTF8": "1"}
-    while True:
+    while not (HOME / "off").exists():  # turned off with /kill; `ken start` removes the note
         with open(HOME / "logs" / "ken.log", "a", encoding="utf-8") as log:
             wanted = REQUIREMENTS.read_text()
             if not INSTALLED.exists() or INSTALLED.read_text() != wanted:

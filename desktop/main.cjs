@@ -112,7 +112,14 @@ async function connect() {
 }
 
 // Connect, or tell the user plainly and let them try again. Null if they chose Quit.
+// After /kill on the phone, Ken stays off until they turn it on here.
+const offNote = path.join(home, 'off');
 async function connectOrAsk() {
+  if (existsSync(offNote)) {
+    const { response } = await dialog.showMessageBox({ type: 'info', message: 'Ken is off.', detail: 'You turned Ken off from Telegram with /kill. Nothing runs, Telegram included, until you turn it back on.', buttons: ['Turn Ken On', 'Quit'], defaultId: 0, cancelId: 1 });
+    if (response !== 0) return null;
+    rmSync(offNote, { force: true });
+  }
   for (;;) {
     try { return await connect(); } catch (error) {
       const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
