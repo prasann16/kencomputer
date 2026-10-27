@@ -267,11 +267,11 @@ async function start() {
   if (!found) { quitting = true; app.quit(); return; }
   const { origin, token } = found;
   await session.defaultSession.cookies.set({ url: origin, name: 'ken_token', value: token, httpOnly: true, sameSite: 'strict', path: '/' });
-  // Only Ken's own page may use the microphone, and only for audio.
+  // Only Ken's own page may use the microphone, and only for audio, or go fullscreen (a video's ⛶ button).
   const ours = (wc) => wc === win.webContents && new URL(wc.getURL()).origin === origin;
-  session.defaultSession.setPermissionCheckHandler((wc, permission) => ours(wc) && permission === 'media');
+  session.defaultSession.setPermissionCheckHandler((wc, permission) => ours(wc) && ['media', 'fullscreen'].includes(permission));
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) =>
-    callback(ours(wc) && permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')));
+    callback(ours(wc) && (permission === 'fullscreen' || (permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')))));
   win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); external(url); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(origin + '/api/chats/') && url.includes('/files/')) win.webContents.downloadURL(url);
