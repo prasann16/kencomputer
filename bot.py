@@ -977,7 +977,8 @@ async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
     await update.effective_message.reply_text(
-        "Turn Ken off? Everything stops, and Ken stays off, Telegram included, until you turn it on again on the computer.",
+        "Turn Ken off? Everything stops, and Ken stays off, Telegram included, until you turn it on again on the computer. "
+        "This button works for 2 minutes.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Turn Ken off", callback_data="kill:yes")]]),
     )
 
@@ -985,6 +986,13 @@ async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_kill_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    if q.message is None or time.time() - q.message.date.timestamp() > 120:  # an old button tapped by accident later
+        await q.answer("That button expired. Send /kill again if you mean it.")
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return
     await q.answer("Turning Ken off")
     OFF_NOTE.write_text(time.strftime("%Y-%m-%d %H:%M") + " from Telegram\n")
