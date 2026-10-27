@@ -94,13 +94,14 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .msg.err .txt { color: var(--accent-ink); }
 .from-run { font-size: 13px; font-weight: 600; color: var(--go-ink); margin-bottom: 2px; }
 .msg.you { justify-content: flex-end; }
-.msg-body { min-width: 0; }
+.msg-body { min-width: 0; position: relative; }
 .file-link { color: inherit; text-decoration: underline; text-decoration-color: var(--disabled); text-underline-offset: 3px; cursor: pointer; }
 .file-link:hover { text-decoration-color: currentColor; }
 .file-link code { text-decoration: inherit; }
 .copy-msg { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 2px 0 0 -6px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
-.msg.you .copy-msg { margin: -4px 0 0; }
-.msg:hover .copy-msg, .copy-msg:focus-visible { opacity: 1; }
+/* With a mouse it shows on hover in the space under the reply, so it never adds a gap of its own. */
+@media (hover: hover) { .copy-msg { position: absolute; top: 100%; width: 24px; height: 24px; margin: -1px 0 0 -4px; pointer-events: none; } .copy-msg svg { width: 14px; height: 14px; } }
+.msg:hover .copy-msg, .copy-msg:focus-visible { opacity: 1; pointer-events: auto; }
 .copy-msg:hover { color: var(--ink); background: var(--track); }
 .copy-msg:focus { outline: none; }
 @media (hover: none) { .copy-msg { opacity: 1; } }
