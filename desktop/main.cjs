@@ -32,7 +32,8 @@ async function running({ origin, token }) {
   catch { return null; }
 }
 
-const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
+// Capped, so a start command that never returns can't leave the window on "Opening…": connect() then says so.
+const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home }, timeout: 30000 }, () => resolve()));
 // install.sh puts its own copy of Ken (and a venv) in the Ken home.
 const terminalInstall = path.join(home, 'app', 'bot.py');
 const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), 'Library/LaunchAgents', appAgent + '.plist');
