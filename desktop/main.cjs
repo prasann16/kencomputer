@@ -330,6 +330,9 @@ async function start() {
       menu.popup({ window: win, callback: () => setImmediate(() => resolve(chosen)) });
     });
   });
+  ipcMain.handle('coffee:check', (event) => {
+    if (trustedFrame(event, win, origin)) return checkCoffee();
+  });
   ipcMain.handle('chrome:connect', (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     connectChrome();

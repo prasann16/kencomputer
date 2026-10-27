@@ -1464,6 +1464,7 @@ def coffee() -> str:
         stderr=subprocess.DEVNULL,
     )
     AWAKE_PID.write_text(str(_coffee.pid))
+    ENGINE.broadcast("coffee", awake=True)  # so the app's cup and the menu bar follow right away
     return "☕ Staying awake. Lock your screen anytime; a closed laptop lid still sleeps it."
 
 
@@ -1479,6 +1480,7 @@ def decaf() -> str:
     if _coffee is not None:
         _coffee.wait()
     _coffee = None
+    ENGINE.broadcast("coffee", awake=False)
     return "🫖 Decaf — normal sleep is back."
 
 
