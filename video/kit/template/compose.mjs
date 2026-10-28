@@ -106,18 +106,37 @@ const store = process.env.KEN_LAYER_STORE;
 const inBatches = async (items, fn) => {
   for (let i = 0; i < items.length; i += 16) await Promise.all(items.slice(i, i + 16).map(fn));
 };
-const fetchLayer = async (file) => {
-  const res = await fetch(`${store}/${basename(file)}`).catch(() => null);
-  if (res?.ok) writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+// A store that's slow or down only means drawing again, never a render that waits: one failed call and it's
+// left alone for the rest of this render.
+let storeDown = false;
+const storeCall = async (name, init, timeout) => {
+  if (storeDown) return null;
+  try {
+    return await fetch(`${store}/${name}`, { ...init, signal: AbortSignal.timeout(timeout) });
+  } catch (e) {
+    storeDown = true;
+    console.log(`layer store unreachable (${e.name}), drawing everything here`);
+    return null;
+  }
 };
-const saveLayer = (file) => fetch(`${store}/${basename(file)}`, { method: "PUT", body: readFileSync(file) }).catch(() => null);
+const fetchLayer = async (file) => {
+  const res = await storeCall(basename(file), {}, 15_000);
+  if (res?.ok) writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  else await res?.body?.cancel();
+};
+const saveLayer = async (file) => {
+  const res = await storeCall(basename(file), { method: "PUT", body: readFileSync(file) }, 60_000);
+  await res?.body?.cancel();
+};
 if (store) {
+  const asked = Date.now();
   await inBatches([...firstOf.keys()].filter((key) => !existsSync(capFile(key))).map(capFile), fetchLayer);
   await inBatches(clips.filter((c) => !existsSync(c.file)), async (c) => {
     c.file = join(layers, "graphics", `${c.key}.webm`);
     await fetchLayer(c.file);
     if (!existsSync(c.file)) c.file = join(layers, "graphics", `${c.key}.mov`);
   });
+  console.log(`checked the layer store (${Math.round((Date.now() - asked) / 1000)}s)`);
 }
 const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
 const clipTodo = clips.filter((c) => !existsSync(c.file));
