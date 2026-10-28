@@ -182,3 +182,13 @@ def test_a_job_says_what_it_does():
     bot.JOBS_FILE.write_text(json.dumps([{"name": "crash-review", "time": "09:00", "prompt": long}]))
     assert bot.list_jobs()[0]["summary"] == "Read yesterday's errors from PostHog and fix the top ones on a branch."
     assert bot.job_summary("x" * 200).endswith("…") and len(bot.job_summary("x" * 200)) == 108
+
+
+def test_a_caught_up_job_says_it_is_late():
+    line = bot.late_notice(BRIEF, at("09:40"))
+    assert "morning brief" in line and "07:00" in line and "asleep or off" in line
+
+
+def test_an_on_time_job_says_nothing_extra():
+    assert bot.late_notice(BRIEF, at("07:00")) == ""
+    assert bot.late_notice(BRIEF, at("07:01")) == ""  # a slow minute is not "late"

@@ -1158,9 +1158,9 @@ class Engine:
             self.chat_tasks.discard(asyncio.current_task())
 
     async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
-                      listener: Callable[[str], Awaitable[None]] | None = None) -> str:
+                      listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:
         """A scheduled job in a fresh session of its own, so nothing left over in the chat can steer
-        it, and only its final answer reaches them."""
+        it, and only its final answer reaches them, after `preface` (a caught-up job says it's late)."""
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         session = self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
@@ -1187,6 +1187,8 @@ class Engine:
         text = self.mask(pid, text)
         if not text:
             return ""
+        if preface:
+            text = f"{preface}\n\n{text}"
         self.log_message(pid, "ken", text, **({"job": job} if job else {}))
         # The chat's own session didn't see this; it hears it with their next message.
         said = json.loads(self.kv_get(f"jobs:said:{pid}") or "[]")[-4:]
