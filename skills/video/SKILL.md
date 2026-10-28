@@ -17,7 +17,8 @@ changes later pick up where you left off. Never change their original file.
 Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, this is
 their first video: ask ONE question before you start, "Any style you want? Send a reel you like, your brand
 colours or logo, or say 'surprise me'." If they send a reel, grab a few frames of it with ffmpeg and match its
-look in `style` (fonts, accent, paper and ink colours, captions). After they're happy with the first video, write
+look in `style` (fonts, accent, paper and ink colours, captions). If they say "surprise me", or your instructions
+say not to ask, design the look from their video (see "The look" in step 3). After they're happy with the first video, write
 the style note: fonts, accent colour, caption size, what graphics they like, and every rule they gave you ("no
 emojis", "keep my jokes"). Every correction they make on any video goes into that note right away, so they never
 say it twice.
@@ -81,10 +82,24 @@ a warning survives two tries, accept it.
 
 ## 3. Design it
 
-The default look is editorial, not the yellow-captions template every AI tool makes: a serif headline in the open
-space above them, calm white captions that appear as they're spoken with one word per sentence in the accent serif
-italic, and graphics on paper that slide up beneath them so their face stays on screen. Restraint is the style.
-Fewer, better moments beat something on screen every second. Their style note wins over this default.
+The layout is editorial, not the yellow-captions template every AI tool makes: a headline in the open space
+above them, calm captions that appear as they're spoken with one word per sentence in the accent, and graphics
+on paper that slide up beneath them so their face stays on screen. Restraint is the style. Fewer, better moments
+beat something on screen every second.
+
+**The look comes from their video, not from your last reel.** Their style note wins when they have one;
+otherwise design it for this person and this video, so two people's reels never look alike:
+
+- **Colours from what's on camera.** Run `<ken> --video-colors <folder>`: it lists the colours in the footage
+  (their clothes, the room, plants, sky, water), most present first, and suggests an `accent`, `paper` and
+  `ink` from them. Look at a still too and choose like a designer: an accent from something that belongs to
+  them (a cap, a jacket, a brand colour, the plants behind them) beats a big empty sky. Keep it bright enough
+  to read over the video and on the paper, and tint the paper and ink with the room's colour.
+- **Type that fits the person and topic.** Calm, thoughtful or personal: `headingFont: "Serif"` with `Inter`
+  captions. Energetic, hype, sport or a big claim: `Montserrat` captions with `uppercase`, a bolder heading.
+  Clean, tech or business: `Inter` for both, no serif. Funny or casual: lighter graphics and fewer of them.
+- **Say what you chose** in a line ("the green from your jacket, a calm serif"), so they can ask for another.
+- Never reuse another reel's colours unless they're the same person's saved style.
 
 **Plan the moments.** Read the cut words in order and decide what the viewer should *see*:
 
@@ -137,7 +152,7 @@ Add to `props.json` (keep `words`, `cuts` and `framing` from the cut, and fix mi
     {"type": "flow", "start": 43.6, "end": 49.3, "props": {"title": "Talk. Send. *Reel.*", "input": "2 min of talking", "worker": "Ken", "output": "Finished reel", "time": "1 minute"}},
     {"type": "callout", "start": 64.2, "end": 66.8, "props": {"text": "DM me for *early access*"}}
   ],
-  "style": {"accent": "#FF7A3D"}
+  "style": {"accent": "#5FA8D3", "paper": "#EEF1F3", "ink": "#151A1E", "headingFont": "Serif"}
 }
 ```
 

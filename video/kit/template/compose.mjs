@@ -272,9 +272,12 @@ const af = sfx.length
 const graph = join(layers, "graph.txt");
 writeFileSync(graph, [...vf, ...af].join(";\n"));
 const composeStart = Date.now();
+// Capped near what Instagram keeps anyway (it re-encodes everything), so a one-minute reel is about 45 MB: small
+// enough for a Telegram bot to send as the file itself.
 execFileSync("ffmpeg", [
   "-v", "error", "-y", ...inputs, "-filter_complex_script", graph, "-map", "[v]", "-map", sfx.length ? "[a]" : "0:a",
-  "-frames:v", String(total), "-c:v", "libx264", "-crf", "19", "-preset", "veryfast", "-c:a", "aac", "-b:a", "192k",
+  "-frames:v", String(total), "-c:v", "libx264", "-crf", "19", "-maxrate", "5500k", "-bufsize", "11000k", "-preset", "veryfast",
+  "-c:a", "aac", "-b:a", "192k",
   "-movflags", "+faststart", out,
 ], { stdio: "inherit" });
 console.log(`ffmpeg took ${Math.round((Date.now() - composeStart) / 1000)}s; all in ${Math.round((Date.now() - started) / 1000)}s`);

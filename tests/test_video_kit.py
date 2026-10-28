@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -107,3 +109,15 @@ def test_a_machine_built_with_the_kit_skips_setup(tmp_path, monkeypatch):
     assert v.kit_dir(tmp_path) == kit
     assert v.ready(tmp_path)
     assert v.setup(tmp_path, say=lambda *_: None) == kit  # no Node download, no npm
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_the_look_takes_its_colours_from_the_footage(tmp_path):
+    # A grey room with a green jacket: the accent is the jacket's green, not a fixed house colour.
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=96x168:d=2", "-f", "lavfi",
+                    "-i", "color=c=0x1F8A4C:s=40x60:d=2", "-filter_complex", "[0][1]overlay=28:90", "-pix_fmt", "yuv420p",
+                    str(tmp_path / "source.mp4")], check=True)
+    found = v.colors(tmp_path, say=lambda _: None)
+    hue = found["colors"][0]["hue"]
+    assert 120 <= hue <= 170
+    assert set(found["suggested"]) == {"accent", "paper", "ink"}
