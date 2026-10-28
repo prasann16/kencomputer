@@ -186,7 +186,7 @@ def test_a_job_says_what_it_does():
 
 def test_a_caught_up_job_says_it_is_late():
     line = bot.late_notice(BRIEF, at("09:40"))
-    assert "morning brief" in line and "07:00" in line and "asleep or off" in line
+    assert "morning brief" in line and "07:00" in line and "didn't run then" in line
 
 
 def test_an_on_time_job_says_nothing_extra():

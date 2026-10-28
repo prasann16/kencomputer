@@ -1060,7 +1060,7 @@ def late_notice(job: dict, now: time.struct_time) -> str:
     if (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute) < LATE_NOTICE_MINUTES:
         return ""
     name = str(job.get("name", "scheduled job")).replace("-", " ")
-    return f"⏰ Running late: your {name} was due at {hour:02d}:{minute:02d}, but this computer was asleep or off then, so it is running now."
+    return f"⏰ Running late: your {name} was due at {hour:02d}:{minute:02d} and didn't run then, so it is running now."
 
 
 def note_new_jobs(jobs: list[dict], now: time.struct_time, state: dict) -> bool:
