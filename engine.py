@@ -199,6 +199,10 @@ class Engine:
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
         self.run_slots = asyncio.Semaphore(RUN_SLOTS)
+        # Why background runs must wait right now ('' when they can start), and how many may run at once:
+        # the plan near its limit or the computer struggling (usage.py) hold them in the queue.
+        self.run_hold: Callable[[], str] = lambda: ""
+        self.run_cap: Callable[[], int] = lambda: RUN_SLOTS
         self._bg: list[asyncio.Task] = []
         # The phone message behind the turn in progress, and behind each run/approval it started, so
         # their results can quote it in Telegram instead of whatever the human said last.
@@ -1362,6 +1366,7 @@ class Engine:
         run = self._run_row(rid)
         pid = run["project"]
         async with self.run_slots:
+            await self._wait_turn(rid)
             if self._run_row(rid)["status"] == "stopped":
                 return
             self._set_run(rid, status="running", started=time.time(), activity="starting")
@@ -1435,6 +1440,16 @@ class Engine:
                     "they'd want as you normally do. Don't redo the work.)"))))
             elif status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
+
+    async def _wait_turn(self, rid: str, every: float = 15) -> None:
+        """A queued run starts only when nothing holds runs back and there's room under the cap."""
+        while self._run_row(rid)["status"] == "queued":
+            why = self.run_hold()
+            running = len([r for r in self.list_runs(active=True) if r["status"] == "running"])
+            if not why and running < self.run_cap():
+                return
+            self._set_run(rid, activity=f"waiting: {why or 'one job at a time while the computer is busy'}")
+            await asyncio.sleep(every)
 
     async def stop_run(self, rid: str, by: str = "") -> None:
         run = self._run_row(rid)
