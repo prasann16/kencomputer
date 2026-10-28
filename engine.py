@@ -1080,9 +1080,12 @@ class Engine:
         quiet: bool = False,
         job: dict | None = None,
         origin: int | None = None,
+        steer: bool = False,
     ) -> bool:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
-        `listener` also gets each finished utterance (Telegram uses it)."""
+        `listener` also gets each finished utterance (Telegram uses it).
+        `steer`: something they wrote. If Ken is mid-reply it joins that reply, the way Claude Code
+        takes messages while it works, instead of waiting for it to finish."""
         if pid != HOME:
             self.get_agent(pid)
         files = [f for f in (files or []) if f]
@@ -1092,6 +1095,10 @@ class Engine:
         if files and prompt is None:
             body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(files)})"
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
+        session = self.chats.get(pid)
+        if steer and lock.locked() and session is not None and session.busy and await session.steer(
+                f"(Sent while you were working, {WHERE.get(via, 'from them')}.)\n{body}"):
+            return True
         await lock.acquire()
         try:
             self.chat_tasks.add(asyncio.current_task())

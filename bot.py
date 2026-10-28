@@ -686,12 +686,11 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        # 👀 on their message: seen. The note says it's queued, not an answer, and how to stop.
+        # 👀 on their message: seen. Ken takes it into what it's doing, the way Claude Code does.
         try:
             await update.effective_message.set_reaction(ReactionEmoji.EYES)
         except TelegramError:
             pass
-        await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -705,7 +704,7 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
 
         await ENGINE.send_message(
             HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
-            prompt=context + prompt, origin=update.effective_message.message_id,
+            prompt=context + prompt, origin=update.effective_message.message_id, steer=not prompt.startswith("("),
         )
     finally:
         stop.set()
@@ -1357,7 +1356,7 @@ async def notify_telegram(app) -> None:
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
-                    await send_outbound(app.bot, "💻 In the app: " + words[:3500] + attached)
+                    await send_outbound(app.bot, "💻 " + words[:3500] + attached)
                 elif ev.get("role") == "ken" and words:
                     await send_outbound(app.bot, words)
                     await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
