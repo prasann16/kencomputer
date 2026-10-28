@@ -149,6 +149,12 @@ def video_prompt() -> str:
     )
 
 
+WEBSITE_PROMPT = (
+    "WEBSITES: for any website, landing page, waitlist or portfolio page, follow the `website-design` skill, "
+    "and screenshot the page at desktop and phone widths and look at it yourself before sharing it."
+)
+
+
 BROWSER_PROMPT = (
     "BROWSER: the `browser` tools drive the user's own Chrome, signed in to their accounts: open a "
     "new tab for your work (don't take over theirs), read pages, click, type, take screenshots. Use it "
@@ -582,6 +588,7 @@ def build_system() -> str:
         system += "\n\n" + BROWSER_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
+    system += "\n\n" + WEBSITE_PROMPT
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
@@ -1295,7 +1302,7 @@ async def start_engine() -> WebApp | None:
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.tools_prompt = lambda only: "\n\n".join(
-        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
+        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), WEBSITE_PROMPT, CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
