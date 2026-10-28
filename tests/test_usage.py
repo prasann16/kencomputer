@@ -186,7 +186,7 @@ def test_runs_wait_while_held():
 def test_full_swap_with_tight_ram_is_pressure():
     g = 1024 ** 3
     mem = {"total": 16 * g, "available": 3 * g, "swap_total": 8 * g, "swap_used": int(7.6 * g)}
-    assert "swap 95%" in usage.strain(mem, (1.0, 1.0, 1.0), 12)
+    assert "overflow memory on disk 95% full" in usage.strain(mem, (1.0, 1.0, 1.0), 12)
 
 
 def test_full_swap_alone_is_not_pressure():

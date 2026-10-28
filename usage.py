@@ -244,7 +244,7 @@ def strain(mem: dict, avg: tuple | None, n: int, *, easing: bool = False) -> str
     if not (ram_hit or load_hit or swap_hit):
         return ""
     used = f"RAM {round(100 - 100 * mem['available'] / mem['total'])}%" if mem.get("total") else ""
-    swap = f"swap {round(100 * mem['swap_used'] / mem['swap_total'])}%" if swap_hit else ""
+    swap = f"overflow memory on disk {round(100 * mem['swap_used'] / mem['swap_total'])}% full" if swap_hit else ""
     busy = f"load {avg[1]:.0f} on {n} cores" if avg is not None else ""
     return ", ".join(x for x in (used, swap, busy) if x)
 
