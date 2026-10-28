@@ -7,6 +7,7 @@ its own Node, the kit's packages and the Chrome it draws with, all in <home>/too
     ken --video-cut <folder>                     the numbered transcript of <folder>/source.*, to pick what to keep
     ken --video-cut <folder> 0-40,45-80 [--speed 1.1] [--no-zoom]
                                                  cut to those words, in the order said (or `all`): cut.mp4 and props.json
+    ken --video-colors <folder>                  the colours in the footage, and an accent, paper and ink taken from them
     ken --video-stills <folder> 1.5 9 24         a few frames of the reel, side by side in checks/sheet.jpg
     ken --video-render <folder> [--plan]         reel.mp4 from props.json (--plan: how much would be drawn)
     ken --video-setup                            set up Remotion now (safe to repeat)
@@ -442,6 +443,66 @@ def render(home: Path, folder: Path, say=print, plan: bool = False) -> Path:
     return out
 
 
+def _hsl(rgb) -> str:
+    import colorsys
+
+    return "#%02X%02X%02X" % tuple(round(c * 255) for c in colorsys.hls_to_rgb(*rgb))
+
+
+def colors(folder: Path, say=print) -> dict:
+    """The colours of what's on camera (their clothes, the room, plants, sky), so each reel's look comes from its
+    own footage: candidate accents, most present first, and a suggested accent, paper and ink."""
+    import colorsys
+
+    import numpy as np
+
+    found = [p for p in folder.glob("source.*") if p.suffix.lower() not in (".json", ".srt", ".txt")]
+    if not found:
+        raise SystemExit(f"Copy the video into {folder} as source.<ext> first.")
+    length = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(found[0])],
+                                  capture_output=True, text=True, check=True).stdout.strip() or 0)
+    # About 16 frames across the video, small: colour, not detail.
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(found[0]), "-vf", f"fps={16 / max(length, 1):.4f},scale=48:84",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    px = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(np.float32) / 255
+    mx, mn = px.max(1), px.min(1)
+    light = (mx + mn) / 2
+    chroma = mx - mn
+    sat = np.where(chroma == 0, 0, chroma / (1 - np.abs(2 * light - 1) + 1e-6))
+    r, g, b = px.T
+    hue = np.where(mx == r, ((g - b) / (chroma + 1e-6)) % 6, np.where(mx == g, (b - r) / (chroma + 1e-6) + 2, (r - g) / (chroma + 1e-6) + 4)) * 60
+    # Skin is everywhere in a talking video and makes a poor accent: count it far less.
+    skin = (hue > 5) & (hue < 45) & (sat > 0.15) & (sat < 0.7) & (light > 0.25) & (light < 0.8)
+    vivid = (sat > 0.3) & (light > 0.15) & (light < 0.85)
+    weight = np.where(skin, 0.15, 1.0) * sat * vivid
+
+    bins = (hue // 20).astype(int) % 18
+    found_colors = []
+    for k in np.argsort(-np.bincount(bins, weights=weight, minlength=18)):
+        pick = (bins == k) & vivid & ~skin
+        share = float(pick.mean())
+        if share < 0.004:
+            continue
+        h = float(np.median(hue[pick])) / 360
+        found_colors.append({"hex": _hsl((h, float(np.median(light[pick])), float(np.median(sat[pick])))), "share": round(share * 100, 1),
+                             "hue": round(h * 360)})
+        if len(found_colors) == 4:
+            break
+
+    # The room's overall hue tints the paper and ink, so graphics belong to the footage too.
+    hx, hy = np.cos(np.radians(hue)) * sat, np.sin(np.radians(hue)) * sat
+    room = (np.degrees(np.arctan2(hy.mean(), hx.mean())) % 360) / 360
+    style = {"paper": _hsl((room, 0.94, 0.22)), "ink": _hsl((room, 0.11, 0.2))}
+    if found_colors:
+        # Bright and saturated enough to read as text over the video and on the paper.
+        style["accent"] = _hsl((found_colors[0]["hue"] / 360, 0.6, 0.8))
+    result = {"colors": found_colors, "suggested": style}
+    say(json.dumps(result, indent=1))
+    if not found_colors:
+        say("The footage is mostly neutral (greys, whites, skin): take the accent from their brand, or a colour that suits the topic.")
+    return result
+
+
 def stills(home: Path, folder: Path, times: list[str], say=print) -> None:
     """A few frames of the reel without rendering it, side by side in checks/sheet.jpg."""
     _props(folder)
@@ -465,6 +526,8 @@ def main(argv: list[str], home: Path) -> None:
         cut(folder(), " ".join(a for a in rest if a != "--no-zoom") or None, say, speed=speed, zoom=zoom)
     elif argv[0] == "--video-render" and len(argv) > 1:
         render(home, folder(), say, plan="--plan" in argv[2:])
+    elif argv[0] == "--video-colors" and len(argv) > 1:
+        colors(folder(), say)
     elif argv[0] == "--video-stills" and len(argv) > 1:
         stills(home, folder(), argv[2:], say)
     else:

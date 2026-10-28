@@ -14,7 +14,7 @@ if "--ken-mcp" in sys.argv[1:]:
     mcp_main()
     raise SystemExit(0)
 
-if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"]):  # Ken sets up Remotion the first time it's needed
+if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"], ["--video-colors"]):  # Ken sets up Remotion the first time it's needed
     import os
     from pathlib import Path
 
@@ -128,7 +128,8 @@ def video_prompt() -> str:
         "(cuts, trims, captions, a vertical crop) are ffmpeg: fast, nothing to install. Talking video to reel: "
         f"`transcribe_media`, then `{KEN_CMD} --video-cut <folder>` (numbers the words; pass the ranges to keep, in "
         "the order they were said) cuts at the voice's real edges and writes props.json; fill in its hook, emphasis "
-        f"and graphics; `{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
+        f"and graphics, with colours from `{KEN_CMD} --video-colors <folder>` (the footage's own); "
+        f"`{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
         "<folder>` makes reel.mp4. Remotion draws only the captions and graphics and keeps each, so fixes take a "
         "minute or two. Remotion isn't installed until the first reel: say in a line "
         "that you're setting up video tools (one time, a few minutes). Work in a folder under videos/ in "
