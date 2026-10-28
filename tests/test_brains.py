@@ -48,7 +48,7 @@ async def test_model_too_new_for_claude_code_falls_back_to_the_default():
         async def query(self, prompt):
             models.append(self.model)
 
-        async def receive_response(self):
+        async def receive_messages(self):
             text = error if self.model == 'claude-new' else 'hi'
             yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=False,
                                 num_turns=1, session_id='s', result=text)
@@ -83,7 +83,7 @@ async def test_a_dead_claude_code_is_started_again_once_before_it_did_anything()
         async def query(self, prompt):
             pass
 
-        async def receive_response(self):
+        async def receive_messages(self):
             yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=False,
                                 num_turns=1, session_id='s', result='posted')
 
@@ -109,7 +109,7 @@ async def test_no_second_try_once_claude_code_started_working():
         async def query(self, prompt):
             pass
 
-        async def receive_response(self):
+        async def receive_messages(self):
             yield AssistantMessage(content=[TextBlock(text='Posting now')], model='m')
             raise ProcessError("Command failed", exit_code=143)
 
@@ -161,7 +161,7 @@ async def test_session_is_saved_before_completion_and_error_results_fail():
     class Client:
         async def query(self, prompt):
             pass
-        async def receive_response(self):
+        async def receive_messages(self):
             yield SystemMessage(subtype='init', data={'session_id': 'early-session'})
             assert session.session_id == 'early-session'
             yield ResultMessage(subtype='error_max_turns', duration_ms=1, duration_api_ms=1,
@@ -173,3 +173,36 @@ async def test_session_is_saved_before_completion_and_error_results_fail():
     with pytest.raises(RuntimeError, match='Turn limit'):
         await session.ask('work', text)
     assert session.session_id == 'early-session'
+
+
+async def test_a_message_sent_as_the_turn_ends_gets_its_own_answer_in_the_same_reply():
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, UserMessage
+
+    def done(text):
+        return ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=False,
+                             num_turns=1, session_id='s', result=text)
+
+    class Client:
+        async def query(self, prompt):
+            pass
+
+        async def receive_messages(self):
+            yield UserMessage(content='first')
+            assert await session.steer('second')  # they write while Ken is still on the first
+            yield AssistantMessage(content=[TextBlock(text='one')], model='m')
+            yield done('one')
+            yield UserMessage(content='second')  # Claude Code takes it in as a turn of its own
+            yield AssistantMessage(content=[TextBlock(text='two')], model='m')
+            yield done('two')
+            raise AssertionError('read past the answer to their last message')
+
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    session.client, session.model = Client(), ''
+    said = []
+
+    async def on_text(text):
+        said.append(text)
+
+    await session.ask('first', on_text)
+    assert said == ['one', 'two'] and not session.busy
+    assert not await session.steer('late')  # nothing running: it waits for its own turn

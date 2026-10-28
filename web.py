@@ -373,7 +373,7 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, via="app", **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app"))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True))
         return _json({"ok": True, "message": message})
 
     async def stop(self, request):

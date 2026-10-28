@@ -41,6 +41,11 @@ class Session:
     async def warm(self) -> None:
         """Get ready to answer (connect, spawn a process) before the first prompt."""
 
+    async def steer(self, prompt: str) -> bool:
+        """Add a message to the turn that's running, the way Claude Code takes messages while it works.
+        False when there's no turn it can join; the engine then answers it after this one."""
+        return False
+
     async def interrupt(self) -> None:
         raise NotImplementedError
 
@@ -96,6 +101,9 @@ class ClaudeSession(Session):
         self.stderr: deque[str] = deque(maxlen=40)  # Claude Code's own error output, logged when a turn fails
         self._heard = False
         self._connecting = asyncio.Lock()
+        # Messages sent into the running turn that Claude Code hasn't taken in yet (it echoes each one it takes).
+        self._waiting: list[str] = []
+        self._stopping = self._ended = False
 
     async def _connect(self, resume: str | None) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -123,6 +131,9 @@ class ClaudeSession(Session):
             setting_sources=[],
             strict_mcp_config=True,
             plugins=self.brain.plugins,  # Ken's skills (~/.ken/skills), the same in every chat
+            # Echo each message as Claude Code takes it in, so Ken knows when a message sent mid-turn
+            # was answered in this turn or still has a turn of its own coming.
+            extra_args={"replay-user-messages": None},
         )
         self.client = ClaudeSDKClient(options=options)
         await self.client.connect()
@@ -172,7 +183,8 @@ class ClaudeSession(Session):
         return None if final is TOO_NEW else final
 
     async def _ask(self, prompt, on_text, on_tool=None, on_delta=None):
-        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock
+        from claude_agent_sdk import (AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock,
+                                      UserMessage)
 
         await self._ensure()
         model = self.model_fn()
@@ -182,13 +194,14 @@ class ClaudeSession(Session):
             await self.client.set_model(model or None)
             self.model = model
         self.busy, self._heard = True, False
+        self._waiting, self._stopping, self._ended = [], False, False
         self.last_activity = time.monotonic()
         last_text = ""
         final = None
         partial = ""
         try:
             await self.client.query(prompt)
-            async for msg in self.client.receive_response():
+            async for msg in self._messages():
                 self._heard, self.last_activity = True, time.monotonic()
                 # Save the session as soon as it exists, not only when a long
                 # task finishes. An interrupted attempt can then resume too.
@@ -203,6 +216,14 @@ class ClaudeSession(Session):
                         partial += ev["delta"].get("text", "")
                         if on_delta is not None and msg.parent_tool_use_id is None:
                             await on_delta(partial)
+                    continue
+                if isinstance(msg, UserMessage):
+                    said = msg.content if isinstance(msg.content, str) else "\n".join(
+                        b.text for b in msg.content if isinstance(b, TextBlock))
+                    if msg.parent_tool_use_id is None and said in self._waiting:
+                        self._waiting.remove(said)
+                        if self._stopping:
+                            await self.client.interrupt()  # they stopped: a message sent mid-turn starts no new work
                     continue
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
@@ -223,12 +244,16 @@ class ClaudeSession(Session):
                     result = (msg.result or "").strip()
                     if NEEDS_NEWER_CLI in result or final is TOO_NEW:
                         final = TOO_NEW
-                        continue
-                    if msg.is_error and getattr(msg, 'terminal_reason', None) not in {'aborted_streaming', 'aborted_tools'}:
+                    elif msg.is_error and getattr(msg, 'terminal_reason', None) not in {'aborted_streaming', 'aborted_tools'}:
                         raise RuntimeError(result or f"Claude ended without completing the turn ({msg.subtype}).")
-                    if result and result != last_text:
+                    elif result and result != last_text:
                         final = result
                         await on_text(result)
+                    # A message they sent near the end gets a turn of its own: keep reading until it's answered.
+                    if not self._waiting:
+                        self.busy = False
+                        break
+                    self._ended = True
         except Exception:
             if self.stderr:
                 log.warning("Claude Code said:\n%s", "\n".join(self.stderr))
@@ -237,8 +262,33 @@ class ClaudeSession(Session):
             self.busy = False
         return final
 
+    async def _messages(self):
+        """Claude Code's messages for this ask. Between a turn's end and the turn of a message still waiting,
+        give up after 30 seconds of silence, so a message Claude Code dropped never leaves Ken waiting."""
+        stream = self.client.receive_messages().__aiter__()
+        while True:
+            try:
+                msg = await (asyncio.wait_for(anext(stream), 30) if self._ended else anext(stream))
+            except (StopAsyncIteration, asyncio.TimeoutError):
+                self._waiting.clear()
+                return
+            self._ended = False
+            yield msg
+
+    async def steer(self, prompt: str) -> bool:
+        if self.client is None or not self.busy or self._stopping:
+            return False
+        self._waiting.append(prompt)
+        try:
+            await self.client.query(prompt)
+        except Exception:
+            self._waiting.remove(prompt)
+            return False
+        return True
+
     async def interrupt(self) -> None:
         if self.client is not None:
+            self._stopping = self.busy
             await self.client.interrupt()
 
     async def close(self) -> None:

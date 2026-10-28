@@ -214,4 +214,4 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     for _ in range(50):
         await asyncio.sleep(0.01)
     task.cancel()
-    assert sent == ["💻 In the app: edit this for Instagram\n📎 IMG_5208.MOV", "On it."]
+    assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "On it."]
