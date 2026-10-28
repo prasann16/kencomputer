@@ -51,6 +51,30 @@ def test_new_install_after_the_slot_waits_for_tomorrow():
     assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)
 
 
+def test_a_job_added_before_its_time_runs_that_day():
+    # Added at 00:20 for 00:30: the scheduler's first look at it must not use up its first day.
+    job = {"name": "night-loop", "time": "00:30", "days": "daily"}
+    state = {}
+    assert bot.note_new_jobs([job], at("00:20"), state)
+    assert not bot.note_new_jobs([job], at("00:30"), state)  # already known, nothing new to note
+    assert bot._job_due(job, at("00:30"), state)
+
+
+def test_a_job_seen_in_time_still_catches_up_after_sleep():
+    # Seen at 00:20, then the laptop slept through 00:30 and Ken looks again at 00:40.
+    job = {"name": "night-loop", "time": "00:30", "days": "daily"}
+    state = {}
+    bot.note_new_jobs([job], at("00:20"), state)
+    assert bot._job_due(job, at("00:40"), state)
+
+
+def test_first_seen_after_its_time_still_waits_for_tomorrow():
+    state = {}
+    bot.note_new_jobs([BRIEF], at("12:00"), state)  # a new install at noon
+    assert not bot._job_due(BRIEF, at("12:00"), state)
+    assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)
+
+
 def test_a_switched_off_job_never_runs():
     assert not bot._job_due({**BRIEF, "on": False}, at("07:00"), {})
 

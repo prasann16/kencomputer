@@ -1050,6 +1050,21 @@ async def run_outbound(job: dict) -> None:
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
 
 
+def note_new_jobs(jobs: list[dict], now: time.struct_time, state: dict) -> bool:
+    """Remember each job the first minute Ken sees it. One first seen after today's slot (a new
+    install at noon) starts tomorrow; catching up is only for jobs Ken was already running. One
+    first seen before its slot runs today, even if Ken only gets to it late (the laptop slept).
+    Returns whether anything was noted."""
+    noted = False
+    for job in jobs:
+        key = job_key(job)
+        if key and key not in state:
+            # "seen ..." doesn't start with a date, so it never counts as "already ran today".
+            state[key] = time.strftime("%Y-%m-%d (first seen)" if _job_due(job, now, {}) else "seen %Y-%m-%d %H:%M", now)
+            noted = True
+    return noted
+
+
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
     """Due once per scheduled day, at its time or up to CATCH_UP_HOURS after it (missed while asleep)."""
     if job.get("on") is False:
@@ -1202,13 +1217,8 @@ async def scheduler() -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
-            # A job seen for the first time after today's slot (a new install at noon) starts
-            # tomorrow; catching up is only for jobs Ken was already running.
-            for job in jobs:
-                key = job_key(job)
-                if key and key not in state and _job_due(job, now, {}):
-                    state[key] = time.strftime("%Y-%m-%d (first seen)", now)
-                    JOB_STATE_FILE.write_text(json.dumps(state))
+            if note_new_jobs(jobs, now, state):
+                JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if _job_due(job, now, state):
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
