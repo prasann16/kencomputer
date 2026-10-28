@@ -45,7 +45,8 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, Engine, first_contact_prompt, prepare_skills
+from engine import HOME, RUN_SLOTS, Engine, first_contact_prompt, prepare_skills
+from usage import Usage
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
@@ -155,6 +156,14 @@ ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the ap
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
+# The plan's usage and this computer's load: /usage, the alerts, and holding jobs back near a limit.
+USAGE = Usage(
+    KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
+    runs=lambda: (sum(r["status"] == "running" for r in ENGINE.list_runs(active=True)),
+                  sum(r["status"] == "queued" for r in ENGINE.list_runs(active=True))))
+BRAINS["claude"].on_rate_limit = USAGE.record
+ENGINE.run_hold = USAGE.hold
+ENGINE.run_cap = lambda: USAGE.run_cap(RUN_SLOTS)
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
@@ -1211,7 +1220,14 @@ async def scheduler() -> None:
                     JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if _job_due(job, now, state):
+                    held = USAGE.skip_job(job)
+                    if held == "wait":
+                        continue  # the computer is struggling: still due, it runs once that clears
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
+                    if held == "skip":  # the plan is at its limit: today's run is dropped (they were told once)
+                        JOB_STATE_FILE.write_text(json.dumps(state))
+                        log.info("job skipped, AI usage near the plan limit: %s", job_key(job))
+                        continue
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job_key(job))
                     crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
@@ -1532,6 +1548,16 @@ async def model(arg: str = "") -> dict:
     return {"reply": f"✓ {match} — from the next task."}
 
 
+async def usage(arg: str = "") -> dict:
+    """/usage: the plan's usage windows and how this computer is doing, in a few phone-sized lines."""
+    return {"reply": await USAGE.report(ENGINE.backend(HOME), ENGINE.model_for(HOME))}
+
+
+async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text((await usage())["reply"])
+
+
 async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if authorized(update):
         await update.effective_message.reply_text(coffee())
@@ -1576,6 +1602,7 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 COMMANDS = {
     "model": model,
+    "usage": usage,
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
     "awake": lambda arg="": {"awake": is_awake()},
@@ -1832,7 +1859,7 @@ class Phone:
     async def start(self, token: str) -> None:
         app = Application.builder().token(token).concurrent_updates(True).build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("usage", cmd_usage)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
@@ -1852,6 +1879,7 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
+                ("usage", "AI plan usage and how busy this computer is"),
             ])
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
@@ -1939,7 +1967,8 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
+                  asyncio.create_task(USAGE.watch())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")

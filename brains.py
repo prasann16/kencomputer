@@ -172,7 +172,10 @@ class ClaudeSession(Session):
         return None if final is TOO_NEW else final
 
     async def _ask(self, prompt, on_text, on_tool=None, on_delta=None):
+        import claude_agent_sdk
         from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, SystemMessage, TextBlock, ToolUseBlock
+
+        RateLimitEvent = getattr(claude_agent_sdk, "RateLimitEvent", ())  # SDKs before 0.2.16x don't have it
 
         await self._ensure()
         model = self.model_fn()
@@ -195,6 +198,12 @@ class ClaudeSession(Session):
                 sid = msg.data.get('session_id') if isinstance(msg, SystemMessage) else getattr(msg, 'session_id', None)
                 if sid:
                     self.session_id = sid
+                if isinstance(msg, RateLimitEvent):  # the plan's usage changed: Ken keeps it for /usage and alerts
+                    if self.brain.on_rate_limit is not None:
+                        info = msg.rate_limit_info
+                        self.brain.on_rate_limit(info.raw or {"status": info.status, "resetsAt": info.resets_at,
+                                                              "rateLimitType": info.rate_limit_type, "utilization": info.utilization})
+                    continue
                 if isinstance(msg, StreamEvent):
                     ev = msg.event or {}
                     if ev.get("type") == "message_start":
@@ -264,6 +273,7 @@ class ClaudeBrain(Brain):
         self.can_use_tool = can_use_tool
         self.mcp_factory = mcp_factory
         self.plugins: list[dict] = []
+        self.on_rate_limit: Callable[[dict], None] | None = None  # every session's plan usage readings
 
     def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None, env_fn=None) -> Session:
         return ClaudeSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
