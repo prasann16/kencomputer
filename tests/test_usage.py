@@ -132,12 +132,12 @@ def test_usage_text_with_readings():
     u.record(reading(), NOW)
     ai = u.ai_text("claude", "claude-opus-5-5", NOW + 180)
     assert ai[0] == "AI: Claude · claude-opus-5-5"
-    assert ai[1] == f"5 hour: 12% used, resets {usage.when(NOW + 3600, NOW)}"
-    assert ai[2].startswith("Weekly: 49% used, resets ")
+    assert ai[1] == f"5 hour  ▰▱▱▱▱▱▱▱▱▱ 12% · resets {usage.when(NOW + 3600, NOW)}"
+    assert ai[2].startswith("Weekly  ▰▰▰▰▰▱▱▱▱▱ 49% · resets ")
     assert ai[3].endswith("(3 min ago)")
     u.titles = lambda: ["💼 Apply batch"]
     pc = u.pc_text(host="arch", cpu_pct=23.0, mem={"total": 16 * GB, "available": 6 * GB}, ken=int(1.5 * GB))
-    assert pc == ["PC: arch", "CPU 23% · RAM 10.0GB of 16.0GB used", "Ken is using 1.5GB of it",
+    assert pc == ["PC: arch", "CPU  ▰▰▱▱▱▱▱▱▱▱ 23%", "RAM  ▰▰▰▰▰▰▱▱▱▱ 62% · 10.0GB of 16.0GB", "", "Ken is using 1.5GB of it",
                   "Background jobs: 💼 Apply batch (2 waiting)"]
 
 

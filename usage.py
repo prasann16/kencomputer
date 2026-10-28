@@ -220,6 +220,12 @@ def os_name() -> str:
     return f"{platform.system()} {platform.release()}"
 
 
+def bar(pct: float, width: int = 10) -> str:
+    """A text meter for Telegram, which has no real progress bars: ▰▰▰▱▱▱▱▱▱▱ 30%."""
+    filled = max(0, min(width, round(pct / 100 * width)))
+    return "▰" * filled + "▱" * (width - filled) + f" {pct:.0f}%"
+
+
 def gb(n: float) -> str:
     return f"{n / 1024 ** 3:.1f}GB"
 
@@ -393,18 +399,20 @@ class Usage:
             if w.get("resets_at") and w["resets_at"] <= now:
                 lines.append(f"{label}: reset at {when(w['resets_at'], now)}, no new reading since")
                 continue
-            used = f"{w['pct']:.0f}% used" if w.get("pct") is not None else (w.get("status") or "no %").replace("_", " ")
-            lines.append(f"{label}: {used}, resets {when(w.get('resets_at'), now)}")
+            used = bar(w["pct"]) if w.get("pct") is not None else (w.get("status") or "no %").replace("_", " ")
+            lines.append(f"{label}  {used} · resets {when(w.get('resets_at'), now)}")
         lines.append(f"Read at {time.strftime('%H:%M', time.localtime(seen))} ({ago(now - seen)})")
         return lines
 
     def pc_text(self, *, host: str, cpu_pct, mem: dict, ken: int) -> list[str]:
         """Just what they need: which computer, how busy it is, and Ken's own share."""
         lines = [f"PC: {host}"]
-        busy = [f"CPU {cpu_pct:.0f}%" if cpu_pct is not None else "",
-                f"RAM {gb(mem['total'] - mem['available'])} of {gb(mem['total'])} used" if mem.get("total") else ""]
-        if any(busy):
-            lines.append(" · ".join(x for x in busy if x))
+        if cpu_pct is not None:
+            lines.append(f"CPU  {bar(cpu_pct)}")
+        if mem.get("total"):
+            used = mem["total"] - mem["available"]
+            lines.append(f"RAM  {bar(100 * used / mem['total'])} · {gb(used)} of {gb(mem['total'])}")
+        lines.append("")
         if ken:
             lines.append(f"Ken is using {gb(ken)} of it")
         jobs = self.titles()
