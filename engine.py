@@ -555,7 +555,8 @@ class Engine:
             f"- CONTEXT.md: who you are, your goal, your rules (below). Read with every message; keep it current.\n"
             f"- memory/: your notes, one topic per file, its first line saying what it holds. Now:\n{memory_listing(d / 'memory')}\n"
             f"- jobs.json: your schedule, a JSON array like {{\"name\": \"daily-report\", \"time\": \"08:00\", \"days\": \"daily\", \"prompt\": \"...\"}} "
-            '("days": daily, weekdays or e.g. "mon,thu"; "on": false pauses one). Each job runs here, in this chat, at '
+            '("days": daily, weekdays or e.g. "mon,thu"; "date": "2026-10-31" instead makes it one-time, removed after it runs; '
+            '"on": false pauses one). Each job runs here, in this chat, at '
             "this computer's local time. Add, change or remove jobs when they ask.\n"
             f"- tools.json: what you may use. \"use\" picks Ken's built-in tools ({', '.join(BUILTIN_TOOLS)}); "
             "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "

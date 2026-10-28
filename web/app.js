@@ -890,14 +890,29 @@ function PhoneSetup({ onDone, toast }) {
 }
 
 // Ken's jobs, the same in Settings and the Brain: what each does in a line, when, and on or off.
+// When a job runs, in words: "Every day", "Mon, Wed, Fri", or a one-time job's day ("Tomorrow", "Sat, Oct 31").
+const DAY_NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
+function jobWhen(j) {
+  if (j.date) {
+    const day = new Date(j.date + 'T00:00'), today = new Date(); today.setHours(0, 0, 0, 0);
+    const ahead = Math.round((day - today) / 86400000);
+    return ahead === 0 ? 'Today' : ahead === 1 ? 'Tomorrow' : day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  const days = String(j.days || 'daily').toLowerCase();
+  if (days === 'daily') return 'Every day';
+  if (days === 'weekdays') return 'Weekdays';
+  const list = days.split(/[\s,]+/).map((d) => DAY_NAMES[d.slice(0, 3)]).filter(Boolean);
+  return list.length === 1 ? list[0] + 's' : list.map((d) => d.slice(0, 3)).join(', ');
+}
+
 // To change what a job does, tell Ken.
 function JobList({ jobs, change }) {
   const name = (j) => (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  const when = (j) => j.days === 'daily' ? 'Every day' : j.days === 'weekdays' ? 'Weekdays' : j.days;
-  const about = (j) => (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || j.summary || when(j));
+  const about = (j) => (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || j.summary || '');
   return html`<div class="job-list">${jobs.map((j) => html`<div class="job" key=${(j.agent || '') + ':' + j.name}>
     <div class="job-row">
       <div class="job-name"><b>${name(j)}</b><span>${about(j)}</span></div>
+      <span class="job-when">${jobWhen(j)}</span>
       <input class="job-time" type="time" aria-label="Time" value=${j.time} disabled=${!j.on} onChange=${(e) => e.target.value && change(j, { time: e.target.value })}/>
       <input class="job-switch" type="checkbox" role="switch" aria-label=${j.on ? 'On' : 'Off'} checked=${j.on} onChange=${(e) => change(j, { on: e.target.checked })}/>
     </div>

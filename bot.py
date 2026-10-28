@@ -406,7 +406,8 @@ SYSTEM_PROMPT = (
     "the file is missing, you were installed by the human on a machine they control. "
     f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
     'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}; '
-    '"on": false pauses a job without deleting it. '
+    '"on": false pauses a job without deleting it; "date": "2026-10-31" makes it one-time: it runs that '
+    'day only and Ken removes it after (use it for reminders, not "days" plus a date check in the prompt). '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -1068,9 +1069,12 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
         return False
     days = str(job.get("days", "daily")).lower()
     today = time.strftime("%a", now).lower()[:3]
-    if days == "weekdays" and today in ("sat", "sun"):
+    if job.get("date"):  # a one-time job: that day only
+        if job["date"] != time.strftime("%Y-%m-%d", now):
+            return False
+    elif days == "weekdays" and today in ("sat", "sun"):
         return False
-    if days not in ("daily", "weekdays") and today not in days:
+    elif days not in ("daily", "weekdays") and today not in days:
         return False
     late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
     if not 0 <= late <= CATCH_UP_HOURS * 60:
@@ -1090,6 +1094,16 @@ def all_jobs() -> list[dict]:
     for a in ENGINE.list_agents():
         jobs += [{**j, "agent": a["id"]} for j in ENGINE.agent_jobs(a["id"])]
     return jobs
+
+
+def remove_job(job: dict) -> None:
+    """Take a job out of its file: a one-time job once it has run, or once its day has passed."""
+    path = ENGINE._adir(job["agent"]) / "jobs.json" if job.get("agent") else JOBS_FILE
+    try:
+        jobs = json.loads(path.read_text())
+        path.write_text(json.dumps([j for j in jobs if not (isinstance(j, dict) and j.get("name") == job.get("name"))], indent=1) + "\n")
+    except (KeyError, OSError, ValueError) as e:
+        log.warning("couldn't remove job %s: %s", job.get("name"), e)
 
 
 def job_key(job: dict) -> str:
@@ -1168,7 +1182,7 @@ def set_privacy(share: bool) -> dict:
 def list_jobs() -> list[dict]:
     """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
     names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
-    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "date": j.get("date", ""), "on": j.get("on", True),
              "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), ""),
              "summary": job_summary(str(j.get("prompt", "")))}
             for j in all_jobs() if j.get("name")]
@@ -1218,7 +1232,12 @@ async def scheduler() -> None:
                     state[key] = time.strftime("%Y-%m-%d (first seen)", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
+                if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
+                    remove_job(job)  # its day passed while Ken was off
+                    continue
                 if _job_due(job, now, state):
+                    if job.get("date"):
+                        remove_job(job)  # one-time: it runs now and is gone
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job_key(job))

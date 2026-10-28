@@ -55,11 +55,18 @@ def test_a_switched_off_job_never_runs():
     assert not bot._job_due({**BRIEF, "on": False}, at("07:00"), {})
 
 
+def test_a_one_time_job_runs_on_its_date_only():
+    job = {"name": "reminder", "time": "10:00", "date": "2026-10-31"}
+    assert bot._job_due(job, at("10:00", "2026-10-31"), {})
+    assert not bot._job_due(job, at("10:00", "2026-11-07"), {})  # the same weekday, a week later
+    assert not bot._job_due(job, at("10:00", "2026-10-30"), {})
+
+
 def test_settings_switch_and_move_a_job():
     import json
     import pytest
     bot.JOBS_FILE.write_text(json.dumps([{**BRIEF, "prompt": "brief"}]))
-    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True, "agent": "", "agent_name": "",
+    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "date": "", "on": True, "agent": "", "agent_name": "",
                                 "summary": "brief"}]
     assert bot.set_job("morning-brief", on=False)[0]["on"] is False
     assert bot.set_job("morning-brief", at="06:30")[0]["time"] == "06:30"
