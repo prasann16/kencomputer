@@ -182,6 +182,24 @@ def top_memory(n: int = 3) -> list[tuple[str, int]]:
     return sorted(by.items(), key=lambda kv: -kv[1])[:n]
 
 
+def ken_memory(root: int | None = None) -> int:
+    """RAM used by Ken: this process and everything it started (sessions, tools, browsers), in bytes."""
+    root = root or os.getpid()
+    rss, kids = {}, {}
+    for line in _run("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "rss=").splitlines():
+        parts = line.split()
+        if len(parts) == 3 and all(x.isdigit() for x in parts):
+            pid, ppid, kb = map(int, parts)
+            rss[pid] = kb * 1024
+            kids.setdefault(ppid, []).append(pid)
+    total, todo = 0, [root]
+    while todo:
+        pid = todo.pop()
+        total += rss.get(pid, 0)
+        todo += kids.get(pid, [])
+    return total
+
+
 def cpu_model() -> str:
     if sys.platform.startswith("linux"):
         for line in _read("/proc/cpuinfo").splitlines():
@@ -231,10 +249,12 @@ class Usage:
     """The latest plan readings and what Ken has already said about them, in usage.json."""
 
     def __init__(self, home: Path, say: Callable[[str], None] = lambda text: None,
-                 runs: Callable[[], tuple[int, int]] = lambda: (0, 0)) -> None:
+                 runs: Callable[[], tuple[int, int]] = lambda: (0, 0),
+                 titles: Callable[[], list[str]] = lambda: []) -> None:
         self.path = Path(home) / "usage.json"
         self.say = say  # one message to them, in the app and on the phone
         self.runs = runs  # background runs (running, waiting)
+        self.titles = titles  # the running ones, by name
         self.pressure = ""  # why the computer is struggling, while it is
         self._since: float | None = None  # when the strain (or its easing) began
 
@@ -378,21 +398,18 @@ class Usage:
         lines.append(f"Read at {time.strftime('%H:%M', time.localtime(seen))} ({ago(now - seen)})")
         return lines
 
-    def pc_text(self, *, host: str, os_: str, cpu: str, n: int, avg, cpu_pct, mem: dict,
-                top: list[tuple[str, int]]) -> list[str]:
-        lines = [f"PC: {host} · {os_}", f"CPU: {cpu or 'unknown'}, {n} cores"]
-        busy = [f"Load {avg[0]:.1f} / {avg[1]:.1f} / {avg[2]:.1f}" if avg else "", f"CPU {cpu_pct:.0f}%" if cpu_pct is not None else ""]
+    def pc_text(self, *, host: str, cpu_pct, mem: dict, ken: int) -> list[str]:
+        """Just what they need: which computer, how busy it is, and Ken's own share."""
+        lines = [f"PC: {host}"]
+        busy = [f"CPU {cpu_pct:.0f}%" if cpu_pct is not None else "",
+                f"RAM {gb(mem['total'] - mem['available'])} of {gb(mem['total'])} used" if mem.get("total") else ""]
         if any(busy):
             lines.append(" · ".join(x for x in busy if x))
-        if mem.get("total"):
-            line = f"RAM {gb(mem['total'] - mem['available'])} of {gb(mem['total'])} used, {gb(mem['available'])} free"
-            if mem.get("swap_total"):
-                line += f" · swap {gb(mem['swap_used'])} of {gb(mem['swap_total'])}"
-            lines.append(line)
-        if top:
-            lines.append("Top RAM: " + ", ".join(f"{name} {gb(size)}" for name, size in top))
-        running, waiting = self.runs()
-        lines.append(f"Background jobs: {running} running, {waiting} waiting")
+        if ken:
+            lines.append(f"Ken is using {gb(ken)} of it")
+        jobs = self.titles()
+        _, waiting = self.runs()
+        lines.append("Background jobs: " + (", ".join(jobs) if jobs else "none running") + (f" ({waiting} waiting)" if waiting else ""))
         return lines
 
     async def report(self, backend: str, model: str) -> str:
@@ -401,6 +418,5 @@ class Usage:
         if why:
             lines.append(f"Paused: background jobs wait, {why}.")
         lines.append("")
-        lines += self.pc_text(host=socket.gethostname(), os_=os_name(), cpu=cpu_model(), n=cores(), avg=load(),
-                              cpu_pct=await cpu_percent(), mem=memory(), top=top_memory(3))
+        lines += self.pc_text(host=socket.gethostname(), cpu_pct=await cpu_percent(), mem=memory(), ken=ken_memory())
         return "\n".join(lines)

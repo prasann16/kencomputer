@@ -160,7 +160,8 @@ ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
 USAGE = Usage(
     KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
     runs=lambda: (sum(r["status"] == "running" for r in ENGINE.list_runs(active=True)),
-                  sum(r["status"] == "queued" for r in ENGINE.list_runs(active=True))))
+                  sum(r["status"] == "queued" for r in ENGINE.list_runs(active=True))),
+    titles=lambda: [r["title"] for r in ENGINE.list_runs(active=True) if r["status"] == "running"])
 BRAINS["claude"].on_rate_limit = USAGE.record
 ENGINE.run_hold = USAGE.hold
 ENGINE.run_cap = lambda: USAGE.run_cap(RUN_SLOTS)

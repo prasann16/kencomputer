@@ -135,12 +135,14 @@ def test_usage_text_with_readings():
     assert ai[1] == f"5 hour: 12% used, resets {usage.when(NOW + 3600, NOW)}"
     assert ai[2].startswith("Weekly: 49% used, resets ")
     assert ai[3].endswith("(3 min ago)")
-    pc = u.pc_text(host="arch", os_="Arch Linux", cpu="Intel i5", n=8, avg=(1.2, 1.5, 1.8), cpu_pct=23.0,
-                   mem={"total": 16 * GB, "available": 6 * GB, "swap_total": 4 * GB, "swap_used": GB // 2},
-                   top=[("chromium", int(6.4 * GB)), ("python", GB)])
-    assert pc == ["PC: arch · Arch Linux", "CPU: Intel i5, 8 cores", "Load 1.2 / 1.5 / 1.8 · CPU 23%",
-                  "RAM 10.0GB of 16.0GB used, 6.0GB free · swap 0.5GB of 4.0GB",
-                  "Top RAM: chromium 6.4GB, python 1.0GB", "Background jobs: 1 running, 2 waiting"]
+    u.titles = lambda: ["💼 Apply batch"]
+    pc = u.pc_text(host="arch", cpu_pct=23.0, mem={"total": 16 * GB, "available": 6 * GB}, ken=int(1.5 * GB))
+    assert pc == ["PC: arch", "CPU 23% · RAM 10.0GB of 16.0GB used", "Ken is using 1.5GB of it",
+                  "Background jobs: 💼 Apply batch (2 waiting)"]
+
+
+def test_ken_memory_counts_this_process():
+    assert usage.ken_memory() > 0
 
 
 def test_usage_text_before_any_reading():
@@ -150,7 +152,7 @@ def test_usage_text_before_any_reading():
 
 def test_a_full_report_on_this_computer():
     text = asyncio.run(fresh().report("claude", "claude-opus-5-5"))
-    assert "PC: " in text and "Background jobs: 0 running, 0 waiting" in text
+    assert "PC: " in text and "Background jobs: none running" in text
 
 
 def test_when_today_and_later():
