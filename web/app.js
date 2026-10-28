@@ -193,7 +193,7 @@ function Chip({ project }) {
 }
 
 const durationLabel = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current reply'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
+const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current reply'], ['/model', 'See or switch the AI model'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally'], ['/pending', 'What’s waiting on you']];
 
 function waveformPeaks(values, count = 48) {
   // Keep each interval's peak; point-sampling can miss whole words in a note.

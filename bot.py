@@ -51,6 +51,7 @@ from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
 from ken_mcp import external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
+import loops
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
 from telegram.constants import ChatAction, ParseMode, ReactionEmoji
@@ -63,6 +64,10 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+try:
+    from telegram.ext import MessageReactionHandler
+except ImportError:  # python-telegram-bot before 20.8
+    MessageReactionHandler = None
 
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
@@ -177,6 +182,7 @@ JOB_STATE_FILE = KEN_HOME / ".job-state.json"
 OUTBOX_DIR = KEN_HOME / "outbox"
 INBOX_DIR = KEN_HOME / "inbox"
 MEMORY_DIR = KEN_HOME / "memory"
+LOOPS_FILE = MEMORY_DIR / "open-loops.md"
 SETUP_FILE = KEN_HOME / "setup.json"
 HOSTING_FILE = KEN_HOME / "hosting.md"
 SETUP_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools", "calendar", "email", "phone")
@@ -407,6 +413,11 @@ SYSTEM_PROMPT = (
     "immediately, first time, no negotiation; confirm by reading the file back. "
     "For jobs where silence is sometimes right, reply exactly NOTHING_TO_SAY and nothing "
     "will be sent. "
+    f"OPEN LOOPS: every question you ask them and every task waiting on them goes into {LOOPS_FILE} "
+    "as a numbered item under '## Waiting on <their name>' (what other people owe them under "
+    "'## Waiting on others'). When they answer or it's done, move it under '## Closed <date>'. "
+    "A pinned Telegram message mirrors this file, with a ✅ button per item, and the harness adds "
+    "'## To read' items when it pins a research result, so keep the file current and in that shape. "
     f"SETUP CHECKLIST: {SETUP_FILE} tracks the few first-run things that make you actually "
     "useful — ken-name, call-you, work, city, brief-time, calendar, email, phone (Ken on your phone) — "
     "each \"unset\", \"done\", or \"declined\". "
@@ -676,6 +687,9 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
 async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
     chat_id = update.effective_chat.id
+    earlier = update.effective_message.reply_to_message
+    if earlier is not None:
+        await read_pin_answered(update.get_bot(), earlier.message_id)
     if ENGINE.chat_busy(HOME):
         # 👀 on their message: seen. The note says it's queued, not an answer, and how to stop.
         try:
@@ -991,17 +1005,20 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def send_outbound(bot, text: str, reply_to: int | None = None) -> None:
+async def send_outbound(bot, text: str, reply_to: int | None = None):
     """Ken speaking first. It quotes `reply_to` (the message that started this work) when there
     is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last."""
     if bot is None or not ALLOWED_USER_ID:
-        return
+        return None
+    first = None
     for i, chunk in enumerate(split_chunks(text.strip() or "…")):
         quote = quoting(reply_to if i == 0 else None)
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
+            sent = await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
+            sent = await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
+        first = first or sent
+    return first
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1332,6 +1349,8 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
                                            **quoting(ev.get("origin")))
+            elif ev["type"] == "run.finished" and ev.get("status") == "done" and ev.get("project") == HOME:
+                remember_deliverables(ev)
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME:
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
@@ -1343,10 +1362,186 @@ async def notify_telegram(app) -> None:
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
                     await send_outbound(app.bot, "💻 In the app: " + words[:3500] + attached)
                 elif ev.get("role") == "ken" and words:
-                    await send_outbound(app.bot, words)
+                    sent = await send_outbound(app.bot, words)
+                    if ev.get("via") == "background":
+                        await pin_deliverable(app.bot, words, sent)
                     await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
+
+
+# Open loops: one pinned message mirrors memory/open-loops.md, edited in place. Research results
+# get pinned too until they're read (a reply, a 👍, or ✅ on the list).
+UNREAD_RESULTS: list[dict] = []  # deliverables of finished background runs, waiting for Ken's report
+
+
+def loops_text() -> str:
+    try:
+        return LOOPS_FILE.read_text()
+    except OSError:
+        return ""
+
+
+def loops_view() -> tuple[str, InlineKeyboardMarkup | None]:
+    text, rows = loops.render(loops_text())
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data) for label, data in row]
+                                   for row in rows]) if rows else None
+    return text, markup
+
+
+def write_loops(text: str) -> None:
+    LOOPS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOOPS_FILE.write_text(text)
+
+
+async def refresh_pin(bot) -> None:
+    """Edit the pinned list when it changed; if it's gone, send a new one and pin it, quietly."""
+    if bot is None or not ALLOWED_USER_ID or not LOOPS_FILE.exists():
+        return
+    text, markup = loops_view()
+    shown = text + repr(markup.to_dict() if markup else None)
+    pin = int(ENGINE.kv_get("loops:pin") or 0)
+    if pin and ENGINE.kv_get("loops:shown") == shown:
+        return
+    if pin:
+        try:
+            await bot.edit_message_text(text, chat_id=ALLOWED_USER_ID, message_id=pin, parse_mode=ParseMode.HTML,
+                                        reply_markup=markup)
+            ENGINE.kv_set("loops:shown", shown)
+            return
+        except BadRequest as e:
+            if "not modified" in str(e).lower():
+                ENGINE.kv_set("loops:shown", shown)
+                return
+            if "not found" not in str(e).lower() and "can't be edited" not in str(e).lower():
+                log.warning("open loops pin not updated: %s", e)
+                ENGINE.kv_set("loops:shown", shown)  # don't retry the same text every 30s
+                return
+            log.info("open loops pin is gone; pinning a new one")
+    msg = await bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=markup,
+                                 disable_notification=True)
+    try:
+        await bot.pin_chat_message(ALLOWED_USER_ID, msg.message_id, disable_notification=True)
+    except TelegramError as e:
+        log.warning("couldn't pin open loops: %s", e)
+    ENGINE.kv_set("loops:pin", str(msg.message_id))
+    ENGINE.kv_set("loops:shown", shown)
+
+
+async def watch_loops(app) -> None:
+    """Ken edits the file as the conversation goes; the pin follows within half a minute."""
+    seen = None
+    while True:
+        try:
+            mtime = LOOPS_FILE.stat().st_mtime if LOOPS_FILE.exists() else None
+            if mtime is not None and mtime != seen:
+                seen = mtime
+                await refresh_pin(app.bot)
+        except Exception as e:
+            log.warning("open loops pin failed: %s", e)
+        await asyncio.sleep(30)
+
+
+def read_pins() -> list[dict]:
+    return json.loads(ENGINE.kv_get("loops:reads") or "[]")
+
+
+async def unpin_read(bot, pin: dict) -> None:
+    ENGINE.kv_set("loops:reads", json.dumps([p for p in read_pins() if p["msg"] != pin["msg"]]))
+    try:
+        await bot.unpin_chat_message(ALLOWED_USER_ID, message_id=pin["msg"])
+    except TelegramError:
+        pass
+
+
+async def read_pin_answered(bot, message_id: int) -> bool:
+    """They replied to or reacted on a pinned research result: it's read."""
+    pin = next((p for p in read_pins() if p["msg"] == message_id), None)
+    if pin is None:
+        return False
+    await unpin_read(bot, pin)
+    done = loops.close_matching(loops_text(), pin["file"])
+    if done:
+        write_loops(done[0])
+        await refresh_pin(bot)
+    return True
+
+
+def remember_deliverables(ev: dict) -> None:
+    """A finished background job made .md files: pin Ken's report if it hands one over."""
+    try:
+        report = ENGINE._run_row(ev["run"])["summary"] or ""
+    except (KeyError, TypeError):
+        report = ev.get("summary") or ""
+    paths = loops.deliverables(report)
+    if paths:
+        UNREAD_RESULTS.append({"title": ev.get("title") or "Research", "paths": paths, "at": time.time()})
+
+
+async def pin_deliverable(bot, words: str, sent) -> None:
+    now = time.time()
+    UNREAD_RESULTS[:] = [r for r in UNREAD_RESULTS if now - r["at"] < 1800]
+    for r in UNREAD_RESULTS:
+        path = loops.mentioned(r["paths"], words)
+        if not path or sent is None:
+            continue
+        UNREAD_RESULTS.remove(r)
+        try:
+            await bot.pin_chat_message(ALLOWED_USER_ID, sent.message_id, disable_notification=True)
+        except TelegramError as e:
+            log.warning("couldn't pin a research result: %s", e)
+            return
+        write_loops(loops.add_read(loops_text(), r["title"], path)[0])
+        kept, dropped = loops.cap(read_pins() + [{"msg": sent.message_id, "file": path}])
+        ENGINE.kv_set("loops:reads", json.dumps(kept))
+        for pin in dropped:
+            await unpin_read(bot, pin)
+        await refresh_pin(bot)
+        return
+
+
+async def on_loop_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """✅ on the list: the item moves to Closed (and a pinned result it names comes unpinned)."""
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    num = int(q.data.split(":", 1)[1])
+    done = loops.close(loops_text(), num)
+    if done is None:
+        await q.answer("Already closed.")
+    else:
+        write_loops(done[0])
+        for pin in read_pins():
+            if pin["file"] in done[1]:
+                await unpin_read(context.bot, pin)
+        await q.answer(f"Closed {num}.")
+    if q.message and q.message.message_id != int(ENGINE.kv_get("loops:pin") or 0):
+        text, markup = loops_view()  # a /pending list updates too
+        try:
+            await q.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except BadRequest:
+            pass
+    await refresh_pin(context.bot)
+
+
+async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    r = update.message_reaction
+    if r is None or r.user is None or r.user.id != ALLOWED_USER_ID:
+        return
+    if any(getattr(x, "emoji", "") in ("👍", "✅", "👌") for x in r.new_reaction):
+        await read_pin_answered(context.bot, r.message_id)
+
+
+async def cmd_pending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(update):
+        return
+    text, markup = loops_view()
+    await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+def pending_plain(arg: str = "") -> dict:
+    text, _ = loops.render(loops_text())
+    return {"reply": html.unescape(re.sub(r"<[^>]+>", "", text))}
 
 
 async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1579,6 +1774,7 @@ COMMANDS = {
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
     "awake": lambda arg="": {"awake": is_awake()},
+    "pending": pending_plain,
 }
 
 
@@ -1800,6 +1996,7 @@ class Phone:
         self.username = ""
         self.pair_until = 0.0
         self.notify: asyncio.Task | None = None
+        self.loops: asyncio.Task | None = None
         self.retry: asyncio.Task | None = None
         self.handoff = Handoff(self)
 
@@ -1832,19 +2029,25 @@ class Phone:
     async def start(self, token: str) -> None:
         app = Application.builder().token(token).concurrent_updates(True).build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("pending", cmd_pending)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
+        app.add_handler(CallbackQueryHandler(on_loop_pick, pattern=r"^loop:\d+$"))
+        updates = ["message", "callback_query"]
+        if MessageReactionHandler is not None:  # older python-telegram-bot: replies and ✅ still close things
+            app.add_handler(MessageReactionHandler(on_reaction))
+            updates.append("message_reaction")
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
         app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION | filters.Document.ALL, on_file))
         await app.initialize()
         await app.start()
-        await app.updater.start_polling(allowed_updates=["message", "callback_query"])
+        await app.updater.start_polling(allowed_updates=updates)
         self.app, self.username = app, app.bot.username
         self.notify = asyncio.create_task(notify_telegram(app))
+        self.loops = asyncio.create_task(watch_loops(app))
         try:
             await app.bot.set_my_commands([
                 ("coffee", "Keep this computer awake"),
@@ -1852,6 +2055,7 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
+                ("pending", "What's waiting on you"),
             ])
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
@@ -1875,10 +2079,10 @@ class Phone:
 
     async def stop(self) -> None:
         app, self.app = self.app, None
-        for task in (self.notify, self.retry):
+        for task in (self.notify, self.retry, self.loops):
             if task and task is not asyncio.current_task():
                 task.cancel()
-        self.notify = self.retry = None
+        self.notify = self.retry = self.loops = None
         if app:
             try:
                 await app.updater.stop()
