@@ -49,7 +49,7 @@ from engine import HOME, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
-from ken_mcp import external_server, media_server
+from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
@@ -85,11 +85,19 @@ KEN_HOME.mkdir(parents=True, exist_ok=True)
 os.environ["PATH"] = str(KEN_HOME / "tools" / "node" / "bin") + os.pathsep + os.environ.get("PATH", "")
 # How Ken runs itself from a shell: the app's engine, or this checkout's Python and bot.py.
 KEN_CMD = f'"{sys.executable}"' if getattr(sys, "frozen", False) else f'"{sys.executable}" "{Path(__file__).resolve()}"'
+SHARED_MCP: dict[str, dict] = {}  # name -> how a chat reaches a server every chat shares, once the app server is up
+
+
 def browser_mcp() -> dict:
     """The user's own Chrome, through Google's Chrome DevTools MCP server.
 
     The Mac app ships the server and its own Node (KEN_NODE, KEN_BROWSER_MCP); a
-    terminal install uses Node from PATH. Without Node, Ken has no browser tools."""
+    terminal install uses Node from PATH. Without Node, Ken has no browser tools.
+    Chats share one server through the app server, so Chrome asks to allow Ken once."""
+    return {"browser": SHARED_MCP["browser"]} if "browser" in SHARED_MCP else browser_command()
+
+
+def browser_command() -> dict:
     import shutil
 
     env = {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}
@@ -1297,11 +1305,18 @@ async def start_engine() -> WebApp | None:
     global ACCOUNTS
     ACCOUNTS = setup
     use_signed_in_account()
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
+    browser = browser_command().get("browser")
+    shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared)
+    host, port = os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777"))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
-            await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
+            await web_app.start(host, port)
+            local = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+            for name in shared:
+                SHARED_MCP[name] = {"type": "http", "url": f"http://{local}:{port}/mcp/{name}",
+                                    "headers": {"Authorization": f"Bearer {web_app.token}"}}
             return web_app
         except OSError as e:
             if attempt == 14:

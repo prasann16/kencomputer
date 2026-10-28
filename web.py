@@ -49,7 +49,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -60,6 +60,7 @@ class WebApp:
         self.jobs = jobs  # (list, set): the engine's standing jobs
         self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
+        self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
@@ -662,6 +663,15 @@ class WebApp:
             await asyncio.gather(pumping, return_exceptions=True)
         return ws
 
+    async def mcp(self, request: web.Request) -> web.Response:
+        server = self.shared.get(request.match_info["name"])
+        if server is None:
+            return web.Response(status=404)
+        if request.method != "POST":
+            return web.Response(status=405)  # no server-to-client stream; replies come back as plain JSON
+        reply = await server.handle(await request.json())
+        return web.Response(status=202) if reply is None else web.json_response(reply)
+
     # -------------------------------------------------------------- lifecycle
 
     async def shutdown(self, app):
@@ -734,6 +744,7 @@ class WebApp:
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)
         r.add_get("/api/events", self.events)
+        r.add_route("*", "/mcp/{name}", self.mcp)
         r.add_get("/{name:.+}", self.static_file)
         return app
 
