@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 
 import pytest
@@ -110,6 +111,7 @@ def test_a_machine_built_with_the_kit_skips_setup(tmp_path, monkeypatch):
     assert v.setup(tmp_path, say=lambda *_: None) == kit  # no Node download, no npm
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 def test_the_look_takes_its_colours_from_the_footage(tmp_path):
     # A grey room with a green jacket: the accent is the jacket's green, not a fixed house colour.
     subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=96x168:d=2", "-f", "lavfi",
