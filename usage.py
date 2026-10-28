@@ -27,6 +27,8 @@ WINDOW_NAMES = {"five_hour": "5 hour", "seven_day": "weekly", "seven_day_opus": 
 PRESSURE_FOR = 180  # seconds a strain (or its end) must last before Ken acts on it
 RAM_LOW = 10  # % of RAM available under which the computer is under pressure
 LOAD_HIGH = 2.0  # 5 minute load average per core above which it is
+SWAP_FULL = 90  # % of swap used that, with RAM also tight (under SWAP_RAM % free), means it is
+SWAP_RAM = 25
 EXEMPT_JOBS = ("morning-brief",)  # still runs when Ken eases off: it's the one they read every day
 
 
@@ -210,11 +212,17 @@ def strain(mem: dict, avg: tuple | None, n: int, *, easing: bool = False) -> str
     ram_low, load_high = (RAM_LOW * 1.5, LOAD_HIGH * 0.75) if easing else (RAM_LOW, LOAD_HIGH)
     ram_hit = bool(mem.get("total")) and 100 * mem["available"] / mem["total"] < ram_low
     load_hit = avg is not None and avg[1] > load_high * n
-    if not (ram_hit or load_hit):
+    # A nearly full swap on its own can be stale; with RAM tight too, the next spike hangs the machine.
+    swap_full = SWAP_FULL - 5 if easing else SWAP_FULL
+    swap_hit = (bool(mem.get("swap_total")) and bool(mem.get("total"))
+                and 100 * mem["swap_used"] / mem["swap_total"] > swap_full
+                and 100 * mem["available"] / mem["total"] < SWAP_RAM)
+    if not (ram_hit or load_hit or swap_hit):
         return ""
     used = f"RAM {round(100 - 100 * mem['available'] / mem['total'])}%" if mem.get("total") else ""
+    swap = f"swap {round(100 * mem['swap_used'] / mem['swap_total'])}%" if swap_hit else ""
     busy = f"load {avg[1]:.0f} on {n} cores" if avg is not None else ""
-    return ", ".join(x for x in (used, busy) if x)
+    return ", ".join(x for x in (used, swap, busy) if x)
 
 
 # ------------------------------------------------------------------ the watcher
