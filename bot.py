@@ -1042,12 +1042,40 @@ async def run_outbound(job: dict) -> None:
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver)
+        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, preface=late_notice(job, time.localtime()))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
+LATE_NOTICE_MINUTES = 5  # a job this late was caught up after sleep, not just a slow minute
+
+
+def late_notice(job: dict, now: time.struct_time) -> str:
+    """The line a caught-up job opens with, so they know why it's arriving now; "" when on time."""
+    try:
+        hour, minute = (int(x) for x in str(job.get("time", "")).split(":"))
+    except ValueError:
+        return ""
+    if (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute) < LATE_NOTICE_MINUTES:
+        return ""
+    name = str(job.get("name", "scheduled job")).replace("-", " ")
+    return f"⏰ Running late: your {name} was due at {hour:02d}:{minute:02d} and didn't run then, so it is running now."
+
+
+def note_new_jobs(jobs: list[dict], now: time.struct_time, state: dict) -> bool:
+    """Remember each job the first minute Ken sees it. One first seen after today's slot (a new
+    install at noon) starts tomorrow; catching up is only for jobs Ken was already running. One
+    first seen before its slot runs today, even if Ken only gets to it late (the laptop slept).
+    Returns whether anything was noted."""
+    noted = False
+    for job in jobs:
+        key = job_key(job)
+        if key and key not in state:
+            # "seen ..." doesn't start with a date, so it never counts as "already ran today".
+            state[key] = time.strftime("%Y-%m-%d (first seen)" if _job_due(job, now, {}) else "seen %Y-%m-%d %H:%M", now)
+            noted = True
+    return noted
 
 
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
@@ -1202,13 +1230,8 @@ async def scheduler() -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
-            # A job seen for the first time after today's slot (a new install at noon) starts
-            # tomorrow; catching up is only for jobs Ken was already running.
-            for job in jobs:
-                key = job_key(job)
-                if key and key not in state and _job_due(job, now, {}):
-                    state[key] = time.strftime("%Y-%m-%d (first seen)", now)
-                    JOB_STATE_FILE.write_text(json.dumps(state))
+            if note_new_jobs(jobs, now, state):
+                JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if _job_due(job, now, state):
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
@@ -1220,7 +1243,9 @@ async def scheduler() -> None:
                         # An agent's job runs in that agent's own chat.
                         asyncio.create_task(ENGINE.send_message(
                             str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
+                            + (f" Open your message with this line, as is: {notice}" if (notice := late_notice(job, now)) else ""),
+                            job=job_tag(job),
                         ))
                     else:
                         asyncio.create_task(run_outbound(job))
