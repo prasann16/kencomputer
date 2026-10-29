@@ -199,10 +199,12 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     import bot
     from engine import HOME
     sent = []
-    async def send_outbound(b, text, reply_to=None):
+    async def send_outbound(b, text, reply_to=None, quiet=False):
         sent.append(text)
-    async def flush_outbox(b, chat_id):
+        quiets.append(quiet)
+    async def flush_outbox(b, chat_id, quiet=False):
         pass
+    quiets = []
     monkeypatch.setattr(bot, "send_outbound", send_outbound)
     monkeypatch.setattr(bot, "flush_outbox", flush_outbox)
     monkeypatch.setattr(bot, "ALLOWED_USER_ID", 1)
@@ -211,7 +213,9 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     bot.ENGINE.emit("message", project=HOME, role="you", text="edit this for Instagram", files=["IMG_5208.MOV"], via="app")
     bot.ENGINE.emit("message", project=HOME, role="ken", text="On it.", via="app")
     bot.ENGINE.emit("message", project=HOME, role="ken", text="Answer on the phone", via="telegram")  # already delivered there
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="Your reel is ready.", via="background")
     for _ in range(50):
         await asyncio.sleep(0.01)
     task.cancel()
-    assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "On it."]
+    assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "On it.", "Your reel is ready."]
+    assert quiets == [True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes

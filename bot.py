@@ -195,7 +195,7 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-async def send_video(bot, chat_id: int, path: Path) -> bool:
+async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool:
     """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
     over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
     ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
@@ -206,7 +206,7 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
         with open(out, "rb") as fh:
             await bot.send_video(
                 chat_id, fh, caption=path.name, filename=path.with_suffix(".mp4").name,
-                supports_streaming=True, write_timeout=300, read_timeout=300, **meta,
+                supports_streaming=True, write_timeout=300, read_timeout=300, disable_notification=quiet, **meta,
             )
     finally:
         if out != path:
@@ -214,8 +214,8 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
     return True
 
 
-async def flush_outbox(bot, chat_id: int) -> None:
-    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat."""
+async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
+    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
         if not OUTBOX_DIR.exists():
             return
@@ -227,7 +227,7 @@ async def flush_outbox(bot, chat_id: int) -> None:
                 if size == 0:
                     path.unlink(missing_ok=True)
                     continue
-                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path):
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
                     log_history("assistant", f"[sent video: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
@@ -235,14 +235,14 @@ async def flush_outbox(bot, chat_id: int) -> None:
                     await bot.send_message(
                         chat_id,
                         f"📁 {path.name} is too big to send ({size // (1024 * 1024)}MB). "
-                        f"It's on the machine at {path}",
+                        f"It's on the machine at {path}", disable_notification=quiet,
                     )
                     continue
                 with open(path, "rb") as fh:
                     if path.suffix.lower() in PHOTO_SUFFIXES:
-                        await bot.send_photo(chat_id, fh, caption=path.name)
+                        await bot.send_photo(chat_id, fh, caption=path.name, disable_notification=quiet)
                     else:
-                        await bot.send_document(chat_id, fh, filename=path.name)
+                        await bot.send_document(chat_id, fh, filename=path.name, disable_notification=quiet)
                 log_history("assistant", f"[sent file: {path.name}]")
                 path.unlink(missing_ok=True)
             except Exception as e:
@@ -1000,17 +1000,19 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def send_outbound(bot, text: str, reply_to: int | None = None) -> None:
+async def send_outbound(bot, text: str, reply_to: int | None = None, quiet: bool = False) -> None:
     """Ken speaking first. It quotes `reply_to` (the message that started this work) when there
-    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last."""
+    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last.
+    `quiet` lands it without a buzz."""
     if bot is None or not ALLOWED_USER_ID:
         return
     for i, chunk in enumerate(split_chunks(text.strip() or "…")):
         quote = quoting(reply_to if i == 0 else None)
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
+            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML,
+                                   disable_notification=quiet, **quote)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
+            await bot.send_message(ALLOWED_USER_ID, chunk, disable_notification=quiet, **quote)
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1373,12 +1375,13 @@ async def notify_telegram(app) -> None:
                                     reply_to=ev.get("origin"))
             elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
+                quiet = ev.get("via") == "app"  # they're at the Mac: it shows on the phone without a buzz
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
-                    await send_outbound(app.bot, "💻 " + words[:3500] + attached)
+                    await send_outbound(app.bot, "💻 " + words[:3500] + attached, quiet=quiet)
                 elif ev.get("role") == "ken" and words:
-                    await send_outbound(app.bot, words)
-                    await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
+                    await send_outbound(app.bot, words, quiet=quiet)
+                    await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 
