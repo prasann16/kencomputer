@@ -169,9 +169,10 @@ async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monk
     import bot
     monkeypatch.setattr(bot, "authorized", lambda update: True)
     monkeypatch.setattr(bot, "INBOX_DIR", tmp_path)
-    prompts, replies = [], []
-    async def handle_prompt(update, prompt):
+    prompts, replies, shown = [], [], []
+    async def handle_prompt(update, prompt, context="", said=None, files=None):
         prompts.append(prompt)
+        shown.append((said, files))
     monkeypatch.setattr(bot, "handle_prompt", handle_prompt)
     monkeypatch.setattr(bot, "log_history", lambda *a: None)
     class File:
@@ -189,6 +190,7 @@ async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monk
         return SimpleNamespace(effective_message=msg, effective_chat=SimpleNamespace(send_action=send_action))
     await bot.on_file(update(5 * 1024 * 1024), None)
     assert (tmp_path / "clip.mp4").read_bytes() == b"mp4" and "add captions" in prompts[0]
+    assert shown[0] == ("add captions", ["clip.mp4"])  # the app shows it as their message, video and all
     await bot.on_file(update(180 * 1024 * 1024), None)  # over Telegram's 20 MB bot limit: say so, don't go quiet
     assert len(prompts) == 1 and "20 MB" in replies[0]
 
@@ -219,3 +221,23 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     task.cancel()
     assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "On it.", "Your reel is ready."]
     assert quiets == [True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes
+
+
+async def test_a_photo_from_the_phone_shows_in_the_app_as_their_message(monkeypatch):
+    from types import SimpleNamespace
+    import bot
+    calls = []
+    async def send_message(pid, text, files=None, **kw):
+        calls.append((text, files, kw["log_user"], kw["steer"]))
+    async def keep_typing(update, stop):
+        pass
+    monkeypatch.setattr(bot.ENGINE, "send_message", send_message)
+    monkeypatch.setattr(bot.ENGINE, "chat_busy", lambda pid: False)
+    async def flush_outbox(b, chat_id, quiet=False):
+        pass
+    monkeypatch.setattr(bot, "keep_typing", keep_typing)
+    monkeypatch.setattr(bot, "flush_outbox", flush_outbox)
+    update = SimpleNamespace(effective_chat=SimpleNamespace(id=1), effective_message=SimpleNamespace(message_id=7), get_bot=lambda: None)
+    await bot.handle_prompt(update, "(The human sent you an image…)", said="make this the cover", files=["photo.jpg"])
+    await bot.handle_prompt(update, "(They pressed Start…)")  # Ken's own nudge: not shown as theirs
+    assert calls == [("make this the cover", ["photo.jpg"], True, True), ("(They pressed Start…)", None, False, False)]
