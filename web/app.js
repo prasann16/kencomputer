@@ -120,19 +120,19 @@ function md(text) {
     i % 2 ? html`<pre><code>${block.replace(/\n$/, '')}</code></pre>` : prose(block));
 }
 
-// A notes file as a page: headings, bullet lists and paragraphs, with the same inline markdown.
+// A notes file as a page: headings, bullet and numbered lists and paragraphs, with the same inline markdown.
 function doc(text) {
   const blocks = [];
-  let list = null, para = [];
+  let list = null, numbered = 0, para = [];
   const flush = () => {
     if (para.length) blocks.push(html`<p>${inline(para.join(' '))}</p>`);
-    if (list) blocks.push(html`<ul>${list.map((li) => html`<li>${inline(li)}</li>`)}</ul>`);
+    if (list) blocks.push(numbered ? html`<ol start=${numbered}>${list.map((li) => html`<li>${inline(li)}</li>`)}</ol>` : html`<ul>${list.map((li) => html`<li>${inline(li)}</li>`)}</ul>`);
     para = []; list = null;
   };
   for (const line of String(text || '').split('\n')) {
-    const h = line.match(/^(#{1,4})\s+(.*)/), li = line.match(/^\s*[-*]\s+(.*)/);
+    const h = line.match(/^(#{1,4})\s+(.*)/), li = line.match(/^\s*(?:[-*]|(\d+)[.)])\s+(.*)/);
     if (h) { flush(); blocks.push(h[1].length === 1 ? html`<h2>${inline(h[2])}</h2>` : html`<h3>${inline(h[2])}</h3>`); }
-    else if (li) { if (para.length) { const l = list; list = null; flush(); list = l; } (list = list || []).push(li[1]); }
+    else if (li) { if (para.length || (list && !numbered !== !li[1])) { const l = list && !numbered === !li[1] ? list : null; flush(); list = l; } if (!list) numbered = +(li[1] || 0); (list = list || []).push(li[2]); }
     else if (!line.trim()) flush();
     else { if (list) flush(); para.push(line.trim()); }
   }
@@ -152,18 +152,19 @@ function page(text) {
     }));
 }
 
+// A write-up fills the window like a page to read: back to the chat, its name once, Copy and Finder.
 function DocViewer({ file, onClose }) {
   useEffect(() => { const esc = (e) => e.key === 'Escape' && onClose(); addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, []);
-  const elsewhere = () => window.kenDesktop?.openFile ? window.kenDesktop.openFile(file.path) : window.open(sharedUrl(file.path), '_blank', 'noopener');
-  return html`<div class="scrim" onClick=${(e) => e.target === e.currentTarget && onClose()}>
-    <aside class="drawer doc-viewer" role="dialog" aria-label=${file.name}>
-      <header>
-        <div style="flex:1;min-width:0"><div class="meta ellipsis" title=${file.path}>${file.path}</div><h2>${file.name}</h2></div>
-        <button class="icon-btn" aria-label="Close" onClick=${onClose}>${Icon.close}</button>
-      </header>
-      <div class="log doc-page">${file.text.trim() ? page(file.text) : 'This file is empty.'}</div>
-      <footer><button class="btn" onClick=${elsewhere}>${window.kenDesktop ? 'Open in another app' : 'Download'}</button></footer>
-    </aside>
+  const copy = () => navigator.clipboard.writeText(file.text).then(() => notify('Copied.'), () => notify('Couldn’t copy.'));
+  const finder = () => window.kenDesktop?.showFile ? window.kenDesktop.showFile(file.path) : window.open(sharedUrl(file.path), '_blank', 'noopener');
+  return html`<div class="doc-viewer" role="dialog" aria-label=${file.name}>
+    <header>
+      <button class="btn ghost sm doc-back" onClick=${onClose}><span class="flip">${Glyph('arrow')}</span>Chat</button>
+      <b class="ellipsis" title=${file.path}>${file.name}</b>
+      <button class="btn ghost sm" onClick=${copy}>${Icon.copy}Copy</button>
+      <button class="btn ghost sm" onClick=${finder}>${window.kenDesktop?.showFile ? 'Show in Finder' : 'Download'}</button>
+    </header>
+    <div class="doc-scroll"><div class="doc-page">${file.text.trim() ? page(file.text) : 'This file is empty.'}</div></div>
   </div>`;
 }
 
