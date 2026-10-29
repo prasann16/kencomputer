@@ -683,8 +683,11 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
             pass
 
 
-async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
-    """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
+async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
+                        files: list[str] | None = None) -> None:
+    """Telegram is one more window onto Ken's one conversation (the same one the app shows).
+    A photo or file shows in the app as their message (`said`, the caption, with `files`)."""
+    shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
         # 👀 on their message: seen. Ken takes it into what it's doing, the way Claude Code does.
@@ -704,8 +707,8 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
             await flush_outbox(update.get_bot(), chat_id)
 
         await ENGINE.send_message(
-            HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
-            prompt=context + prompt, origin=update.effective_message.message_id, steer=not prompt.startswith("("),
+            HOME, prompt if said is None else said, files, log_user=shown, via="telegram", listener=deliver,
+            prompt=context + prompt, origin=update.effective_message.message_id, steer=shown,
         )
     finally:
         stop.set()
@@ -824,15 +827,18 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             name = msg.document.file_name or f"image-{time.strftime('%Y%m%d-%H%M%S')}"
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
+        if path.exists():
+            path = INBOX_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}"
+        name = path.name
         await tg_file.download_to_drive(str(path))
     except Exception as e:
         log.warning("image download failed: %s", e)
         await msg.reply_text(f"Couldn't save that image: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent image: {name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent image: {name}]")  # the caption goes in with the message
     await handle_prompt(
-        update,
+        update, said=caption, files=[name], prompt=
         f"(The human sent you an image, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Open and actually look at the file before replying — never guess its contents. "
@@ -879,9 +885,9 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(f"Couldn't save that: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent {kind}: {path.name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent {kind}: {path.name}]")
     await handle_prompt(
-        update,
+        update, said=caption, files=[path.name], prompt=
         f"(The human sent you {kind}, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Look at the file itself before replying (for a video: its length, and a few frames or the "
