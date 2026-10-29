@@ -349,6 +349,10 @@ async function start() {
     if (/\.(app|command|sh|bash|zsh|tool|terminal|pkg|mpkg|dmg|scpt|applescript|workflow|jar|py|rb|pl|js|exe|bat|ps1)$/i.test(file)) shell.showItemInFolder(file);
     else await shell.openPath(file);
   });
+  ipcMain.handle('file:show', (event, file) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (typeof file === 'string' && existsSync(file)) shell.showItemInFolder(file);
+  });
   ipcMain.handle('folder:pick', async (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
     const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Use this folder' });

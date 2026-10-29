@@ -182,12 +182,19 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .drawer .result { padding: 14px 16px; white-space: pre-wrap; }
 .drawer .typing { padding-left: 0; }
 .drawer footer { padding: 16px 24px; border-top: 1px solid var(--line); }
-.drawer.doc-viewer { width: min(760px, 100%); }
-.doc-page { display: block !important; font-size: 15px; line-height: 1.6; padding: 20px 28px !important; }
-.doc-page h2 { font-size: 21px; margin: 4px 0 12px; }
+.doc-viewer { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+.doc-viewer header { height: 60px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 16px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+[data-desktop="darwin"] .doc-viewer header { padding-left: 88px; }
+.doc-viewer header b { flex: 1; min-width: 0; text-align: center; font-size: 14px; font-weight: 600; }
+.doc-viewer header .btn { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); -webkit-app-region: no-drag; }
+.doc-viewer header .btn:hover { color: var(--ink); background: var(--well); }
+.doc-back svg { width: 16px; height: 16px; } .flip { display: inline-flex; transform: scaleX(-1); }
+.doc-scroll { flex: 1; overflow-y: auto; }
+.doc-page { max-width: 700px; margin: 0 auto; padding: 28px 24px 80px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.doc-page h2 { font-size: 24px; line-height: 1.25; margin: 4px 0 14px; }
 .doc-page h3 { font-size: 16px; margin: 22px 0 6px; }
 .doc-page p { margin: 0 0 12px; }
-.doc-page ul { margin: 0 0 12px; padding-left: 22px; }
+.doc-page ul, .doc-page ol { margin: 0 0 12px; padding-left: 22px; }
 .doc-page li { margin: 3px 0; }
 .doc-page pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--track); padding: 12px 14px; border-radius: 8px; font-size: 13px; }
 .doc-page .table { margin: 0 0 14px; }
