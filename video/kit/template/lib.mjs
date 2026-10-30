@@ -13,6 +13,15 @@ const codeFiles = (dir) =>
 // The project's code (custom graphics included).
 export const codeHash = () => hash(codeFiles("src").sort().map((f) => [f, readFileSync(f, "utf8")]));
 
+// A killed render nobody has reaped yet (on Linux, a "zombie") still answers kill(pid, 0) but holds nothing.
+const zombie = (pid) => {
+  try {
+    return /\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    return false;
+  }
+};
+
 // Each Remotion job opens Chrome and uses about a gigabyte, so only one runs at a time on this machine;
 // a second one waits its turn instead of piling on.
 export async function oneAtATime(label) {
@@ -27,7 +36,7 @@ export async function oneAtATime(label) {
       let alive = false;
       try {
         process.kill(owner, 0);
-        alive = owner > 0;
+        alive = owner > 0 && !zombie(owner);
       } catch {}
       if (!alive && waited >= 4) rmSync(lock, { recursive: true, force: true });
       if (waited === 0) console.log(`${label}: waiting for another render to finish…`);
