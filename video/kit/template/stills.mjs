@@ -5,9 +5,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { openBrowser, renderStill, selectComposition } from "@remotion/renderer";
+import { renderStill, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, oneAtATime } from "./lib.mjs";
+import { cachedBundle, oneAtATime, openChrome } from "./lib.mjs";
 
 const [workArg, ...times] = process.argv.slice(2);
 if (!workArg || !times.length) {
@@ -21,7 +21,7 @@ mkdirSync(dir, { recursive: true });
 
 await oneAtATime("stills");
 const serveUrl = await cachedBundle(work, props);
-const browser = await openBrowser("chrome");
+const browser = await openChrome();
 const made = [];
 try {
   const composition = await selectComposition({ serveUrl, id: "Reel", inputProps: props, puppeteerInstance: browser });
@@ -40,3 +40,4 @@ if (made.length > 1) {
   execFileSync("ffmpeg", ["-v", "error", "-y", ...made.flatMap((f) => ["-i", f]), "-filter_complex", `${made.map((_, i) => `[${i}:v]`).join("")}hstack=${made.length}`, sheet]);
   console.log(`All of them side by side: ${sheet}`);
 }
+process.exit(0);
