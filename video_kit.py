@@ -153,6 +153,11 @@ def _project(home: Path, folder: Path, say=print) -> None:
     modules = folder / "node_modules"
     if not os.path.lexists(modules):
         modules.symlink_to(kit / "node_modules", target_is_directory=True)
+    # Remotion keeps its Chrome in node_modules/.remotion next to the nearest package.json. Without one here it
+    # looked from the reel's own folder, found nothing and downloaded Chrome again (100 MB) for every reel.
+    package = folder / "package.json"
+    if not package.exists():
+        package.write_text('{"private": true}\n')
 
 
 # Cutting a talking video. Whisper's word times are rough (a word often "ends" before the voice
