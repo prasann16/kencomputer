@@ -383,6 +383,7 @@ function Message({ m, label }) {
           : html`<a class="filechip" href=${url} target="_blank">${Icon.file}${f}</a>`;
       })}
       ${m.text && !recording && html`<div class="bubble" ref=${body}>${content}</div>`}
+      ${m.via === 'telegram' && html`<div class="msg-from">📱 from Telegram</div>`}
     </div></div>`;
   }
   // A scheduled job's report says what it is, so Ken never seems to talk out of nowhere.
