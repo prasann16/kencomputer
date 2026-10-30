@@ -96,25 +96,58 @@ async function stopOtherEngine() {
   try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
+// The engine process holding the Ken home while it's alive (answering or still starting up), else 0.
+async function engineAlive() {
+  let pid = 0;
+  try { pid = Number(readFileSync(path.join(home, 'engine.lock'), 'utf8').trim()); } catch {}
+  if (!pid) return 0;
+  const command = await new Promise((resolve) => execFile('/bin/ps', ['-p', String(pid), '-o', 'command='], (_e, out) => resolve(String(out || ''))));
+  return /ken-engine|bot\.py/.test(command) ? pid : 0;
+}
+
+// The last error the engine wrote, so a failed start says why.
+function lastError() {
+  try {
+    const lines = readFileSync(path.join(home, 'logs', 'ken.log'), 'utf8').slice(-20000).split('\n').map((l) => l.trim()).filter(Boolean);
+    const line = lines.reverse().find((l) => /^\w*(Error|Exception)\b|\bERROR\b/.test(l));
+    return line ? line.slice(0, 300) : '';
+  } catch { return ''; }
+}
+
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
-async function connect() {
+// A busy Mac can take minutes to start the engine: while it's alive it's left to finish, never
+// restarted (that threw away a slow start and began again). `onSlow` fires once if it's taking a
+// while. `fresh` (Try Again) always starts it over, so an engine stuck for good still gets replaced.
+async function connect(onSlow = () => {}, fresh = false) {
   // When the app runs its own engine, the engine must be this app version.
   const want = app.isPackaged ? app.getVersion() : null;
   const ready = (rev) => rev !== null && (want === null || rev === want);
-  if (ready(await running(service()))) return service();
-  await startService();
-  for (let i = 0; i < 120; i++) {
+  const rev = await running(service());
+  if (ready(rev)) return service();
+  if (fresh || rev !== null || !(await engineAlive())) await startService();  // an old version answering, or nothing there
+  const started = Date.now(), seconds = () => (Date.now() - started) / 1000;
+  let slow = false, goneSince = null, restarted = false;
+  const pids = new Set();
+  while (seconds() < 300 && pids.size < 4) {  // up to 5 minutes while it's alive; a few crashes in a row end it
     if (ready(await running(service()))) return service();
-    if (i === 40) await startService();  // nothing after 20 seconds: start it over once
+    if (!slow && seconds() > 10) { slow = true; onSlow(); }
+    const pid = await engineAlive();
+    if (pid) { goneSince = null; pids.add(pid); }
+    else if (goneSince === null) goneSince = seconds();
+    else if (seconds() - goneSince > 20) {  // no engine for 20 seconds: start it once more, then give up
+      if (restarted) break;
+      restarted = true; goneSince = null; await startService();
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
+  const why = lastError();
+  throw new Error('Ken’s engine didn’t start.' + (why ? ` It said: ${why}` : '') + ' The log is in ~/.ken/logs/ken.log.');
 }
 
 // Connect, or tell the user plainly and let them try again. Null if they chose Quit.
-async function connectOrAsk() {
-  for (;;) {
-    try { return await connect(); } catch (error) {
+async function connectOrAsk(fresh = false) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await connect(() => win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'slow' }).catch(() => {}), fresh || attempt > 0); } catch (error) {
       const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
       if (response !== 0) return null;
     }
@@ -127,10 +160,11 @@ function watchEngine() {
   setInterval(async () => {
     if (healing || quitting) return;
     if ((await running(service())) !== null) { misses = 0; return; }
-    if (++misses < 3) return;
+    // Not answering: 15 seconds and it's brought back, or 2 minutes if it's alive (a busy Mac can be that slow).
+    if (++misses < (await engineAlive() ? 24 : 3)) return;
     healing = true; misses = 0;
     await win.loadFile(path.join(__dirname, 'loading.html'));
-    const found = await connectOrAsk();
+    const found = await connectOrAsk(true);  // it stopped answering: start it over
     if (!found) { quitting = true; app.quit(); return; }
     await win.loadURL(found.origin);
     healing = false;
