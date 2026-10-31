@@ -1,6 +1,6 @@
 // Ken for Mac: a window onto the local `ken` service (bot.py). The service owns
 // the engine, Telegram, voice and schedules; this app only shows its chat.
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, nativeTheme, systemPreferences, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, nativeTheme, systemPreferences, clipboard, powerMonitor } = require('electron');
 const { execFile } = require('node:child_process');
 const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } = require('node:fs');
 const path = require('node:path');
@@ -117,7 +117,7 @@ function lastError() {
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
 // A busy Mac can take minutes to start the engine: while it's alive it's left to finish, never
 // restarted (that threw away a slow start and began again). `onSlow` fires once if it's taking a
-// while. `fresh` (Try Again) always starts it over, so an engine stuck for good still gets replaced.
+// while. `fresh` (a retry) always starts it over, so an engine stuck for good still gets replaced.
 async function connect(onSlow = () => {}, fresh = false) {
   // When the app runs its own engine, the engine must be this app version.
   const want = app.isPackaged ? app.getVersion() : null;
@@ -125,7 +125,9 @@ async function connect(onSlow = () => {}, fresh = false) {
   const rev = await running(service());
   if (ready(rev)) return service();
   if (fresh || rev !== null || !(await engineAlive())) await startService();  // an old version answering, or nothing there
-  const started = Date.now(), seconds = () => (Date.now() - started) / 1000;
+  // Seconds the Mac was awake: time spent asleep (a closed lid) doesn't count against the engine.
+  let awake = 0, last = Date.now();
+  const seconds = () => { const now = Date.now(); if (now - last < 5000) awake += now - last; last = now; return awake / 1000; };
   let slow = false, goneSince = null, restarted = false;
   const pids = new Set();
   while (seconds() < 300 && pids.size < 4) {  // up to 5 minutes while it's alive; a few crashes in a row end it
@@ -144,28 +146,33 @@ async function connect(onSlow = () => {}, fresh = false) {
   throw new Error('Ken’s engine didn’t start.' + (why ? ` It said: ${why}` : '') + ' The log is in ~/.ken/logs/ken.log.');
 }
 
-// Connect, or tell the user plainly and let them try again. Null if they chose Quit.
-async function connectOrAsk(fresh = false) {
+// Connect, and keep at it: no dialog to answer. If it fails, the window says so and it starts the engine over every 30 seconds.
+async function keepConnecting(fresh = false) {
   for (let attempt = 0; ; attempt++) {
     try { return await connect(() => win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'slow' }).catch(() => {}), fresh || attempt > 0); } catch (error) {
-      const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
-      if (response !== 0) return null;
+      console.error(error.message);
+      await win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'trouble' }).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 30000));
     }
   }
 }
 
 // Keep the window on a working engine: if it stops answering for 15 seconds, bring it back.
+// Only while the Mac is awake: asleep (or in the short wakes macOS does with the lid closed) nothing
+// answers, and that isn't the engine's fault, so the count starts over and it gets a minute after waking.
 function watchEngine() {
-  let misses = 0, healing = false;
+  let misses = 0, healing = false, last = Date.now(), wokeAt = 0;
+  powerMonitor.on('resume', () => { misses = 0; wokeAt = Date.now(); });
   setInterval(async () => {
-    if (healing || quitting) return;
+    const now = Date.now(), slept = now - last > 15000; last = now;
+    if (slept) { misses = 0; wokeAt = now; }
+    if (healing || quitting || now - wokeAt < 60000) return;
     if ((await running(service())) !== null) { misses = 0; return; }
     // Not answering: 15 seconds and it's brought back, or 2 minutes if it's alive (a busy Mac can be that slow).
     if (++misses < (await engineAlive() ? 24 : 3)) return;
     healing = true; misses = 0;
     await win.loadFile(path.join(__dirname, 'loading.html'));
-    const found = await connectOrAsk(true);  // it stopped answering: start it over
-    if (!found) { quitting = true; app.quit(); return; }
+    const found = await keepConnecting(true);  // it stopped answering: start it over
     await win.loadURL(found.origin);
     healing = false;
   }, 5000);
@@ -297,9 +304,7 @@ async function start() {
   win.once('ready-to-show', () => { if (!updated || updateFailed) win.show(); });
   await win.loadFile(path.join(__dirname, 'loading.html'));
 
-  const found = await connectOrAsk();
-  if (!found) { quitting = true; app.quit(); return; }
-  const { origin, token } = found;
+  const { origin, token } = await keepConnecting();
   await session.defaultSession.cookies.set({ url: origin, name: 'ken_token', value: token, httpOnly: true, sameSite: 'strict', path: '/' });
   // Only Ken's own page may use the microphone, and only for audio, or go fullscreen (a video's ⛶ button).
   const ours = (wc) => wc === win.webContents && new URL(wc.getURL()).origin === origin;
