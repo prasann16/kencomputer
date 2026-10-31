@@ -20,9 +20,12 @@ from typing import Callable
 
 log = logging.getLogger("ken")
 
+CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
 ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
 TOKEN = re.compile(r"sk-ant-oat[A-Za-z0-9_-]+")
+# What the CLI prints when the sign-in goes wrong, e.g. "OAuth error: …" or "Failed to exchange authorization code…".
+FAILED = re.compile(r"(?im)^.*\b(error|failed|denied|not allowed|not permitted|invalid|expired)\b.*$")
 # Whisper download sizes in MB, for a progress bar while the voice model arrives.
 WHISPER_MB = {"tiny": 75, "base": 145, "small": 484, "medium": 1530, "large-v3": 3100}
 
@@ -71,6 +74,7 @@ class Onboarding:
         self.started = 0.0
         self.watch: asyncio.Task | None = None
         self.saved = ""
+        self.error = ""
 
     @property
     def active(self) -> bool:
@@ -79,7 +83,7 @@ class Onboarding:
 
     def status(self) -> dict:
         return {"claude": self.connected(), "connected": self.connected(), "backend": "claude",
-                "phone": self.phone_step(), "voice": self.voice_status()}
+                "phone": self.phone_step(), "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
 
     # The second fixed step: Ken on your phone, which they can skip. "unset" until done or skipped.
     def _setup(self) -> dict:
@@ -120,8 +124,17 @@ class Onboarding:
         import termios
 
         self.stop()
+        self.error = ""
+        # The CLI opens the browser through this, so Ken learns the link it opened: that one finishes
+        # the sign-in by itself, unlike the code-to-paste link the CLI prints for other computers.
+        opener = self.env_file.parent / "signin-browser"
+        opener.write_text('#!/bin/sh\nprintf %s "$1" > "$0.url"\n'
+                          'if command -v open >/dev/null; then exec open "$1"; else exec xdg-open "$1"; fi\n')
+        opener.chmod(0o700)
+        Path(str(opener) + ".url").unlink(missing_ok=True)
         pid, fd = pty.fork()
         if pid == 0:
+            os.environ["BROWSER"] = str(opener)
             os.execv(claude_cli(), [claude_cli(), "setup-token"])
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))  # wide: URL on one line
         os.set_blocking(fd, False)
@@ -131,16 +144,42 @@ class Onboarding:
         url = await self._wait_for(AUTH_URL, 30)
         if not url:
             self.stop()
-            raise RuntimeError("Couldn’t open Claude sign-in. Try again.")
+            self._failed("Couldn’t open Claude sign-in. Try again.", "no sign-in link")
+            raise RuntimeError(self.error)
         self.watch = asyncio.create_task(self._watch())
-        return {"url": url}
+        try:
+            opened = Path(str(opener) + ".url").read_text().strip()
+        except OSError:
+            opened = ""
+        return {"url": url, **({"browser_url": opened} if opened else {})}
 
     async def _watch(self) -> None:
-        """Approving in the browser usually finishes the sign-in with no code to paste: save the token the CLI prints."""
-        token = await self._wait_for(TOKEN, 1800)
-        if token:
-            await self._save(token)
+        """Approving in the browser usually finishes the sign-in with no code to paste: save the token the CLI prints.
+        If Claude says no instead, or the CLI stops, say so on screen rather than waiting forever."""
+        for _ in range(1800 * 5):
+            if token := TOKEN.search(self.output):
+                await self._save(token.group(0))
+                break
+            if problem := FAILED.search(self.output):
+                said = re.sub(r"\s*Press Enter.*$", "", problem.group(0)).strip()
+                self._failed("Claude said: " + said, said)
+                break
+            if self.exited:
+                self._failed("The Claude sign-in stopped before it finished. Try again.", "cli exited")
+                break
+            await asyncio.sleep(0.2)
+        else:
+            self._failed("The Claude sign-in timed out. Try again.", "timed out")
         self.stop()
+
+    def _failed(self, message: str, reason: str) -> None:
+        """Show why on screen, and count it (no account details) so a broken sign-in shows up in Ken's reports."""
+        if "subscription" in message.lower():
+            message = "Ken needs a Claude Pro or Max plan. " + message
+        self.error = message
+        log.warning("Claude sign-in failed: %s", reason)
+        import crash
+        crash.track("connect_failed", tool="claude", reason=reason)
 
     async def _save(self, token: str) -> None:
         if token == self.saved:  # the browser and a pasted code can both deliver it
@@ -159,6 +198,7 @@ class Onboarding:
         open a fresh one instead of failing: the user approves and pastes again."""
         if self.connected():  # the browser already finished the sign-in
             return self.status()
+        self.error = ""
         try:
             if self.fd is None or self.exited:
                 raise OSError("sign-in not running")
@@ -183,7 +223,8 @@ class Onboarding:
             asyncio.get_running_loop().remove_reader(self.fd)
             self.exited = True
             return
-        self.output = (self.output + ANSI.sub("", chunk.decode(errors="replace")))[-20000:]
+        text = CURSOR_RIGHT.sub(lambda m: " " * int(m.group(1) or 1), chunk.decode(errors="replace"))
+        self.output = (self.output + ANSI.sub("", text))[-20000:]
 
     async def _wait_for(self, pattern: re.Pattern, seconds: float) -> str:
         for _ in range(int(seconds * 5)):
