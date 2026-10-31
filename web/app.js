@@ -692,9 +692,11 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
 function Connect({ onDone, backend = 'claude', start = false, onBack }) {
   const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
   const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // In the Mac app the browser is on this computer, so the sign-in finishes by itself and a code is rarely needed.
+  const [codeOpen, setCodeOpen] = useState(!window.kenDesktop);
   const go = async (body) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setValue(''); setStep('code'); if (isCodex) window.open(r.url, '_blank', 'noopener'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setValue(''); setStep('code'); if (isCodex) window.open(r.url, '_blank', 'noopener'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   };
   useEffect(() => { if (start) go({ action: 'start' }); }, []);
@@ -710,9 +712,11 @@ function Connect({ onDone, backend = 'claude', start = false, onBack }) {
       <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? `Opening ${label}…` : `Connect ${label}`}</button>`}
     ${step === 'code' && html`<p>Finish signing in in your browser. Ken connects by itself.</p>
       <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
-      ${!isCodex && html`<p class="connect-code-note">If Claude shows you a code instead, paste it here.</p>${field('Paste the code')}
-      <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>`}
-      ${!onBack && html`<button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}`}
+      ${error ? html`<button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>Try again</button>`
+        : !isCodex && (codeOpen ? html`<p class="connect-code-note">If Claude shows you a code instead, paste it here.</p>${field('Paste the code')}
+      <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>`
+        : html`<button class="text-action" onClick=${() => setCodeOpen(true)}>Claude gave you a code?</button>`)}
+      ${!onBack && !error && html`<button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}`}
     ${onBack && html`<button class="text-action" disabled=${busy} onClick=${onBack}>Back</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   </div>`;
