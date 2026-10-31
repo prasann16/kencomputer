@@ -10,9 +10,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { basename, join, resolve } from "node:path";
 
 import { createTikTokStyleCaptions } from "@remotion/captions";
-import { renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
+import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime, openChrome } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
 
 const FPS = 30;
 const W = 1080, H = 1920;
@@ -162,7 +162,8 @@ if (capTodo.length || clipTodo.length) {
   const step = (what) => console.log(`${what} (${Math.round((Date.now() - started) / 1000)}s)`);
   const serveUrl = await cachedBundle(work, props, { video: false });
   step("bundle ready");
-  const browser = await openChrome();
+  const browser = await openBrowser("chrome");
+  step("Chrome open");
   try {
     if (capTodo.length) {
       const inputProps = { ...props, pick: capTodo.map(([, f]) => f) };
@@ -204,8 +205,6 @@ if (capTodo.length || clipTodo.length) {
     }
     await inBatches([...capTodo.map(([key]) => capFile(key)), ...clipTodo.map((c) => join(layers, "graphics", `${c.key}.webm`))], saveLayer);
   }
-} else {
-  console.log("nothing new to draw");
 }
 // Graphics clips this reel no longer uses go, so a folder edited many times doesn't fill the disk.
 const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`]));
@@ -310,4 +309,3 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(`Rendered ${out} (${(statSync(out).size / 1e6).toFixed(1)} MB)`);
-process.exit(0);

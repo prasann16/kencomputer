@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { bundle } from "@remotion/bundler";
-import { openBrowser } from "@remotion/renderer";
 
 export const hash = (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
 
@@ -75,22 +74,4 @@ export async function cachedBundle(work, props, { video = true } = {}) {
   await bundle({ entryPoint: resolve("src/index.ts"), publicDir: pub, outDir: out });
   rmSync(pub, { recursive: true, force: true });
   return out;
-}
-
-// Chrome for drawing. On Ken's cloud computers Chrome sometimes never finishes starting (and a fresh one right
-// after starts at once), so a start that takes over 45 s is given up on and tried again. The script then ends with
-// process.exit, so a stuck Chrome left behind can't keep it running.
-export async function openChrome() {
-  for (let attempt = 1; ; attempt++) {
-    const started = openBrowser("chrome");
-    const asked = Date.now();
-    const browser = await Promise.race([started, new Promise((r) => setTimeout(r, 45_000, null))]);
-    if (browser) {
-      console.log(`Chrome open (${Math.round((Date.now() - asked) / 1000)}s)`);
-      return browser;
-    }
-    started.then((late) => late.close({ silent: true })).catch(() => {});
-    if (attempt === 3) throw new Error("Chrome didn't start after 3 tries");
-    console.log(`Chrome didn't start in 45s, trying again (${attempt + 1}/3)`);
-  }
 }

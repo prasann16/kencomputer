@@ -14,9 +14,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileS
 import { join, resolve } from "node:path";
 
 import { createTikTokStyleCaptions } from "@remotion/captions";
-import { renderMedia, selectComposition } from "@remotion/renderer";
+import { openBrowser, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime, openChrome } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
 
 const FPS = 30;
 const CHUNK = 90; // frames (3 s)
@@ -133,7 +133,7 @@ if (todo.length) {
   const started = Date.now();
   await oneAtATime("render");
   const serveUrl = await cachedBundle(work, props);
-  const browser = await openChrome();
+  const browser = await openBrowser("chrome");
   try {
     const composition = await selectComposition({ serveUrl, id: "Reel", inputProps: props, puppeteerInstance: browser });
     for (const [i, c] of todo.entries()) {
@@ -178,4 +178,3 @@ const mix = sfx.length
 execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-i", videoPath, ...inputs, ...mix,
   "-shortest", "-movflags", "+faststart", out], { stdio: "inherit" });
 console.log(`Rendered ${out} (${(statSync(out).size / 1e6).toFixed(1)} MB)`);
-process.exit(0);
