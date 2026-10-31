@@ -83,8 +83,12 @@ export async function cachedBundle(work, props, { video = true } = {}) {
 export async function openChrome() {
   for (let attempt = 1; ; attempt++) {
     const started = openBrowser("chrome");
+    const asked = Date.now();
     const browser = await Promise.race([started, new Promise((r) => setTimeout(r, 45_000, null))]);
-    if (browser) return browser;
+    if (browser) {
+      console.log(`Chrome open (${Math.round((Date.now() - asked) / 1000)}s)`);
+      return browser;
+    }
     started.then((late) => late.close({ silent: true })).catch(() => {});
     if (attempt === 3) throw new Error("Chrome didn't start after 3 tries");
     console.log(`Chrome didn't start in 45s, trying again (${attempt + 1}/3)`);

@@ -163,7 +163,6 @@ if (capTodo.length || clipTodo.length) {
   const serveUrl = await cachedBundle(work, props, { video: false });
   step("bundle ready");
   const browser = await openChrome();
-  step("Chrome open");
   try {
     if (capTodo.length) {
       const inputProps = { ...props, pick: capTodo.map(([, f]) => f) };
@@ -205,6 +204,8 @@ if (capTodo.length || clipTodo.length) {
     }
     await inBatches([...capTodo.map(([key]) => capFile(key)), ...clipTodo.map((c) => join(layers, "graphics", `${c.key}.webm`))], saveLayer);
   }
+} else {
+  console.log("nothing new to draw");
 }
 // Graphics clips this reel no longer uses go, so a folder edited many times doesn't fill the disk.
 const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`]));
