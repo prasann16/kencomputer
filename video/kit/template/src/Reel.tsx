@@ -6,7 +6,7 @@ import { AbsoluteFill, Freeze, interpolate, OffthreadVideo, Sequence, staticFile
 
 import { useExit } from "./anim";
 import { GRAPHICS, type Placement } from "./graphics";
-import { type AreaBox, AreaContext, FONT_SERIF, paperStyle, Rich } from "./graphics/layout";
+import { accentType, type AreaBox, AreaContext, paperStyle, Rich } from "./graphics/layout";
 import { SAFE, SHEET_LIFT, SHEET_TOP, softShadow, type Style, ThemeContext, themeFrom, useTheme } from "./theme";
 
 export interface Word {
@@ -127,7 +127,7 @@ const HookLayer = (props: ReelProps) => {
   if (!hook) return null;
   return (
     <Sequence durationInFrames={duration} layout="none">
-      <Hook text={hook} duration={duration} />
+      <Hook text={hook} duration={duration} size={props.style?.hookSize ?? 128} />
     </Sequence>
   );
 };
@@ -202,7 +202,7 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
     return (
       <AreaContext.Provider value={area}>
         <AbsoluteFill style={{ transform: `translateY(${(1 - p) * (1920 - SHEET_TOP + 60)}px)` }}>
-          <div style={{ position: "absolute", top: SHEET_TOP, left: 0, right: 0, bottom: -60, ...paperStyle(theme.paper), borderRadius: "44px 44px 0 0", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }} />
+          <div style={{ position: "absolute", top: SHEET_TOP, left: 0, right: 0, bottom: -60, ...paperStyle(theme.paper, theme.paperTexture), borderRadius: "44px 44px 0 0", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }} />
           <div style={{ position: "absolute", top: SHEET_TOP + 22, left: "50%", width: 90, height: 8, marginLeft: -45, borderRadius: 4, background: `${theme.ink}22` }} />
           <AbsoluteFill style={{ opacity: clamp01(p * 1.6 - 0.4) }}>{children}</AbsoluteFill>
         </AbsoluteFill>
@@ -216,7 +216,7 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
   return (
     <AreaContext.Provider value={area}>
       <AbsoluteFill style={{ clipPath: `inset(${cover}% 0 0 0)` }}>
-        <AbsoluteFill style={paperStyle(theme.paper)} />
+        <AbsoluteFill style={paperStyle(theme.paper, theme.paperTexture)} />
         <AbsoluteFill style={{ opacity: clamp01(p * 1.6 - 0.4) }}>{children}</AbsoluteFill>
       </AbsoluteFill>
       {p > 0 && p < 1 && <div style={{ position: "absolute", left: 0, right: 0, top: `${cover}%`, height: 10, marginTop: -5, background: theme.accent }} />}
@@ -224,15 +224,15 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
   );
 };
 
-// The hook: a big serif headline in the open space above the speaker, word by word.
-const Hook = ({ text, duration }: { text: string; duration: number }) => {
+// The hook: a big headline in the open space above the speaker, word by word (in the accent font, the serif by default).
+const Hook = ({ text, duration, size }: { text: string; duration: number; size: number }) => {
   const theme = useTheme();
   const frame = useCurrentFrame();
   const exit = useExit(duration, 8);
   const words = text.split(/(\*[^*]+\*|\s+)/g).filter((w) => w && !/^\s+$/.test(w));
   return (
     <AbsoluteFill style={{ padding: `${SAFE.top + 10}px ${SAFE.side}px 0`, opacity: exit, transform: `translateY(${(1 - exit) * -30}px)` }}>
-      <div style={{ fontFamily: FONT_SERIF, fontSize: 128, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow, display: "flex", flexWrap: "wrap", columnGap: 26 }}>
+      <div style={{ ...accentType(theme), fontSize: size, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow, display: "flex", flexWrap: "wrap", columnGap: 26 }}>
         {words.map((w, i) => {
           const k = ease((frame - i * 3) / 7);
           return (
@@ -277,7 +277,7 @@ const Captions = ({ words, hidden, style }: { words: Word[]; hidden: (readonly [
   );
 };
 
-// Words appear as they're said; an emphasized one is set larger in the accent serif italic.
+// Words appear as they're said; an emphasized one is set larger in the accent (the serif italic by default).
 const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style: Style; offsetMs: number; emphasized: Set<number> }) => {
   const theme = useTheme();
   const frame = useCurrentFrame();
@@ -286,7 +286,7 @@ const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style:
   const size = style.captionSize ?? 62;
   return (
     <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 610 }}>
-      <div style={{ fontFamily: theme.font, fontSize: size, fontWeight: 650, lineHeight: 1.12, textAlign: "center", maxWidth: 900, textShadow: softShadow, color: theme.text, textTransform: style.uppercase ? "uppercase" : "none" }}>
+      <div style={{ fontFamily: theme.font, fontSize: size, fontWeight: style.captionWeight ?? 650, lineHeight: 1.12, textAlign: "center", maxWidth: 900, textShadow: softShadow, color: theme.text, textTransform: style.uppercase ? "uppercase" : "none" }}>
         {page.tokens.map((token, i) => {
           const k = ease((nowMs - token.fromMs) / 120);
           const emph = emphasized.has(Math.round(token.fromMs));
@@ -298,7 +298,7 @@ const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style:
                   display: "inline-block",
                   opacity: k,
                   transform: `translateY(${(1 - k) * 10}px)`,
-                  ...(emph ? { fontFamily: FONT_SERIF, fontStyle: "italic", fontWeight: 400, fontSize: size * 1.3, color: theme.accent, textTransform: "none" } : {}),
+                  ...(emph ? { ...accentType(theme, true), fontSize: size * 1.3, color: theme.accent, textTransform: "none" } : {}),
                 }}
               >
                 {token.text.trim()}

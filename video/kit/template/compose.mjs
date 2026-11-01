@@ -12,12 +12,11 @@ import { basename, join, resolve } from "node:path";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime, placements } from "./lib.mjs";
 
 const FPS = 30;
 const W = 1080, H = 1920;
 const SHEET_LIFT = 340; // as in src/theme.ts
-const PLACEMENTS = { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over", browser: "over" };
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -39,6 +38,7 @@ mkdirSync(join(layers, "graphics"), { recursive: true });
 const code = codeHash();
 
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
+const PLACEMENTS = placements();
 const graphics = (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? PLACEMENTS[g.type] ?? "sheet" }));
 
 // ---- Captions: what they look like at every frame, exactly as Reel.tsx's Captions draws them.
