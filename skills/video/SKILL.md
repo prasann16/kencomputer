@@ -192,7 +192,9 @@ hand-drawn marks), register it in `src/graphics/index.ts` with its placement, an
   different each render.
 - Take its text from props, so a fix is a `props.json` edit. An "over" graphic positions itself inside the safe
   zones; a sheet or full one lays out in `Area`.
-- A picture it shows is a file in the folder passed as its `src` prop (only those get bundled), one per graphic.
+- A picture or clip it shows (a screenshot, a photo, a screen recording they sent) is a file in the folder passed
+  as its `src` prop (only those get bundled), one per graphic. Trim or speed up a clip with ffmpeg first, and show
+  it with `<OffthreadVideo src={staticFile(src)} muted />`. Everything you need is here: don't read the kit's code.
 - Run `npx tsc -p .` in the folder and fix every error before checking frames.
 
 ## 4. Check frames before rendering
@@ -221,9 +223,12 @@ redraws everything, so settle those with stills first. `--plan` says how much a 
 rendering. The render checks its own result and, if that fails, draws the whole reel in Chrome instead (slower,
 always right). Then:
 
-- Duration: `ffprobe -v error -show_entries format=duration -of csv=p=0 videos/<short-name>/reel.mp4`
-- Frames at the start, at two or three graphics and at the end (`ffmpeg -v error -ss 9.5 -i reel.mp4 -frames:v 1
-  f.jpg`), and look at them.
+- One command for the length and a strip of frames from the finished reel, then one look at it:
+
+      cd videos/<short-name> && mkdir -p checks && ffprobe -v error -show_entries format=duration -of csv=p=0 reel.mp4 && ffmpeg -v error -y -i reel.mp4 -vf "fps=1/6,scale=216:-1,tile=8x1" -frames:v 1 checks/reel.jpg
+
+  The stills already checked the design, so this is for what they can't show: the cut, the timing, a graphic
+  that's missing. Don't check frame by frame again unless the strip shows a problem.
 - Re-read the cut words in order: does the story flow, is any sentence chopped mid-thought?
 
 Fix what's wrong, check the fix with stills, then render again. Don't send something you wouldn't post. Then send
@@ -235,5 +240,6 @@ captions in your brand orange?"
 
 "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
-everything else in `props.json`; move graphics after a change by the same amount). Check stills, render, check.
+everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
+changed, render, check the strip once.
 Note every correction in their style note, since it probably applies to future reels too.
