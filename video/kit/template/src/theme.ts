@@ -1,6 +1,5 @@
-// Colors and fonts for one reel, taken from props.style.
-// The default look is editorial: a serif headline in the open space above the speaker, calm captions with one
-// word per line in the accent serif, and graphics on paper that slide up under the speaker instead of hiding them.
+// Colors and fonts for one reel, taken from props.style. Each reel's look is designed for it; with nothing set,
+// the defaults are a serif hook and accents, cream paper with fibres, and film grain.
 import { loadFont } from "@remotion/fonts";
 import { createContext, useContext } from "react";
 import { continueRender, delayRender } from "remotion";
@@ -28,22 +27,30 @@ export const FONTS = {
 
 export interface Style {
   font?: keyof typeof FONTS; // captions and body text
-  headingFont?: keyof typeof FONTS; // hook, headlines and emphasized words
+  headingFont?: keyof typeof FONTS; // headlines on graphics
+  accentFont?: keyof typeof FONTS; // the hook, *starred* and emphasized words, big numbers and quotes (default Serif)
+  hookSize?: number; // the hook's type size (default 128)
   accent?: string; // emphasized words, numbers, hand-drawn marks
   textColor?: string; // captions
   paper?: string; // background of graphics
   ink?: string; // text on graphics
   captions?: boolean;
   captionSize?: number;
+  captionWeight?: number; // 100 to 900 in Inter (default 650)
   uppercase?: boolean;
   wordsPerPageMs?: number;
   zoomCuts?: boolean; // a hard punch-in on every other jump cut
   grain?: boolean; // film grain and a soft vignette over everything
+  paperTexture?: boolean; // faint fibres on paper (default true); false for flat colour
 }
 
 export interface Theme {
   font: string;
   headingFont: string;
+  accentFont: string;
+  accentItalic: boolean; // only the serif has an italic
+  accentWeight: number;
+  paperTexture: boolean;
   accent: string;
   text: string;
   paper: string;
@@ -51,9 +58,14 @@ export interface Theme {
 }
 
 export function themeFrom(style: Style = {}): Theme {
+  const accentFont = FONTS[style.accentFont ?? "Serif"] ? (style.accentFont ?? "Serif") : "Serif";
   return {
     font: FONTS[style.font ?? "Inter"] ?? FONTS.Inter,
     headingFont: FONTS[style.headingFont ?? "Serif"] ?? FONTS.Serif,
+    accentFont: FONTS[accentFont],
+    accentItalic: accentFont === "Serif",
+    accentWeight: accentFont === "Serif" ? 400 : accentFont === "Inter" ? 800 : 900,
+    paperTexture: style.paperTexture !== false,
     accent: style.accent ?? "#FF7A3D",
     text: style.textColor ?? "#FFFFFF",
     paper: style.paper ?? "#F3EEE4",
@@ -64,8 +76,8 @@ export function themeFrom(style: Style = {}): Theme {
 export const ThemeContext = createContext<Theme>(themeFrom());
 export const useTheme = () => useContext(ThemeContext);
 
-// Instagram and TikTok cover the top ~220 px and the bottom ~420 px with their own UI.
-export const SAFE = { top: 230, bottom: 420, side: 80 } as const;
+// Instagram and TikTok cover the top ~250 px and the bottom ~420 to 480 px with their own UI.
+export const SAFE = { top: 250, bottom: 420, side: 80 } as const;
 
 // A "sheet" graphic slides paper up from the bottom to SHEET_TOP while the speaker lifts by SHEET_LIFT,
 // so their face stays in view above it.

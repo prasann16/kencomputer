@@ -1,12 +1,12 @@
 // The standard graphics. Each takes its own props from graphics[].props in props.json.
 // Sheet and full graphics sit on paper (ink text, serif headlines, hand-drawn marks); "over" ones float on the video.
-// In any text prop, *starred words* are set in the accent serif italic.
+// In any text prop, *starred words* are set in the accent (style.accentFont, the serif italic by default).
 import { Circle, Highlight, StrikeThrough, Underline } from "@remotion/rough-notation";
 import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { pop, rise, useEnter } from "../anim";
 import { SAFE, softShadow, useTheme } from "../theme";
-import { Area, FONT_SERIF, Heading, Kicker, paperStyle, Rich, useArea } from "./layout";
+import { accentType, Area, Heading, Kicker, paperStyle, Rich, useArea } from "./layout";
 
 // 0 → 1 over `frames`, starting `delay` frames in: how far a hand-drawn mark has been drawn.
 const useDraw = (delay: number, frames = 14) => {
@@ -37,7 +37,7 @@ export const Stat = ({ value, prefix = "", suffix = "", label, note }: { value: 
   const big = area.kind === "sheet" ? 240 : 300;
   return (
     <Area>
-      <div style={{ ...pop(useEnter(0), 0.8), fontFamily: FONT_SERIF, fontSize: big, lineHeight: 0.9, color: theme.accent, letterSpacing: -4 }}>
+      <div style={{ ...pop(useEnter(0), 0.8), ...accentType(theme), fontSize: big, lineHeight: 0.9, color: theme.accent, letterSpacing: -4 }}>
         {prefix}
         {shown}
         {suffix}
@@ -79,10 +79,11 @@ export const List = ({ title, items, marker = "numbers" }: { title?: string; ite
 };
 
 const ListRow = ({ delay, size, accent, mark, children }: { delay: number; size: number; accent: string; mark: string; children: string }) => {
+  const theme = useTheme();
   const enter = useEnter(delay);
   return (
     <div style={{ ...rise(enter, 24), display: "flex", gap: 26, alignItems: "baseline" }}>
-      <div style={{ flex: "none", width: size * 1.1, textAlign: "center", fontFamily: FONT_SERIF, fontStyle: "italic", fontSize: size * 1.25, color: accent }}>
+      <div style={{ flex: "none", width: size * 1.1, textAlign: "center", ...accentType(theme, true), fontSize: size * 1.25, color: accent }}>
         <Circle progress={useDraw(delay + 4, 12)} color={accent} strokeWidth={3} padding={{ top: 2, bottom: 2, left: 8, right: 8 }}>
           {mark}
         </Circle>
@@ -101,7 +102,7 @@ export const Compare = ({ title, left, right }: { title?: string; left: { label:
   const size = area.kind === "sheet" ? 46 : 54;
   const column = (side: { label: string; items: string[] }, isNew: boolean, delay: number) => (
     <div style={{ ...rise(useEnter(delay)), flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ fontFamily: FONT_SERIF, fontStyle: isNew ? "italic" : "normal", fontSize: size * 1.6, color: isNew ? theme.accent : theme.ink, opacity: isNew ? 1 : 0.55 }}>{side.label}</div>
+      <div style={{ ...accentType(theme, isNew), fontSize: size * 1.6, color: isNew ? theme.accent : theme.ink, opacity: isNew ? 1 : 0.55 }}>{side.label}</div>
       {side.items.map((item, i) => (
         <div key={i} style={{ fontSize: size, fontWeight: 600, lineHeight: 1.2, opacity: isNew ? 1 : 0.55 }}>
           {isNew ? (
@@ -155,7 +156,7 @@ export const Bars = ({ title, unit = "", bars }: { title?: string; unit?: string
             <div key={i}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: size, fontWeight: 600, marginBottom: 6 }}>
                 <span>{bar.label}</span>
-                <span style={{ fontFamily: FONT_SERIF, fontSize: size * 1.3, color: top ? theme.accent : theme.ink }}>
+                <span style={{ ...accentType(theme), fontSize: size * 1.3, color: top ? theme.accent : theme.ink }}>
                   {Math.round(bar.value * grow).toLocaleString("en-US")}
                   {unit}
                 </span>
@@ -177,7 +178,7 @@ export const Quote = ({ text, by }: { text: string; by?: string }) => {
   const area = useArea();
   return (
     <Area>
-      <div style={{ ...rise(useEnter(4)), fontFamily: FONT_SERIF, fontSize: area.kind === "sheet" ? 104 : 120, lineHeight: 1.0, letterSpacing: -1 }}>
+      <div style={{ ...rise(useEnter(4)), ...accentType(theme), fontSize: area.kind === "sheet" ? 104 : 120, lineHeight: 1.0, letterSpacing: -1 }}>
         <span style={{ color: theme.accent }}>“</span>
         <Rich text={text} />
         <span style={{ color: theme.accent }}>”</span>
@@ -269,8 +270,8 @@ export const NameTag = ({ name, role }: { name: string; role?: string }) => {
   const enter = useEnter(0);
   return (
     <div style={{ position: "absolute", left: SAFE.side, top: 1000, ...rise(enter, 24) }}>
-      <div style={{ ...paperStyle(theme.paper), color: theme.ink, padding: "18px 28px 20px", transform: "rotate(-2deg)", boxShadow: "0 12px 30px rgba(0,0,0,0.3)" }}>
-        <div style={{ fontFamily: FONT_SERIF, fontSize: 68, lineHeight: 1 }}>{name}</div>
+      <div style={{ ...paperStyle(theme.paper, theme.paperTexture), color: theme.ink, padding: "18px 28px 20px", transform: "rotate(-2deg)", boxShadow: "0 12px 30px rgba(0,0,0,0.3)" }}>
+        <div style={{ ...accentType(theme), fontSize: 68, lineHeight: 1 }}>{name}</div>
         {role && <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: 3, textTransform: "uppercase", marginTop: 8, color: theme.accent }}>{role}</div>}
       </div>
     </div>
@@ -285,7 +286,7 @@ export const Callout = ({ text, emoji }: { text: string; emoji?: string }) => {
     <div style={{ position: "absolute", top: SAFE.top + 30, left: SAFE.side, right: SAFE.side, display: "flex", justifyContent: "center" }}>
       <div
         style={{
-          ...paperStyle(theme.paper),
+          ...paperStyle(theme.paper, theme.paperTexture),
           opacity: enter,
           transform: `scale(${interpolate(enter, [0, 1], [0.85, 1])}) rotate(${interpolate(enter, [0, 1], [-6, 1.5])}deg)`,
           color: theme.ink,
@@ -312,7 +313,7 @@ export const Punch = ({ text }: { text: string }) => {
   const enter = useEnter(0, 10);
   return (
     <div style={{ position: "absolute", top: SAFE.top + 60, left: SAFE.side, right: SAFE.side }}>
-      <div style={{ ...rise(enter, 30), fontFamily: FONT_SERIF, fontSize: 132, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow }}>
+      <div style={{ ...rise(enter, 30), ...accentType(theme), fontSize: 132, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow }}>
         <Underline progress={useDraw(8)} color={theme.accent} strokeWidth={6}>
           <Rich text={text} />
         </Underline>
