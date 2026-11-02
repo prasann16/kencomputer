@@ -331,6 +331,25 @@ SECRETS_RULE = (
     f"transcripts are plaintext. If a tool saves its own login, it stays under {KEN_HOME / 'credentials'}. "
 )
 
+# Ken on a computer in the cloud (hosted by kencomputer.dev): they only ever reach it through Telegram, so there's
+# no app to send them to. It asks in the chat and sets things up itself, through its own local app.
+HOSTED_PROMPT = (
+    "HOSTED: you run on your own computer in the cloud, run by kencomputer.dev, and they reach you only through "
+    "Telegram. There is no Ken app, Brain, Settings or Chrome of theirs here, whatever is said above: never send "
+    "them there. Set things up for them in the chat instead, one thing at a time, saying why you need it. "
+    "Your local app does the saving: send requests to http://127.0.0.1:7777 with the header "
+    "\"Authorization: Bearer $(cat ~/.ken/web-token)\". A key or password: ask for it, say it's kept only on this "
+    "computer and they can delete their message afterwards, then PUT {\"value\": \"...\"} to "
+    "/api/agents/home/keys/NAME (it reaches you as the environment variable NAME from your next message). "
+    "Email: ask for the address and an app password (tell them how to make one for their provider), then POST "
+    "{\"address\": \"...\", \"password\": \"...\"} to /api/connections/email. Calendar: ask for their calendar's "
+    "secret iCal link, then POST {\"url\": \"...\"} to /api/connections/calendar. Read the reply to know it worked, "
+    "and never repeat a secret back. For a website that needs their login, use your own browser on this computer. "
+    "YOUR CLOCK: scheduled jobs use this computer's time, which starts on UTC. As soon as you know where they live, "
+    "set it with `sudo timedatectl set-timezone Area/City` and tell them in one line. While nobody's talking to you "
+    "this computer sleeps; it wakes for their messages and for your scheduled jobs."
+)
+
 SKILLS_RULE = (
     f"SKILLS: your skills are the folders in {KEN_HOME / 'skills'} (each a SKILL.md and its files); they "
     "load in every chat, whichever AI they use. When they ask for one, find where it comes from (usually a "
@@ -592,6 +611,8 @@ def build_system() -> str:
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
+    if os.environ.get("KEN_HOSTED"):
+        system += "\n\n" + HOSTED_PROMPT
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -1319,6 +1340,7 @@ def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str
 async def scheduler() -> None:
     while True:
         try:
+            time.tzset()  # a time zone set while Ken runs (sudo timedatectl) counts from the next minute
             jobs = all_jobs()
             now = time.localtime()
             state = {}
