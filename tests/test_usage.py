@@ -138,7 +138,7 @@ def test_the_memory_check_is_cheap_and_reads_this_computer():
     if usage.sys.platform == "darwin":
         assert t.perf_counter() - start < 0.5  # a sysctl, not a program
     app, size = usage.biggest_app()
-    assert app and size > 0
+    assert (app and size > 0) or usage.os.name == "nt"  # Windows has no `ps`: the alert says so plainly
 
 
 async def test_the_watcher_stops_cleanly(monkeypatch):
