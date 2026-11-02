@@ -12,12 +12,11 @@ import { basename, join, resolve } from "node:path";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime, placements } from "./lib.mjs";
 
 const FPS = 30;
 const W = 1080, H = 1920;
 const SHEET_LIFT = 340; // as in src/theme.ts
-const PLACEMENTS = { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over", browser: "over" };
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -39,6 +38,7 @@ mkdirSync(join(layers, "graphics"), { recursive: true });
 const code = codeHash();
 
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
+const PLACEMENTS = placements();
 const graphics = (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? PLACEMENTS[g.type] ?? "sheet" }));
 
 // ---- Captions: what they look like at every frame, exactly as Reel.tsx's Captions draws them.
@@ -106,18 +106,37 @@ const store = process.env.KEN_LAYER_STORE;
 const inBatches = async (items, fn) => {
   for (let i = 0; i < items.length; i += 16) await Promise.all(items.slice(i, i + 16).map(fn));
 };
-const fetchLayer = async (file) => {
-  const res = await fetch(`${store}/${basename(file)}`).catch(() => null);
-  if (res?.ok) writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+// A store that's slow or down only means drawing again, never a render that waits: one failed call and it's
+// left alone for the rest of this render.
+let storeDown = false;
+const storeCall = async (name, init, timeout) => {
+  if (storeDown) return null;
+  try {
+    return await fetch(`${store}/${name}`, { ...init, signal: AbortSignal.timeout(timeout) });
+  } catch (e) {
+    storeDown = true;
+    console.log(`layer store unreachable (${e.name}), drawing everything here`);
+    return null;
+  }
 };
-const saveLayer = (file) => fetch(`${store}/${basename(file)}`, { method: "PUT", body: readFileSync(file) }).catch(() => null);
+const fetchLayer = async (file) => {
+  const res = await storeCall(basename(file), {}, 15_000);
+  if (res?.ok) writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  else await res?.body?.cancel();
+};
+const saveLayer = async (file) => {
+  const res = await storeCall(basename(file), { method: "PUT", body: readFileSync(file) }, 60_000);
+  await res?.body?.cancel();
+};
 if (store) {
+  const asked = Date.now();
   await inBatches([...firstOf.keys()].filter((key) => !existsSync(capFile(key))).map(capFile), fetchLayer);
   await inBatches(clips.filter((c) => !existsSync(c.file)), async (c) => {
     c.file = join(layers, "graphics", `${c.key}.webm`);
     await fetchLayer(c.file);
     if (!existsSync(c.file)) c.file = join(layers, "graphics", `${c.key}.mov`);
   });
+  console.log(`checked the layer store (${Math.round((Date.now() - asked) / 1000)}s)`);
 }
 const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
 const clipTodo = clips.filter((c) => !existsSync(c.file));
@@ -127,10 +146,24 @@ if (plan) process.exit(0);
 
 // ---- Draw what's missing.
 const started = Date.now();
+// A line every tenth of the way, so a slow draw shows it's moving (and a stuck one shows where).
+const progress = (what, total) => {
+  let shown = 0;
+  return (done) => {
+    const tenth = Math.floor((done / total) * 10);
+    if (tenth > shown && tenth < 10) {
+      shown = tenth;
+      console.log(`${what}: ${done}/${total} (${Math.round((Date.now() - started) / 1000)}s)`);
+    }
+  };
+};
 if (capTodo.length || clipTodo.length) {
   await oneAtATime("compose");
+  const step = (what) => console.log(`${what} (${Math.round((Date.now() - started) / 1000)}s)`);
   const serveUrl = await cachedBundle(work, props, { video: false });
+  step("bundle ready");
   const browser = await openBrowser("chrome");
+  step("Chrome open");
   try {
     if (capTodo.length) {
       const inputProps = { ...props, pick: capTodo.map(([, f]) => f) };
@@ -138,7 +171,7 @@ if (capTodo.length || clipTodo.length) {
       const dir = join(layers, "captions", `.draw-${process.pid}`);
       await renderFrames({
         serveUrl, composition, inputProps, puppeteerInstance: browser, imageFormat: "png", outputDir: dir,
-        frameRange: [0, capTodo.length - 1], onStart: () => {}, onFrameUpdate: () => {}, concurrency, logLevel: "error",
+        frameRange: [0, capTodo.length - 1], onStart: () => {}, onFrameUpdate: progress("captions", capTodo.length), concurrency, logLevel: "error",
       });
       // renderFrames numbers its files in frame order, zero-padded, so sorted names line up with capTodo.
       const drawn = readdirSync(dir).filter((f) => f.endsWith(".png")).sort();
@@ -151,10 +184,11 @@ if (capTodo.length || clipTodo.length) {
       const composition = await selectComposition({ serveUrl, id: "GraphicsLayer", inputProps: props, puppeteerInstance: browser });
       for (const c of clipTodo) {
         const tmp = `${c.file}.part.mov`;
+        const drawn = progress("graphics", c.b - c.a);
         await renderMedia({
           serveUrl, composition, inputProps: props, puppeteerInstance: browser, codec: "prores", proResProfile: "4444",
           imageFormat: "png", pixelFormat: "yuva444p10le", muted: true, frameRange: [c.a, c.b - 1], outputLocation: tmp,
-          overwrite: true, concurrency, logLevel: "error",
+          overwrite: true, concurrency, logLevel: "error", onProgress: ({ renderedFrames }) => drawn(renderedFrames),
         });
         renameSync(tmp, c.file);
         console.log(`drew graphics ${(c.a / FPS).toFixed(1)}–${(c.b / FPS).toFixed(1)}s (${Math.round((Date.now() - started) / 1000)}s)`);
@@ -253,9 +287,12 @@ const af = sfx.length
 const graph = join(layers, "graph.txt");
 writeFileSync(graph, [...vf, ...af].join(";\n"));
 const composeStart = Date.now();
+// Capped near what Instagram keeps anyway (it re-encodes everything), so a one-minute reel is about 45 MB: small
+// enough for a Telegram bot to send as the file itself.
 execFileSync("ffmpeg", [
   "-v", "error", "-y", ...inputs, "-filter_complex_script", graph, "-map", "[v]", "-map", sfx.length ? "[a]" : "0:a",
-  "-frames:v", String(total), "-c:v", "libx264", "-crf", "19", "-preset", "veryfast", "-c:a", "aac", "-b:a", "192k",
+  "-frames:v", String(total), "-c:v", "libx264", "-crf", "19", "-maxrate", "5500k", "-bufsize", "11000k", "-preset", "veryfast",
+  "-c:a", "aac", "-b:a", "192k",
   "-movflags", "+faststart", out,
 ], { stdio: "inherit" });
 console.log(`ffmpeg took ${Math.round((Date.now() - composeStart) / 1000)}s; all in ${Math.round((Date.now() - started) / 1000)}s`);

@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime, placements } from "./lib.mjs";
 
 const FPS = 30;
 const CHUNK = 90; // frames (3 s)
@@ -159,7 +159,8 @@ if (todo.length) {
 // Sound: a whoosh on each whip pan, a soft pop when paper comes in, a tick for notes over the video, plus any
 // sfx Ken asked for ({at, sound}). Mixed under the cut's own audio.
 const SOUNDS = ["whoosh", "pop", "tick"];
-const placementOf = (g) => g.placement ?? { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over" }[g.type] ?? "sheet";
+const PLACEMENTS = placements();
+const placementOf = (g) => g.placement ?? PLACEMENTS[g.type] ?? "sheet";
 const sfx = [
   ...(props.chapters ?? []).map((c) => ({ at: c - 0.25, sound: "whoosh" })),
   ...graphics.map((g) => ({ at: g.start, sound: placementOf(g) === "over" ? "tick" : "pop" })),

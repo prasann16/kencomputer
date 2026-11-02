@@ -13,6 +13,27 @@ const codeFiles = (dir) =>
 // The project's code (custom graphics included).
 export const codeHash = () => hash(codeFiles("src").sort().map((f) => [f, readFileSync(f, "utf8")]));
 
+// Where each graphic goes, as registered in the reel's own src/graphics/index.ts (so a graphic Ken wrote is placed
+// here the way Reel.tsx places it), over the standard ones in case that file can't be read.
+const STANDARD = { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over", browser: "over" };
+export const placements = () => {
+  let registered = {};
+  try {
+    const index = readFileSync(join("src", "graphics", "index.ts"), "utf8");
+    registered = Object.fromEntries([...index.matchAll(/(\w+):\s*\{\s*component:\s*\w+,\s*placement:\s*"(sheet|full|over)"/g)].map((m) => [m[1], m[2]]));
+  } catch {}
+  return { ...STANDARD, ...registered };
+};
+
+// A killed render nobody has reaped yet (on Linux, a "zombie") still answers kill(pid, 0) but holds nothing.
+const zombie = (pid) => {
+  try {
+    return /\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    return false;
+  }
+};
+
 // Each Remotion job opens Chrome and uses about a gigabyte, so only one runs at a time on this machine;
 // a second one waits its turn instead of piling on.
 export async function oneAtATime(label) {
@@ -27,7 +48,7 @@ export async function oneAtATime(label) {
       let alive = false;
       try {
         process.kill(owner, 0);
-        alive = owner > 0;
+        alive = owner > 0 && !zombie(owner);
       } catch {}
       if (!alive && waited >= 4) rmSync(lock, { recursive: true, force: true });
       if (waited === 0) console.log(`${label}: waiting for another render to finish…`);

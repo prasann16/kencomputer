@@ -14,7 +14,7 @@ if "--ken-mcp" in sys.argv[1:]:
     mcp_main()
     raise SystemExit(0)
 
-if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"]):  # Ken sets up Remotion the first time it's needed
+if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"], ["--video-colors"]):  # Ken sets up Remotion the first time it's needed
     import os
     from pathlib import Path
 
@@ -45,12 +45,12 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, RUN_SLOTS, Engine, first_contact_prompt, prepare_skills
+from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from usage import Usage
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
-from ken_mcp import external_server, media_server
+from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
@@ -86,11 +86,19 @@ KEN_HOME.mkdir(parents=True, exist_ok=True)
 os.environ["PATH"] = str(KEN_HOME / "tools" / "node" / "bin") + os.pathsep + os.environ.get("PATH", "")
 # How Ken runs itself from a shell: the app's engine, or this checkout's Python and bot.py.
 KEN_CMD = f'"{sys.executable}"' if getattr(sys, "frozen", False) else f'"{sys.executable}" "{Path(__file__).resolve()}"'
+SHARED_MCP: dict[str, dict] = {}  # name -> how a chat reaches a server every chat shares, once the app server is up
+
+
 def browser_mcp() -> dict:
     """The user's own Chrome, through Google's Chrome DevTools MCP server.
 
     The Mac app ships the server and its own Node (KEN_NODE, KEN_BROWSER_MCP); a
-    terminal install uses Node from PATH. Without Node, Ken has no browser tools."""
+    terminal install uses Node from PATH. Without Node, Ken has no browser tools.
+    Chats share one server through the app server, so Chrome asks to allow Ken once."""
+    return {"browser": SHARED_MCP["browser"]} if "browser" in SHARED_MCP else browser_command()
+
+
+def browser_command() -> dict:
     import shutil
 
     env = {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}
@@ -129,7 +137,8 @@ def video_prompt() -> str:
         "(cuts, trims, captions, a vertical crop) are ffmpeg: fast, nothing to install. Talking video to reel: "
         f"`transcribe_media`, then `{KEN_CMD} --video-cut <folder>` (numbers the words; pass the ranges to keep, in "
         "the order they were said) cuts at the voice's real edges and writes props.json; fill in its hook, emphasis "
-        f"and graphics; `{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
+        f"and graphics, with colours from `{KEN_CMD} --video-colors <folder>` (the footage's own); "
+        f"`{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
         "<folder>` makes reel.mp4. Remotion draws only the captions and graphics and keeps each, so fixes take a "
         "minute or two. Remotion isn't installed until the first reel: say in a line "
         "that you're setting up video tools (one time, a few minutes). Work in a folder under videos/ in "
@@ -156,15 +165,9 @@ ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the ap
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
-# The plan's usage and this computer's load: /usage, the alerts, and holding jobs back near a limit.
-USAGE = Usage(
-    KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
-    runs=lambda: (sum(r["status"] == "running" for r in ENGINE.list_runs(active=True)),
-                  sum(r["status"] == "queued" for r in ENGINE.list_runs(active=True))),
-    titles=lambda: [r["title"] for r in ENGINE.list_runs(active=True) if r["status"] == "running"])
+# The Claude plan's usage: /usage, and a heads-up when it's nearly used up.
+USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"))
 BRAINS["claude"].on_rate_limit = USAGE.record
-ENGINE.run_hold = USAGE.hold
-ENGINE.run_cap = lambda: USAGE.run_cap(RUN_SLOTS)
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
@@ -196,7 +199,7 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-async def send_video(bot, chat_id: int, path: Path) -> bool:
+async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool:
     """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
     over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
     ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
@@ -207,7 +210,7 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
         with open(out, "rb") as fh:
             await bot.send_video(
                 chat_id, fh, caption=path.name, filename=path.with_suffix(".mp4").name,
-                supports_streaming=True, write_timeout=300, read_timeout=300, **meta,
+                supports_streaming=True, write_timeout=300, read_timeout=300, disable_notification=quiet, **meta,
             )
     finally:
         if out != path:
@@ -215,8 +218,8 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
     return True
 
 
-async def flush_outbox(bot, chat_id: int) -> None:
-    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat."""
+async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
+    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
         if not OUTBOX_DIR.exists():
             return
@@ -228,7 +231,7 @@ async def flush_outbox(bot, chat_id: int) -> None:
                 if size == 0:
                     path.unlink(missing_ok=True)
                     continue
-                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path):
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
                     log_history("assistant", f"[sent video: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
@@ -236,14 +239,14 @@ async def flush_outbox(bot, chat_id: int) -> None:
                     await bot.send_message(
                         chat_id,
                         f"📁 {path.name} is too big to send ({size // (1024 * 1024)}MB). "
-                        f"It's on the machine at {path}",
+                        f"It's on the machine at {path}", disable_notification=quiet,
                     )
                     continue
                 with open(path, "rb") as fh:
                     if path.suffix.lower() in PHOTO_SUFFIXES:
-                        await bot.send_photo(chat_id, fh, caption=path.name)
+                        await bot.send_photo(chat_id, fh, caption=path.name, disable_notification=quiet)
                     else:
-                        await bot.send_document(chat_id, fh, filename=path.name)
+                        await bot.send_document(chat_id, fh, filename=path.name, disable_notification=quiet)
                 log_history("assistant", f"[sent file: {path.name}]")
                 path.unlink(missing_ok=True)
             except Exception as e:
@@ -362,7 +365,8 @@ SYSTEM_PROMPT = (
     "app, not a separate assistant. The header line of each message says where they wrote from. On their "
     "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
     "button, the model menu and the coffee cup; in Telegram /stop (stop the current reply), /new (fresh "
-    "thread), /model (switch models), /coffee and /decaf. Never suggest Esc or Ctrl+C. COFFEE keeps this "
+    "thread), /model (switch models), /coffee and /decaf, and /kill (turns you off completely, an emergency off switch; "
+    "they turn you on again at the computer). Never suggest Esc or Ctrl+C. COFFEE keeps this "
     "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
     "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
     "While the Mac sleeps you can't run or answer. Suggest coffee, once, when they want something done "
@@ -407,7 +411,8 @@ SYSTEM_PROMPT = (
     "the file is missing, you were installed by the human on a machine they control. "
     f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
     'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}; '
-    '"on": false pauses a job without deleting it. '
+    '"on": false pauses a job without deleting it; "date": "2026-10-31" makes it one-time: it runs that '
+    'day only and Ken removes it after (use it for reminders, not "days" plus a date check in the prompt). '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -683,16 +688,18 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
             pass
 
 
-async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
-    """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
+async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
+                        files: list[str] | None = None) -> None:
+    """Telegram is one more window onto Ken's one conversation (the same one the app shows).
+    A photo or file shows in the app as their message (`said`, the caption, with `files`)."""
+    shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        # 👀 on their message: seen. The note says it's queued, not an answer, and how to stop.
+        # 👀 on their message: seen. Ken takes it into what it's doing, the way Claude Code does.
         try:
             await update.effective_message.set_reaction(ReactionEmoji.EYES)
         except TelegramError:
             pass
-        await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -705,8 +712,8 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
             await flush_outbox(update.get_bot(), chat_id)
 
         await ENGINE.send_message(
-            HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
-            prompt=context + prompt, origin=update.effective_message.message_id,
+            HOME, prompt if said is None else said, files, log_user=shown, via="telegram", listener=deliver,
+            prompt=context + prompt, origin=update.effective_message.message_id, steer=shown,
         )
     finally:
         stop.set()
@@ -825,15 +832,18 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             name = msg.document.file_name or f"image-{time.strftime('%Y%m%d-%H%M%S')}"
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
+        if path.exists():
+            path = INBOX_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}"
+        name = path.name
         await tg_file.download_to_drive(str(path))
     except Exception as e:
         log.warning("image download failed: %s", e)
         await msg.reply_text(f"Couldn't save that image: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent image: {name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent image: {name}]")  # the caption goes in with the message
     await handle_prompt(
-        update,
+        update, said=caption, files=[name], prompt=
         f"(The human sent you an image, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Open and actually look at the file before replying — never guess its contents. "
@@ -842,7 +852,9 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024  # the Bot API hands bots files up to 20 MB
+# The Bot API hands bots files up to 20 MB. Hosted Ken talks to Telegram through its own server, which also
+# delivers big uploads from its Send a video page, so it raises this with TELEGRAM_DOWNLOAD_MB.
+TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 1024 * 1024
 
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -864,7 +876,8 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if (item.file_size or 0) > TELEGRAM_DOWNLOAD_LIMIT:
         size = item.file_size / (1024 * 1024)
         await msg.reply_text(
-            f"That's {size:.0f} MB, and Telegram only lets me download files up to 20 MB. "
+            f"That's {size:.0f} MB, and Telegram only lets me download files up to "
+            f"{TELEGRAM_DOWNLOAD_LIMIT // (1024 * 1024)} MB. "
             "Send me a link to it instead (iCloud, Google Drive or Dropbox), or drop it into the Ken app on your computer."
         )
         return
@@ -880,9 +893,9 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(f"Couldn't save that: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent {kind}: {path.name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent {kind}: {path.name}]")
     await handle_prompt(
-        update,
+        update, said=caption, files=[path.name], prompt=
         f"(The human sent you {kind}, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Look at the file itself before replying (for a video: its length, and a few frames or the "
@@ -976,6 +989,62 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("Nothing is running.")
 
 
+# /kill is the off switch for when Ken misbehaves and they're away: it stops all work and turns
+# the engine off until they turn it on again at the computer (the app, or `ken start`). The note
+# keeps whatever normally restarts Ken (launchd, systemd, winrun.py) from bringing it back.
+OFF_NOTE = KEN_HOME / "off"
+
+
+async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not authorized(update):
+        return
+    await update.effective_message.reply_text(
+        "Turn Ken off? Everything stops, and Ken stays off, Telegram included, until you turn it on again on the computer. "
+        "This button works for 2 minutes.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Turn Ken off", callback_data="kill:yes")]]),
+    )
+
+
+async def on_kill_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    if q.message is None or time.time() - q.message.date.timestamp() > 120:  # an old button tapped by accident later
+        await q.answer("That button expired. Send /kill again if you mean it.")
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    await q.answer("Turning Ken off")
+    OFF_NOTE.write_text(time.strftime("%Y-%m-%d %H:%M") + " from Telegram\n")
+    log.warning("turned off from Telegram with /kill")
+    for pid in list(ENGINE.chats):
+        await ENGINE.stop_chat(pid)
+    await asyncio.gather(*(ENGINE.stop_run(r["id"], by="you") for r in ENGINE.list_runs(active=True)), return_exceptions=True)
+    decaf()
+    back = "Open Ken on your Mac and click Turn Ken On" if os.environ.get("KEN_APP_VERSION") else "Run ken start on the computer"
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+        await q.message.reply_text(f"🛑 Ken is off. {back} to bring it back.")
+    except Exception:
+        pass
+    turn_off()
+
+
+def turn_off() -> None:
+    """Stop this engine and the service that keeps it running."""
+    import subprocess
+
+    label = os.environ.get("XPC_SERVICE_NAME", "")  # launchd's name for the service running us
+    if sys.platform == "darwin" and label.startswith("dev.kencomputer."):
+        subprocess.Popen(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], start_new_session=True)
+    elif os.environ.get("INVOCATION_ID"):  # systemd
+        subprocess.Popen(["systemctl", "--user", "stop", "ken"], start_new_session=True)
+    time.sleep(3)
+    os._exit(0)
+
+
 def get_oauth_token() -> str:
     """Claude Code's own credentials: env var, credentials file, or macOS Keychain."""
     tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -1001,17 +1070,19 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def send_outbound(bot, text: str, reply_to: int | None = None) -> None:
+async def send_outbound(bot, text: str, reply_to: int | None = None, quiet: bool = False) -> None:
     """Ken speaking first. It quotes `reply_to` (the message that started this work) when there
-    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last."""
+    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last.
+    `quiet` lands it without a buzz."""
     if bot is None or not ALLOWED_USER_ID:
         return
     for i, chunk in enumerate(split_chunks(text.strip() or "…")):
         quote = quoting(reply_to if i == 0 else None)
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
+            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML,
+                                   disable_notification=quiet, **quote)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
+            await bot.send_message(ALLOWED_USER_ID, chunk, disable_notification=quiet, **quote)
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1052,12 +1123,40 @@ async def run_outbound(job: dict) -> None:
     )
     log_history("system", f"[job fired: {job.get('name', 'job')}]")
     try:
-        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver)
+        await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, preface=late_notice(job, time.localtime()))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
+LATE_NOTICE_MINUTES = 5  # a job this late was caught up after sleep, not just a slow minute
+
+
+def late_notice(job: dict, now: time.struct_time) -> str:
+    """The line a caught-up job opens with, so they know why it's arriving now; "" when on time."""
+    try:
+        hour, minute = (int(x) for x in str(job.get("time", "")).split(":"))
+    except ValueError:
+        return ""
+    if (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute) < LATE_NOTICE_MINUTES:
+        return ""
+    name = str(job.get("name", "scheduled job")).replace("-", " ")
+    return f"⏰ Running late: your {name} was due at {hour:02d}:{minute:02d} and didn't run then, so it is running now."
+
+
+def note_new_jobs(jobs: list[dict], now: time.struct_time, state: dict) -> bool:
+    """Remember each job the first minute Ken sees it. One first seen after today's slot (a new
+    install at noon) starts tomorrow; catching up is only for jobs Ken was already running. One
+    first seen before its slot runs today, even if Ken only gets to it late (the laptop slept).
+    Returns whether anything was noted."""
+    noted = False
+    for job in jobs:
+        key = job_key(job)
+        if key and key not in state:
+            # "seen ..." doesn't start with a date, so it never counts as "already ran today".
+            state[key] = time.strftime("%Y-%m-%d (first seen)" if _job_due(job, now, {}) else "seen %Y-%m-%d %H:%M", now)
+            noted = True
+    return noted
 
 
 def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
@@ -1070,9 +1169,12 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
         return False
     days = str(job.get("days", "daily")).lower()
     today = time.strftime("%a", now).lower()[:3]
-    if days == "weekdays" and today in ("sat", "sun"):
+    if job.get("date"):  # a one-time job: that day only
+        if job["date"] != time.strftime("%Y-%m-%d", now):
+            return False
+    elif days == "weekdays" and today in ("sat", "sun"):
         return False
-    if days not in ("daily", "weekdays") and today not in days:
+    elif days not in ("daily", "weekdays") and today not in days:
         return False
     late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
     if not 0 <= late <= CATCH_UP_HOURS * 60:
@@ -1092,6 +1194,16 @@ def all_jobs() -> list[dict]:
     for a in ENGINE.list_agents():
         jobs += [{**j, "agent": a["id"]} for j in ENGINE.agent_jobs(a["id"])]
     return jobs
+
+
+def remove_job(job: dict) -> None:
+    """Take a job out of its file: a one-time job once it has run, or once its day has passed."""
+    path = ENGINE._adir(job["agent"]) / "jobs.json" if job.get("agent") else JOBS_FILE
+    try:
+        jobs = json.loads(path.read_text())
+        path.write_text(json.dumps([j for j in jobs if not (isinstance(j, dict) and j.get("name") == job.get("name"))], indent=1) + "\n")
+    except (KeyError, OSError, ValueError) as e:
+        log.warning("couldn't remove job %s: %s", job.get("name"), e)
 
 
 def job_key(job: dict) -> str:
@@ -1170,7 +1282,7 @@ def set_privacy(share: bool) -> dict:
 def list_jobs() -> list[dict]:
     """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
     names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
-    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "date": j.get("date", ""), "on": j.get("on", True),
              "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), ""),
              "summary": job_summary(str(j.get("prompt", "")))}
             for j in all_jobs() if j.get("name")]
@@ -1212,23 +1324,16 @@ async def scheduler() -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
-            # A job seen for the first time after today's slot (a new install at noon) starts
-            # tomorrow; catching up is only for jobs Ken was already running.
+            if note_new_jobs(jobs, now, state):
+                JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
-                key = job_key(job)
-                if key and key not in state and _job_due(job, now, {}):
-                    state[key] = time.strftime("%Y-%m-%d (first seen)", now)
-                    JOB_STATE_FILE.write_text(json.dumps(state))
-            for job in jobs:
+                if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
+                    remove_job(job)  # its day passed while Ken was off
+                    continue
                 if _job_due(job, now, state):
-                    held = USAGE.skip_job(job)
-                    if held == "wait":
-                        continue  # the computer is struggling: still due, it runs once that clears
+                    if job.get("date"):
+                        remove_job(job)  # one-time: it runs now and is gone
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
-                    if held == "skip":  # the plan is at its limit: today's run is dropped (they were told once)
-                        JOB_STATE_FILE.write_text(json.dumps(state))
-                        log.info("job skipped, AI usage near the plan limit: %s", job_key(job))
-                        continue
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job_key(job))
                     crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
@@ -1237,7 +1342,9 @@ async def scheduler() -> None:
                         # An agent's job runs in that agent's own chat.
                         asyncio.create_task(ENGINE.send_message(
                             str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})", job=job_tag(job),
+                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
+                            + (f" Open your message with this line, as is: {notice}" if (notice := late_notice(job, now)) else ""),
+                            job=job_tag(job),
                         ))
                     else:
                         asyncio.create_task(run_outbound(job))
@@ -1314,11 +1421,18 @@ async def start_engine() -> WebApp | None:
     global ACCOUNTS
     ACCOUNTS = setup
     use_signed_in_account()
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
+    browser = browser_command().get("browser")
+    shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared)
+    host, port = os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777"))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
-            await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
+            await web_app.start(host, port)
+            local = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+            for name in shared:
+                SHARED_MCP[name] = {"type": "http", "url": f"http://{local}:{port}/mcp/{name}",
+                                    "headers": {"Authorization": f"Bearer {web_app.token}"}}
             return web_app
         except OSError as e:
             if attempt == 14:
@@ -1356,12 +1470,13 @@ async def notify_telegram(app) -> None:
                                     reply_to=ev.get("origin"))
             elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
+                quiet = ev.get("via") == "app"  # they're at the Mac: it shows on the phone without a buzz
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
-                    await send_outbound(app.bot, "💻 In the app: " + words[:3500] + attached)
+                    await send_outbound(app.bot, "💻 " + words[:3500] + attached, quiet=quiet)
                 elif ev.get("role") == "ken" and words:
-                    await send_outbound(app.bot, words)
-                    await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
+                    await send_outbound(app.bot, words, quiet=quiet)
+                    await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 
@@ -1550,8 +1665,8 @@ async def model(arg: str = "") -> dict:
 
 
 async def usage(arg: str = "") -> dict:
-    """/usage: the plan's usage windows and how this computer is doing, in a few phone-sized lines."""
-    return {"reply": await USAGE.report(ENGINE.backend(HOME), ENGINE.model_for(HOME))}
+    """/usage: how much of the Claude plan is used, in a few phone-sized lines."""
+    return {"reply": USAGE.report(ENGINE.backend(HOME))}
 
 
 async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1858,12 +1973,17 @@ class Phone:
         return True
 
     async def start(self, token: str) -> None:
-        app = Application.builder().token(token).concurrent_updates(True).build()
+        builder = Application.builder().token(token).concurrent_updates(True)
+        # Hosted Ken: a server that stands in for Telegram's Bot API (same methods, same URLs under it).
+        if api := os.environ.get("TELEGRAM_API_URL", "").rstrip("/"):
+            builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
+        app = builder.build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("usage", cmd_usage)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill), ("usage", cmd_usage)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
+        app.add_handler(CallbackQueryHandler(on_kill_pick, pattern=r"^kill:"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
@@ -1880,7 +2000,8 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
-                ("usage", "AI plan usage and how busy this computer is"),
+                ("usage", "How much of your Claude plan is used"),
+                ("kill", "Turn Ken off in an emergency"),
             ])
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
@@ -1968,8 +2089,7 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
-                  asyncio.create_task(USAGE.watch())]
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -1995,10 +2115,14 @@ async def run() -> None:
 
 
 def main() -> None:
+    if OFF_NOTE.exists():
+        print("Ken is off (turned off with /kill). Open the app or run `ken start` to turn it on.", flush=True)
+        turn_off()
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    skills = prepare_skills(KEN_HOME, SOURCE / "skills")
+    ENGINE.other_skills = OTHER_SKILLS
+    skills = prepare_skills(KEN_HOME, SOURCE / "skills", OTHER_SKILLS)
     if skills:
         BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]
     prepare_codex_home(KEN_HOME / "codex")

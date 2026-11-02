@@ -17,10 +17,11 @@ changes later pick up where you left off. Never change their original file.
 Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, this is
 their first video: ask ONE question before you start, "Any style you want? Send a reel you like, your brand
 colours or logo, or say 'surprise me'." If they send a reel, grab a few frames of it with ffmpeg and match its
-look in `style` (fonts, accent, paper and ink colours, captions). After they're happy with the first video, write
-the style note: fonts, accent colour, caption size, what graphics they like, and every rule they gave you ("no
-emojis", "keep my jokes"). Every correction they make on any video goes into that note right away, so they never
-say it twice.
+look (fonts, colours, captions, how graphics look and move). If they say "surprise me", or your instructions
+say not to ask, design the look from their video (see "The look" in step 3). The style note holds only what they
+asked for: a reel or brand they want matched, their colours or fonts, "keep this look", and every rule they gave
+you ("no emojis", "keep my jokes"). Every correction they make on any video goes into it right away, so they never
+say it twice. Never save a look you chose yourself as their style: each new reel gets its own look.
 
 ## 1. Listen
 
@@ -81,67 +82,75 @@ a warning survives two tries, accept it.
 
 ## 3. Design it
 
-The default look is editorial, not the yellow-captions template every AI tool makes: a serif headline in the open
-space above them, calm white captions that appear as they're spoken with one word per sentence in the accent serif
-italic, and graphics on paper that slide up beneath them so their face stays on screen. Restraint is the style.
-Fewer, better moments beat something on screen every second. Their style note wins over this default.
+**Design this reel for this person, this topic and this vibe**, not from a template and not from your last reel.
+What their style note asks for wins; design everything else fresh. Look at a few stills of the cut and decide like a designer
+would: who they are, the mood of what they're saying, where the open space in the frame is, and what would look
+made for exactly this video. Two people's reels should never look alike, and the same person's next reel should
+look different from their last one (other colours, type, texture and graphics) unless they asked to keep it.
+
+**The look.**
+
+- **Colours from what's on camera.** Run `<ken> --video-colors <folder>`: it lists the colours in the footage
+  (their clothes, the room, plants, sky, water), most present first, and suggests an `accent`, `paper` and
+  `ink` from them. Look at a still too: an accent from something that belongs to them (a cap, a jacket, a brand
+  colour, the plants behind them) beats a big empty sky. Keep it bright enough to read over the video.
+- **Type that fits the person and the topic.** Three faces are bundled: `Inter` (every weight), `Montserrat`
+  (black only) and `Serif` (an elegant serif, with italic). Choose `font` (captions), `accentFont` (the hook, the
+  emphasized words and `*starred*` words), `headingFont` (headlines on library graphics), `captionWeight`,
+  `captionSize`, `uppercase` and `hookSize` for this reel; nothing is the default style.
+- **Texture is a choice.** `grain` and `paperTexture` are on unless you turn them off: keep them when the reel
+  should feel printed or filmic, turn them off for a clean, flat look.
+- **Say what you chose** in a line ("the green from your jacket, big tight sans captions, no grain"), so they can
+  ask for another.
 
 **Plan the moments.** Read the cut words in order and decide what the viewer should *see*:
 
-- **Hook text** (`hook`): over the first 2.5 to 3.5 s, from `story.md`. Star the one word that matters:
-  `"This reel was edited by *AI*"`.
+- **Hook text** (`hook`): over the first 2.5 to 3.5 s, from `story.md`. Star the one word that matters. Or design
+  your own hook graphic for those seconds and leave `hook` out.
 - **Emphasis** (`words[i].emph = true`): about one word per sentence, the word they'd stress out loud. It's set
-  larger in the accent serif. Never two in a row.
+  larger in the accent. Never two in a row.
 - **Push-in** (`zooms`): `{start, end}` on the one line that carries the reel, at most one. The camera slowly
   pushes in while they say it.
-- **End note**: a `callout` over the last 2 to 2.5 s, while they say their last line (never an extra end screen:
-  reels loop, and dead time at the end loses viewers). Default text `"Follow for more on *<topic>*"`, with the topic
-  in a word or two, or their own sign-off from your memory. Skip it if they already end on a call to action, or
-  don't want one.
-- **Graphics**, where a picture says it better than a face:
-  - a number → `stat`
-  - steps, tips, "three things" → `list`
-  - before/after, old way/new way, X vs Y → `compare` (the old side gets crossed out, the new one highlighted)
-  - amounts or rankings → `bars`
-  - the line worth screenshotting → `quote` (on paper) or `punch` (big words above their head)
-  - a conversation, DM or AI prompt → `chat`
-  - who they are, early on → `nameTag`
-  - a quick aside, a link, a call to action → `callout`
-  - a screenshot or photo they sent → `picture` (copy it into the folder first)
-  - the start of a big new section → `title`
-- **Explainers**, for the one or two ideas that carry the reel, where movement shows it better than words:
-  - big players swallowing small ones ("software is getting eaten") → `eaten`
-  - jobs, tools or habits becoming obsolete → `obsolete`
-  - "does everything" vs one sharp thing → `focus`
-  - a process: something goes in, comes out finished ("talk, send, get a reel") → `flow`
-  - the tedious manual way (editing by hand) → `timeline`
-  - a website or app name → `browser` (types it out above their head)
+- **End note**: over the last 2 to 2.5 s, while they say their last line (never an extra end screen: reels loop,
+  and dead time at the end loses viewers). Default text "Follow for more on *<topic>*", or their own sign-off from
+  your memory. Skip it if they already end on a call to action, or don't want one.
+- **Graphics**, where a picture says it better than a face. For each one, first decide what would show *this*
+  idea best in *this* reel's look, and write a new one for it (below), or start from a library component and
+  change how it looks and moves. Library components dropped in as they are make every reel look like the same
+  template: the library is a starting point, not a menu.
 
-Calm beats busy: the story carries the reel, the design only supports it. A graphic every 8 to 15 seconds, where
-it genuinely helps; a 45-second reel usually has 2 to 4. One idea on screen at a time, never two moves at once.
-Sheet graphics last 3 to 5 s, long enough to read twice; over-the-video ones 2 to 4 s. Line them up with the
-words: a stat comes in as they say the number. Keep the hook and the most personal moment on their face with no
-graphics. In any graphic text, `*starred words*` are set in the accent serif italic: use it once per graphic. Text
-on graphics must be readable in two seconds.
+Craft rules, whatever the look:
 
-Add to `props.json` (keep `words`, `cuts` and `framing` from the cut, and fix misheard words in `words`):
+- **Restraint.** Calm beats busy: the story carries the reel, the design only supports it. A graphic every 8 to
+  15 seconds where it genuinely helps; a 45-second reel usually has 2 to 4. More minimal than you think.
+- **One idea on screen at a time**, never two moves at once. Readable in two seconds. On screen 3 to 5 s when it
+  covers them, 2 to 4 s over the video.
+- **Timed to the words**: it comes in as they say the thing it shows.
+- **Their face for what matters most**: the hook and the most personal moment stay on their face, no graphics.
+- **The real thing**: when they mention a tool, app or site, show its real icon or real interface (a screenshot,
+  or a Mac app's icon from `sips -s format png /Applications/<App>.app/Contents/Resources/<icon>.icns --out
+  icon.png`), never a generic drawing.
+- **Never**: stock icons, emojis as decoration, gradient boxes, typewriter text, neon, shaking or bouncing text.
+- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px.
+  Keep text and anything that matters out of them.
+
+Add to `props.json` (keep `words`, `cuts` and `framing` from the cut, and fix misheard words in `words`). The
+shape, with placeholders:
 
 ```json
 {
-  "hook": "This reel was edited by *AI*",
+  "hook": "<3 to 7 words with one *starred* word>",
   "hookSeconds": 3,
   "zooms": [{"start": 30.5, "end": 35.3}],
   "graphics": [
-    {"type": "nameTag", "start": 8.4, "end": 11.6, "props": {"name": "Prasann", "role": "Building Ken Computer"}},
-    {"type": "quote", "start": 31.0, "end": 35.3, "props": {"text": "*Can do anything* is not a value prop."}},
-    {"type": "flow", "start": 43.6, "end": 49.3, "props": {"title": "Talk. Send. *Reel.*", "input": "2 min of talking", "worker": "Ken", "output": "Finished reel", "time": "1 minute"}},
-    {"type": "callout", "start": 64.2, "end": 66.8, "props": {"text": "DM me for *early access*"}}
+    {"type": "<a library type>", "start": 8.4, "end": 11.6, "props": {"<prop>": "<value>"}},
+    {"type": "<your own graphic>", "start": 31.0, "end": 35.3, "placement": "over", "props": {"<prop>": "<value>"}}
   ],
-  "style": {"accent": "#FF7A3D"}
+  "style": {"accent": "<hex>", "paper": "<hex>", "ink": "<hex>", "font": "<font>", "accentFont": "<font>"}
 }
 ```
 
-Graphic props:
+The library (use or adapt only when it fits):
 
 | type | placement | props |
 |---|---|---|
@@ -164,18 +173,30 @@ Graphic props:
 | `browser` | over | `url` |
 
 **sheet**: paper slides up over the lower half and they lift to stay in view. **full**: paper wipes over the whole
-screen (the voice keeps playing); use it rarely. **over**: floats on the video. Each graphic can set `placement` to
-override, and `hideCaptions` (captions step aside for sheet and full graphics by default).
+screen (the voice keeps playing). **over**: floats on the video. Each graphic can set `placement` to override, and
+`hideCaptions` (captions step aside for sheet and full graphics by default).
 
-`style`: `font` (captions and body: `Inter` or `Montserrat`), `headingFont` (hook, headlines, emphasis: `Serif` by
-default), `accent`, `textColor` (captions), `paper` / `ink` (graphic colours), `captionSize` (default 62),
-`uppercase`, `captions` (false turns them off), `wordsPerPageMs` (default 1100), `zoomCuts` (a slight punch-in on
-some jump cuts, default true), `grain` (film grain and vignette, default true).
+`style`: `font` (captions and body: `Inter` or `Montserrat`), `accentFont` (hook, emphasis, starred words, big
+numbers and quotes; `Serif` by default), `headingFont` (headlines on graphics; `Serif` by default), `hookSize`
+(default 128), `accent`, `textColor` (captions), `paper` / `ink` (graphic colours), `captionSize` (default 62),
+`captionWeight` (default 650), `uppercase`, `captions` (false turns them off), `wordsPerPageMs` (default 1100),
+`zoomCuts` (a slight punch-in on some jump cuts, default true), `grain` (film grain and vignette, default true),
+`paperTexture` (fibres on paper, default true).
 
-**Need something the library doesn't have?** Write it. Add a component to the folder's `src/graphics/` (copy the
-style of `basics.tsx`: `Area`, `Heading`, `Rich`, `useEnter`, `rise`, `pop`, `useTheme`, and
-`@remotion/rough-notation` for hand-drawn marks), register it in `src/graphics/index.ts`, and use it in
-`props.json`. Run `npx tsc -p .` in the folder to catch mistakes.
+**Writing a graphic.** The folder's `src/` appears with the first `--video-stills` (run it before `props.json`
+names your graphic). Add a component to
+`src/graphics/` (the helpers are in `layout.tsx` and `anim.ts`: `Area`, `Heading`, `Rich`, `accentType`,
+`useEnter`, `rise`, `pop`, and `useTheme` for the reel's colours and fonts; `@remotion/rough-notation` draws
+hand-drawn marks), register it in `src/graphics/index.ts` with its placement, and use it in `props.json`. Then:
+
+- Animate only from `useCurrentFrame()`: no CSS transitions, `Math.random` or clock time, or frames come out
+  different each render.
+- Take its text from props, so a fix is a `props.json` edit. An "over" graphic positions itself inside the safe
+  zones; a sheet or full one lays out in `Area`.
+- A picture or clip it shows (a screenshot, a photo, a screen recording they sent) is a file in the folder passed
+  as its `src` prop (only those get bundled), one per graphic. Trim or speed up a clip with ffmpeg first, and show
+  it with `<OffthreadVideo src={staticFile(src)} muted />`. Everything you need is here: don't read the kit's code.
+- Run `npx tsc -p .` in the folder and fix every error before checking frames.
 
 ## 4. Check frames before rendering
 
@@ -184,10 +205,12 @@ each opens Chrome and uses about a gigabyte):
 
     <ken> --video-stills videos/<short-name> 1.5 10.5 24 38.2
 
-then look at `checks/sheet.jpg` (all of them side by side). Check the hook, each graphic and an emphasized
-caption. Look for: text that's cut off or too long, a graphic covering their face at the wrong moment, captions
-colliding with an over-the-video graphic (move it or set `hideCaptions`), colours that clash with the footage. Ask
-yourself: would a good editor be proud of this frame, or does it look like a template?
+then look at `checks/sheet.jpg` (all of them side by side, the safe zones tinted red). Check the hook, each
+graphic and an emphasized caption. Look for: text that's cut off, too long or in a red zone, a graphic covering
+their face at the wrong moment, captions colliding with an over-the-video graphic (move it or set
+`hideCaptions`), colours that clash with the footage. Ask yourself: would a good editor be proud of this frame, or
+does it look like a template? If they've had a reel before, compare with its `props.json` in their projects: the
+same colours, fonts and graphics mean start the look again.
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
@@ -202,9 +225,12 @@ redraws everything, so settle those with stills first. `--plan` says how much a 
 rendering. The render checks its own result and, if that fails, draws the whole reel in Chrome instead (slower,
 always right). Then:
 
-- Duration: `ffprobe -v error -show_entries format=duration -of csv=p=0 videos/<short-name>/reel.mp4`
-- Frames at the start, at two or three graphics and at the end (`ffmpeg -v error -ss 9.5 -i reel.mp4 -frames:v 1
-  f.jpg`), and look at them.
+- One command for the length and a strip of frames from the finished reel, then one look at it:
+
+      cd videos/<short-name> && mkdir -p checks && ffprobe -v error -show_entries format=duration -of csv=p=0 reel.mp4 && ffmpeg -v error -y -i reel.mp4 -vf "fps=1/6,scale=216:-1,tile=8x1" -frames:v 1 checks/reel.jpg
+
+  The stills already checked the design, so this is for what they can't show: the cut, the timing, a graphic
+  that's missing. Don't check frame by frame again unless the strip shows a problem.
 - Re-read the cut words in order: does the story flow, is any sentence chopped mid-thought?
 
 Fix what's wrong, check the fix with stills, then render again. Don't send something you wouldn't post. Then send
@@ -216,5 +242,6 @@ captions in your brand orange?"
 
 "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
-everything else in `props.json`; move graphics after a change by the same amount). Check stills, render, check.
+everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
+changed, render, check the strip once.
 Note every correction in their style note, since it probably applies to future reels too.

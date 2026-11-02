@@ -5,7 +5,7 @@ import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { pop, rise, useEnter } from "../anim";
 import { SAFE, useTheme } from "../theme";
-import { Area, FONT_SERIF, Heading, paperStyle, Rich } from "./layout";
+import { accentType, Area, Heading, paperStyle, Rich } from "./layout";
 
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
@@ -153,12 +153,12 @@ export const Focus = ({ big, small, label }: { big: string; small: string; label
           {big}
         </div>
       </div>
-      <div style={{ fontFamily: FONT_SERIF, fontSize: 64, color: `${theme.ink}66`, opacity: smallEnter }}>vs</div>
+      <div style={{ ...accentType(theme), fontSize: 64, color: `${theme.ink}66`, opacity: smallEnter }}>vs</div>
       <div style={{ ...pop(smallEnter, 0.6), display: "flex", flexDirection: "column", alignItems: "center", gap: 22, width: 330 }}>
         <Circle progress={ring} color={theme.accent} strokeWidth={4} padding={{ top: 18, bottom: 18, left: 18, right: 18 }}>
           <div style={{ width: 110, height: 110, background: theme.accent, transform: "rotate(45deg)", borderRadius: 14, boxShadow: "0 10px 26px rgba(40,30,10,0.25)" }} />
         </Circle>
-        <div style={{ fontFamily: FONT_SERIF, fontSize: 64, lineHeight: 1, color: theme.ink }}>{small}</div>
+        <div style={{ ...accentType(theme), fontSize: 64, lineHeight: 1, color: theme.ink }}>{small}</div>
         <div style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.2, textAlign: "center", color: theme.ink }}>
           <Rich text={label} />
         </div>
@@ -177,7 +177,7 @@ export const Browser = ({ url }: { url: string }) => {
   const done = ease((frame - 10 - url.length * 1.6) / 6);
   return (
     <div style={{ position: "absolute", top: SAFE.top + 40, left: SAFE.side, right: SAFE.side, display: "flex", justifyContent: "center" }}>
-      <div style={{ ...rise(enter, 30), ...paperStyle("#FFFFFF"), width: 860, borderRadius: 28, boxShadow: "0 20px 50px rgba(0,0,0,0.35)", overflow: "hidden" }}>
+      <div style={{ ...rise(enter, 30), ...paperStyle("#FFFFFF", theme.paperTexture), width: 860, borderRadius: 28, boxShadow: "0 20px 50px rgba(0,0,0,0.35)", overflow: "hidden" }}>
         <div style={{ display: "flex", gap: 12, padding: "20px 26px 0" }}>
           {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
             <div key={c} style={{ width: 20, height: 20, borderRadius: 10, background: c }} />
@@ -239,7 +239,7 @@ export const Flow = ({ title, input, worker, output, time }: { title?: string; i
             <svg width={box} height={box} style={{ position: "absolute", inset: 0, transform: `rotate(${work * 540}deg)`, opacity: work > 0 && work < 1 ? 1 : 0 }}>
               <circle cx={box / 2} cy={box / 2} r={box / 2 - 12} fill="none" stroke="#FFFFFF" strokeWidth={6} strokeDasharray="60 500" strokeLinecap="round" />
             </svg>
-            <div style={{ fontFamily: FONT_SERIF, fontSize: 76, color: "#FFFFFF" }}>{worker}</div>
+            <div style={{ ...accentType(theme), fontSize: 76, color: "#FFFFFF" }}>{worker}</div>
           </div>
           <div style={{ ...label, opacity: timerEnter, color: theme.accent }}>{time ?? ""}</div>
         </div>

@@ -157,6 +157,15 @@ class CodexSession(Session):
             self.busy = False
             self.turn = None
 
+    async def steer(self, prompt):
+        if self.turn is None:
+            return False
+        try:
+            await self.turn.steer(prompt)  # rejected once the turn has ended; then it waits its turn
+            return True
+        except Exception:
+            return False
+
     async def interrupt(self):
         if self.turn is not None:
             try:

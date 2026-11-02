@@ -1,6 +1,6 @@
 // Ken for Mac: a window onto the local `ken` service (bot.py). The service owns
 // the engine, Telegram, voice and schedules; this app only shows its chat.
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, nativeTheme, systemPreferences, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session, Tray, nativeImage, nativeTheme, systemPreferences, clipboard, powerMonitor } = require('electron');
 const { execFile } = require('node:child_process');
 const { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, statSync } = require('node:fs');
 const path = require('node:path');
@@ -32,7 +32,8 @@ async function running({ origin, token }) {
   catch { return null; }
 }
 
-const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
+// Capped, so a start command that never returns can't leave the window on "Opening…": connect() then says so.
+const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home }, timeout: 30000 }, () => resolve()));
 // install.sh puts its own copy of Ken (and a venv) in the Ken home.
 const terminalInstall = path.join(home, 'app', 'bot.py');
 const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), 'Library/LaunchAgents', appAgent + '.plist');
@@ -96,42 +97,98 @@ async function stopOtherEngine() {
   try { process.kill(pid, 'SIGKILL'); } catch {}
 }
 
+// The engine process holding the Ken home while it's alive (answering or still starting up), else 0.
+async function engineAlive() {
+  let pid = 0;
+  try { pid = Number(readFileSync(path.join(home, 'engine.lock'), 'utf8').trim()); } catch {}
+  if (!pid) return 0;
+  const command = await new Promise((resolve) => execFile('/bin/ps', ['-p', String(pid), '-o', 'command='], (_e, out) => resolve(String(out || ''))));
+  return /ken-engine|bot\.py/.test(command) ? pid : 0;
+}
+
+// The last error the engine wrote, so a failed start says why.
+function lastError() {
+  try {
+    const lines = readFileSync(path.join(home, 'logs', 'ken.log'), 'utf8').slice(-20000).split('\n').map((l) => l.trim()).filter(Boolean);
+    const line = lines.reverse().find((l) => /^\w*(Error|Exception)\b|\bERROR\b/.test(l));
+    return line ? line.slice(0, 300) : '';
+  } catch { return ''; }
+}
+
+// /kill on the phone leaves this note: Ken stays off, and the window says so, until Turn Ken On removes it.
+const offNote = path.join(home, 'off');
+const turnOnLink = 'loading.html?turn-on';
+
+async function stayOff() {
+  if (!existsSync(offNote)) return;
+  await win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'off' }).catch(() => {});
+  while (existsSync(offNote)) await new Promise((resolve) => setTimeout(resolve, 1000));
+  await win.loadFile(path.join(__dirname, 'loading.html')).catch(() => {});
+}
+
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
-async function connect() {
+// A busy Mac can take minutes to start the engine: while it's alive it's left to finish, never
+// restarted (that threw away a slow start and began again). `onSlow` fires once if it's taking a
+// while. `fresh` (a retry) always starts it over, so an engine stuck for good still gets replaced.
+async function connect(onSlow = () => {}, fresh = false) {
   // When the app runs its own engine, the engine must be this app version.
   const want = app.isPackaged ? app.getVersion() : null;
   const ready = (rev) => rev !== null && (want === null || rev === want);
-  if (ready(await running(service()))) return service();
-  await startService();
-  for (let i = 0; i < 120; i++) {
+  const rev = await running(service());
+  if (ready(rev)) return service();
+  if (fresh || rev !== null || !(await engineAlive())) await startService();  // an old version answering, or nothing there
+  // Seconds the Mac was awake: time spent asleep (a closed lid) doesn't count against the engine.
+  let awake = 0, last = Date.now();
+  const seconds = () => { const now = Date.now(); if (now - last < 5000) awake += now - last; last = now; return awake / 1000; };
+  let slow = false, goneSince = null, restarted = false;
+  const pids = new Set();
+  while (seconds() < 300 && pids.size < 4) {  // up to 5 minutes while it's alive; a few crashes in a row end it
+    if (existsSync(offNote)) throw new Error('Ken is off.');  // turned off meanwhile: don't keep starting it
     if (ready(await running(service()))) return service();
-    if (i === 40) await startService();  // nothing after 20 seconds: start it over once
+    if (!slow && seconds() > 10) { slow = true; onSlow(); }
+    const pid = await engineAlive();
+    if (pid) { goneSince = null; pids.add(pid); }
+    else if (goneSince === null) goneSince = seconds();
+    else if (seconds() - goneSince > 20) {  // no engine for 20 seconds: start it once more, then give up
+      if (restarted) break;
+      restarted = true; goneSince = null; await startService();
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('Ken’s engine didn’t start. The log is in ~/.ken/logs/ken.log.');
+  const why = lastError();
+  throw new Error('Ken’s engine didn’t start.' + (why ? ` It said: ${why}` : '') + ' The log is in ~/.ken/logs/ken.log.');
 }
 
-// Connect, or tell the user plainly and let them try again. Null if they chose Quit.
-async function connectOrAsk() {
-  for (;;) {
-    try { return await connect(); } catch (error) {
-      const { response } = await dialog.showMessageBox({ type: 'warning', message: 'Ken couldn’t start.', detail: error.message, buttons: ['Try Again', 'Quit'], defaultId: 0, cancelId: 1 });
-      if (response !== 0) return null;
+// Connect, and keep at it: no dialog to answer. If it fails, the window says so and it starts the engine over every 30 seconds.
+async function keepConnecting(fresh = false) {
+  for (let attempt = 0; ; attempt++) {
+    await stayOff();
+    try { return await connect(() => win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'slow' }).catch(() => {}), fresh || attempt > 0); } catch (error) {
+      if (existsSync(offNote)) continue;
+      console.error(error.message);
+      await win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'trouble' }).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 30000));
     }
   }
 }
 
 // Keep the window on a working engine: if it stops answering for 15 seconds, bring it back.
+// Only while the Mac is awake: asleep (or in the short wakes macOS does with the lid closed) nothing
+// answers, and that isn't the engine's fault, so the count starts over and it gets a minute after waking.
 function watchEngine() {
-  let misses = 0, healing = false;
+  let misses = 0, healing = false, last = Date.now(), wokeAt = 0;
+  powerMonitor.on('resume', () => { misses = 0; wokeAt = Date.now(); });
   setInterval(async () => {
-    if (healing || quitting) return;
+    const now = Date.now(), slept = now - last > 15000; last = now;
+    if (slept) { misses = 0; wokeAt = now; }
+    if (healing || quitting || now - wokeAt < 60000) return;
     if ((await running(service())) !== null) { misses = 0; return; }
-    if (++misses < 3) return;
+    // Not answering: 15 seconds and it's brought back, or 2 minutes if it's alive (a busy Mac can be that slow).
+    // Turned off with /kill: say so straight away.
+    if (++misses < (existsSync(offNote) ? 1 : await engineAlive() ? 24 : 3)) return;
     healing = true; misses = 0;
     await win.loadFile(path.join(__dirname, 'loading.html'));
-    const found = await connectOrAsk();
-    if (!found) { quitting = true; app.quit(); return; }
+    const found = await keepConnecting(true);  // it stopped answering: start it over
     await win.loadURL(found.origin);
     healing = false;
   }, 5000);
@@ -249,6 +306,7 @@ async function start() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.on('close', (event) => { if (!quitting) { event.preventDefault(); win.hide(); } });
+  win.webContents.on('will-navigate', (event, url) => { if (url.startsWith('file:') && url.includes(turnOnLink)) { event.preventDefault(); rmSync(offNote, { force: true }); } });
   win.on('hide', installIfIdle);
   nativeTheme.on('updated', () => { if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground()); });
   const updated = existsSync(quietRelaunch);
@@ -263,16 +321,14 @@ async function start() {
   win.once('ready-to-show', () => { if (!updated || updateFailed) win.show(); });
   await win.loadFile(path.join(__dirname, 'loading.html'));
 
-  const found = await connectOrAsk();
-  if (!found) { quitting = true; app.quit(); return; }
-  const { origin, token } = found;
+  const { origin, token } = await keepConnecting();
   await session.defaultSession.cookies.set({ url: origin, name: 'ken_token', value: token, httpOnly: true, sameSite: 'strict', path: '/' });
   // Only Ken's own page may use the microphone, and only for audio, or go fullscreen (a video's ⛶ button).
   const ours = (wc) => wc === win.webContents && new URL(wc.getURL()).origin === origin;
   session.defaultSession.setPermissionCheckHandler((wc, permission) => ours(wc) && ['media', 'fullscreen'].includes(permission));
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) =>
     callback(ours(wc) && (permission === 'fullscreen' || (permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')))));
-  win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); external(url); } });
+  win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin && !url.includes(turnOnLink)) { event.preventDefault(); external(url); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(origin + '/api/chats/') && url.includes('/files/')) win.webContents.downloadURL(url);
     else external(url);
@@ -348,6 +404,10 @@ async function start() {
     if (typeof file !== 'string' || !existsSync(file)) return;
     if (/\.(app|command|sh|bash|zsh|tool|terminal|pkg|mpkg|dmg|scpt|applescript|workflow|jar|py|rb|pl|js|exe|bat|ps1)$/i.test(file)) shell.showItemInFolder(file);
     else await shell.openPath(file);
+  });
+  ipcMain.handle('file:show', (event, file) => {
+    if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');
+    if (typeof file === 'string' && existsSync(file)) shell.showItemInFolder(file);
   });
   ipcMain.handle('folder:pick', async (event) => {
     if (!trustedFrame(event, win, origin)) throw new Error('Untrusted request.');

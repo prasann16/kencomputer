@@ -51,15 +51,46 @@ def test_new_install_after_the_slot_waits_for_tomorrow():
     assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)
 
 
+def test_a_job_added_before_its_time_runs_that_day():
+    # Added at 00:20 for 00:30: the scheduler's first look at it must not use up its first day.
+    job = {"name": "night-loop", "time": "00:30", "days": "daily"}
+    state = {}
+    assert bot.note_new_jobs([job], at("00:20"), state)
+    assert not bot.note_new_jobs([job], at("00:30"), state)  # already known, nothing new to note
+    assert bot._job_due(job, at("00:30"), state)
+
+
+def test_a_job_seen_in_time_still_catches_up_after_sleep():
+    # Seen at 00:20, then the laptop slept through 00:30 and Ken looks again at 00:40.
+    job = {"name": "night-loop", "time": "00:30", "days": "daily"}
+    state = {}
+    bot.note_new_jobs([job], at("00:20"), state)
+    assert bot._job_due(job, at("00:40"), state)
+
+
+def test_first_seen_after_its_time_still_waits_for_tomorrow():
+    state = {}
+    bot.note_new_jobs([BRIEF], at("12:00"), state)  # a new install at noon
+    assert not bot._job_due(BRIEF, at("12:00"), state)
+    assert bot._job_due(BRIEF, at("07:00", "2026-10-06"), state)
+
+
 def test_a_switched_off_job_never_runs():
     assert not bot._job_due({**BRIEF, "on": False}, at("07:00"), {})
+
+
+def test_a_one_time_job_runs_on_its_date_only():
+    job = {"name": "reminder", "time": "10:00", "date": "2026-10-31"}
+    assert bot._job_due(job, at("10:00", "2026-10-31"), {})
+    assert not bot._job_due(job, at("10:00", "2026-11-07"), {})  # the same weekday, a week later
+    assert not bot._job_due(job, at("10:00", "2026-10-30"), {})
 
 
 def test_settings_switch_and_move_a_job():
     import json
     import pytest
     bot.JOBS_FILE.write_text(json.dumps([{**BRIEF, "prompt": "brief"}]))
-    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "on": True, "agent": "", "agent_name": "",
+    assert bot.list_jobs() == [{"name": "morning-brief", "time": "07:00", "days": "daily", "date": "", "on": True, "agent": "", "agent_name": "",
                                 "summary": "brief"}]
     assert bot.set_job("morning-brief", on=False)[0]["on"] is False
     assert bot.set_job("morning-brief", at="06:30")[0]["time"] == "06:30"
@@ -158,3 +189,13 @@ def test_a_job_says_what_it_does():
     bot.JOBS_FILE.write_text(json.dumps([{"name": "crash-review", "time": "09:00", "prompt": long}]))
     assert bot.list_jobs()[0]["summary"] == "Read yesterday's errors from PostHog and fix the top ones on a branch."
     assert bot.job_summary("x" * 200).endswith("…") and len(bot.job_summary("x" * 200)) == 108
+
+
+def test_a_caught_up_job_says_it_is_late():
+    line = bot.late_notice(BRIEF, at("09:40"))
+    assert "morning brief" in line and "07:00" in line and "didn't run then" in line
+
+
+def test_an_on_time_job_says_nothing_extra():
+    assert bot.late_notice(BRIEF, at("07:00")) == ""
+    assert bot.late_notice(BRIEF, at("07:01")) == ""  # a slow minute is not "late"
