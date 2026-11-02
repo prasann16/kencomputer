@@ -18,10 +18,10 @@ Read your memory for their video style (a note like `memory/video-style.md`). If
 their first video: ask ONE question before you start, "Any style you want? Send a reel you like, your brand
 colours or logo, or say 'surprise me'." If they send a reel, grab a few frames of it with ffmpeg and match its
 look (fonts, colours, captions, how graphics look and move). If they say "surprise me", or your instructions
-say not to ask, design the look from their video (see "The look" in step 3). After they're happy with the first video, write
-the style note: fonts, accent colour, caption size, what graphics they like, and every rule they gave you ("no
-emojis", "keep my jokes"). Every correction they make on any video goes into that note right away, so they never
-say it twice.
+say not to ask, design the look from their video (see "The look" in step 3). The style note holds only what they
+asked for: a reel or brand they want matched, their colours or fonts, "keep this look", and every rule they gave
+you ("no emojis", "keep my jokes"). Every correction they make on any video goes into it right away, so they never
+say it twice. Never save a look you chose yourself as their style: each new reel gets its own look.
 
 ## 1. Listen
 
@@ -83,10 +83,10 @@ a warning survives two tries, accept it.
 ## 3. Design it
 
 **Design this reel for this person, this topic and this vibe**, not from a template and not from your last reel.
-Their style note wins when they have one. Otherwise look at a few stills of the cut and decide like a designer
+What their style note asks for wins; design everything else fresh. Look at a few stills of the cut and decide like a designer
 would: who they are, the mood of what they're saying, where the open space in the frame is, and what would look
-made for exactly this video. Two people's reels should never look alike, and two of the same person's reels on
-different topics can differ too.
+made for exactly this video. Two people's reels should never look alike, and the same person's next reel should
+look different from their last one (other colours, type, texture and graphics) unless they asked to keep it.
 
 **The look.**
 
@@ -115,8 +115,9 @@ different topics can differ too.
   and dead time at the end loses viewers). Default text "Follow for more on *<topic>*", or their own sign-off from
   your memory. Skip it if they already end on a call to action, or don't want one.
 - **Graphics**, where a picture says it better than a face. For each one, first decide what would show *this*
-  idea best in *this* reel's look. Then use a library component if it fits as it is, adapt one, or write a new one
-  (below). Making a graphic for the reel is normal, not a last resort: the library is a toolbox, not a menu.
+  idea best in *this* reel's look, and write a new one for it (below), or start from a library component and
+  change how it looks and moves. Library components dropped in as they are make every reel look like the same
+  template: the library is a starting point, not a menu.
 
 Craft rules, whatever the look:
 
@@ -208,7 +209,8 @@ then look at `checks/sheet.jpg` (all of them side by side, the safe zones tinted
 graphic and an emphasized caption. Look for: text that's cut off, too long or in a red zone, a graphic covering
 their face at the wrong moment, captions colliding with an over-the-video graphic (move it or set
 `hideCaptions`), colours that clash with the footage. Ask yourself: would a good editor be proud of this frame, or
-does it look like a template, or like your last reel?
+does it look like a template? If they've had a reel before, compare with its `props.json` in their projects: the
+same colours, fonts and graphics mean start the look again.
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
