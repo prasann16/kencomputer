@@ -1,11 +1,11 @@
 ---
 name: website-design
-description: Use for ANY website, landing page, waitlist page, portfolio, product page, UI screen or HTML/CSS you build or restyle for them or their ideas. Stops generic "AI slop" looks (purple gradients, Inter + rounded cards, emoji bullets, hype copy) and makes you review your own screenshots before anyone sees the page.
+description: Use when you build or restyle a website, landing page, waitlist or portfolio for them. Makes it look crafted, not like generic AI, and has you check it in screenshots before sharing.
 ---
 
 # Website design: crafted, not slop
 
-Models default to the statistical middle of the web ("distributional convergence"), so an unguided page looks like every other vibe coded page. Your job is to direct, then check your own work with your eyes. Read this before writing the first line of HTML.
+Models default to the statistical middle of the web ("distributional convergence"), so an unguided page looks like every other vibe coded page. Your job is to direct, then check your own work with your eyes. Read this before writing the first line of HTML. If they already have a style (an existing site, brand fonts and colours, or style notes in memory), follow it over the defaults below.
 
 ## 1. Decide before you code (write these 6 lines at the top of your notes)
 1. Who it is for and the ONE job of the page (sign up, book a call, try the demo).
@@ -17,7 +17,7 @@ Models default to the statistical middle of the web ("distributional convergence
 
 ## 2. Typography first
 - Type does most of the design. Scale: 14, 16, 18, 22, 28, 36, 48, 64 px. Body 17 to 18 px, line height 1.5 to 1.65, lines under 72 characters. Headings tight (line height 1.1, slight negative tracking).
-- Do NOT reach for: Inter, Roboto, Arial, Poppins, Montserrat, Space Grotesk, Instrument Serif, Geist, or an italic serif accent word inside a sans headline. These are the current AI tells.
+- Do NOT reach for: Inter, Roboto, Arial, Poppins, Montserrat, Space Grotesk, or an italic serif accent word inside a sans headline. These are the current AI tells.
 - Pairings that work (Google Fonts or system, pick by direction):
   - Editorial / personal: Newsreader or Source Serif 4 headings + Public Sans body. Or a zero download serif stack: `"Iowan Old Style", Charter, "Bitstream Charter", Georgia, serif`.
   - Technical / dev tool: IBM Plex Sans + IBM Plex Mono (mono only for real code, not for labels).
@@ -65,19 +65,14 @@ Models default to the statistical middle of the web ("distributional convergence
 - No "Join 2,000 others" unless that number is real.
 
 ## 10. Mandatory self review (at least 2 rounds, before showing anyone)
-Serve the folder (`python -m http.server 8765 --bind 127.0.0.1`) and screenshot both widths, one chromium at a time:
-```
-chromium --headless=new --disable-gpu --hide-scrollbars --window-size=1440,2200 --screenshot=/tmp/shots/desk.png http://127.0.0.1:8765/
-chromium --headless=new --disable-gpu --hide-scrollbars --window-size=390,2600 --screenshot=/tmp/shots/mob.png http://127.0.0.1:8765/
-```
-No `chromium`? Use Chrome's binary (macOS: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`, same flags) or the browser tool's screenshot at both sizes. Open each PNG with Read and actually look. Then answer in writing:
+Open the page in the browser tool (a file path works) and take a screenshot at desktop width (1440 px) and phone width (390 px), resizing the page between them. Look at each one. Then answer in writing:
 1. In 3 seconds, can I tell what this is, for whom, and what to do next?
 2. Does it look like it belongs to THIS product, or could the logo be swapped onto any startup?
 3. Count anti slop hits from sections 2 to 7. Target zero.
 4. Is every fact real and traceable? Any placeholder left?
 5. Type: clear scale, comfortable line length, no widows in the headline? Spacing on the scale?
 6. Mobile: nothing cramped, clipped or overflowing, button reachable?
-Fix everything you found, re screenshot, review again. Stop the server when done. Only then share, and send the final screenshots with it.
+Fix everything you found, re screenshot, review again. Only then share, and send the final screenshots with it.
 
 ## Sources
 Anthropic frontend-design skill (github.com/anthropics/skills, skills/frontend-design); Vercel Web Interface Guidelines (github.com/vercel-labs/web-interface-guidelines); Adrian Krebs, scoring Show HN pages for AI design patterns (adriankrebs.ch/blog/design-slop); prg.sh "Why your AI keeps building the same purple gradient website"; Julian Shapiro landing page guide (julian.com/guide/growth/landing-pages); Harry Dry (marketingexamples.com); Emil Kowalski (emilkowal.ski/ui/great-animations); Rauno Freiberg (rauno.me/craft/interaction-design); Refactoring UI (refactoringui.com). Crafted examples to study: rauno.me, paco.me, emilkowal.ski, linear.app.
