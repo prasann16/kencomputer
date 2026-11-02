@@ -21,7 +21,8 @@ svc() {
 # `ken update` replaces this very file mid-run.
 main() {
 case "${1:-help}" in
-  start|stop|restart) svc "$1"; echo "done." ;;
+  start|restart) rm -f "$KEN_HOME/off"; svc "$1"; echo "done." ;;  # the note /kill leaves
+  stop) svc stop; echo "done." ;;
   status) svc status ;;
   logs)
     if [ "$OS" = "Linux" ]; then journalctl --user -u ken -n "${2:-50}" --no-pager

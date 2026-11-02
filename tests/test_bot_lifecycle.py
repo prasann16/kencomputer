@@ -81,3 +81,39 @@ def test_ken_codex_has_its_own_folder(tmp_path, monkeypatch):
     assert os.environ["KEN_CODEX_HOME"] == str(tmp_path / "codex")  # never the person's own ~/.codex
     if os.name != "nt":  # Windows keeps a user's folders private with ACLs, not mode bits
         assert (tmp_path / "codex").stat().st_mode & 0o077 == 0  # the login lives here: only its owner can read it
+
+
+async def test_kill_stops_everything_and_keeps_ken_off(monkeypatch, tmp_path):
+    import time
+    note = tmp_path / "off"
+    monkeypatch.setattr(bot, "OFF_NOTE", note)
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 7)
+    engine = SimpleNamespace(chats={"home": object()}, stop_chat=AsyncMock(), stop_run=AsyncMock(),
+                             list_runs=Mock(return_value=[{"id": "r1"}]))
+    monkeypatch.setattr(bot, "ENGINE", engine)
+    monkeypatch.setattr(bot, "decaf", Mock())
+    off = Mock()
+    monkeypatch.setattr(bot, "turn_off", off)
+
+    def tap(sent_at):
+        message = SimpleNamespace(date=SimpleNamespace(timestamp=lambda: sent_at), reply_text=AsyncMock())
+        return SimpleNamespace(callback_query=SimpleNamespace(from_user=SimpleNamespace(id=7), message=message, answer=AsyncMock(),
+                                                              edit_message_reply_markup=AsyncMock()))
+
+    await bot.on_kill_pick(tap(time.time() - 600), None)  # an old button: nothing happens
+    assert not note.exists() and not off.called
+    await bot.on_kill_pick(tap(time.time()), None)
+    assert note.exists() and off.called
+    engine.stop_chat.assert_awaited_with("home")
+    engine.stop_run.assert_awaited_with("r1", by="you")
+
+
+def test_an_engine_turned_off_with_kill_doesnt_start(monkeypatch, tmp_path):
+    (tmp_path / "off").write_text("now\n")
+    monkeypatch.setattr(bot, "OFF_NOTE", tmp_path / "off")
+    monkeypatch.setattr(bot, "turn_off", Mock(side_effect=SystemExit))
+    lock = Mock()
+    monkeypatch.setattr(bot, "one_engine", lock)
+    with pytest.raises(SystemExit):
+        bot.main()
+    assert not lock.called

@@ -12,6 +12,7 @@ function Get-KenProcesses {
     Where-Object { $_.CommandLine -and $_.CommandLine.Contains($App) }
 }
 function Start-Ken {
+  Remove-Item (Join-Path $KenHome "off") -ErrorAction SilentlyContinue  # the note /kill leaves
   if (Get-KenProcesses) { return }
   Start-Process -FilePath $Pythonw -ArgumentList "`"$App\winrun.py`"" -WorkingDirectory $KenHome
 }

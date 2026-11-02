@@ -119,10 +119,72 @@ def link_dir(link: Path, target: Path) -> None:
         link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
 
 
-def prepare_skills(home: Path, builtin: Path | None = None) -> Path | None:
+# Skills the person made in their other AI apps. Ken reads them where they are and never writes there.
+OTHER_SKILLS = {
+    "Claude Code": [Path.home() / ".claude" / "skills"],
+    "Codex": [Path.home() / ".agents" / "skills", Path.home() / ".codex" / "skills"],
+}
+
+
+def _skill_folders(d: Path) -> list[Path]:
+    try:
+        return sorted(f for f in d.iterdir() if not f.name.startswith(".") and (f / "SKILL.md").is_file())
+    except OSError:
+        return []
+
+
+def other_skills(others: dict[str, list[Path]]) -> list[tuple[str, str, Path]]:
+    """(id, app, folder) for each skill in the other apps' folders, like "claude-code:pdf"."""
+    out, seen = [], set()
+    for app, dirs in others.items():
+        for d in dirs:
+            for f in _skill_folders(d):
+                sid = f"{slugify(app)}:{f.name}"
+                if sid not in seen:
+                    seen.add(sid)
+                    out.append((sid, app, f))
+    return out
+
+
+def skills_off(home: Path) -> set[str]:
+    try:
+        return set(json.loads((home / "skills-off.json").read_text()))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def _unlink(p: Path) -> None:
+    """Remove a link (a symlink, or a junction on Windows), never what it points at."""
+    try:
+        p.unlink()
+    except OSError:
+        os.rmdir(p)
+
+
+def gather_skills(home: Path, others: dict[str, list[Path]]) -> Path:
+    """<home>/.skills-in-use: a link to each skill the brains should see. Ken's own skills, then the
+    ones from the person's other AI apps that aren't switched off. A name Ken already has stays Ken's."""
+    use = home / ".skills-in-use"
+    use.mkdir(parents=True, exist_ok=True)
+    want = {f.name: f for f in _skill_folders(home / "skills")}
+    off = skills_off(home)
+    for sid, _, f in other_skills(others):
+        if sid not in off and f.name not in want:
+            want[f.name] = f
+    for link in use.iterdir():
+        if link.name not in want or os.path.realpath(link) != os.path.realpath(want[link.name]):
+            _unlink(link)
+    for name, f in want.items():
+        if not os.path.lexists(use / name):
+            link_dir(use / name, f)
+    return use
+
+
+def prepare_skills(home: Path, builtin: Path | None = None, others: dict[str, list[Path]] | None = None) -> Path | None:
     """Ken's skills live in <home>/skills, one folder per skill (SKILL.md and its files), shared by
-    every chat and both brains. Claude Code only finds skills inside a plugin, so a small hidden
-    plugin, <home>/.skills-plugin, points at that folder. Returns the plugin, or None if it can't be made.
+    every chat and both brains, along with the skills from the person's other AI apps (`others`).
+    Claude Code only finds skills inside a plugin, so a small hidden plugin, <home>/.skills-plugin,
+    points at <home>/.skills-in-use. Returns the plugin, or None if it can't be made.
     The skills Ken ships with (`builtin`) are copied in and kept up to date, unless the copy lost its
     .from-ken mark (someone made it their own)."""
     skills, plugin = home / "skills", home / ".skills-plugin"
@@ -139,8 +201,11 @@ def prepare_skills(home: Path, builtin: Path | None = None) -> Path | None:
         if not manifest.exists():
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text(json.dumps({"name": "ken-skills", "description": "Skills Ken has added"}, indent=2) + "\n")
-        if not (plugin / "skills").exists():
-            link_dir(plugin / "skills", skills)
+        use = gather_skills(home, others or {})
+        if os.path.lexists(plugin / "skills") and os.path.realpath(plugin / "skills") != os.path.realpath(use):
+            _unlink(plugin / "skills")  # older Ken pointed it at <home>/skills
+        if not os.path.lexists(plugin / "skills"):
+            link_dir(plugin / "skills", use)
         return plugin
     except OSError as e:
         log.warning("couldn't set up the skills folder: %s", e)
@@ -188,6 +253,7 @@ class Engine:
         self.chat_tasks: set[asyncio.Task] = set()
         self.chat_tools: dict[str, float] = {}  # when each open agent chat last read its tools.json
         self.home_cwd = self.home / "work"
+        self.other_skills: dict[str, list[Path]] = {}  # app name -> its skills folders (OTHER_SKILLS in Ken)
         self.home_system: Callable[[], str] = lambda: ""
         self.agent_base: Callable[[], str] = lambda: ""
         # The built-in tools ("browser", "email", "calendar") an agent may be given: MCP servers, and their prompt.
@@ -671,23 +737,35 @@ class Engine:
         cfg = self.tools_config(pid)
         return {**self.tools(set(cfg["use"]), self.backend(pid)), **cfg["mcp"]}
 
+    def sync_skills(self) -> None:
+        try:
+            gather_skills(self.home, self.other_skills)
+        except OSError as e:
+            log.warning("couldn't gather skills: %s", e)
+
     def _share_skills(self, cwd: Path) -> None:
-        """Codex finds skills in <folder>/.agents/skills: Ken's own folders point it at Ken's skills.
+        """Codex finds skills in <folder>/.agents/skills: Ken's own folders point it at the skills in use.
         A folder of theirs (an agent's code or info folder) is never written to."""
-        skills, cwd = self.home / "skills", Path(cwd)
+        use, cwd = self.home / ".skills-in-use", Path(cwd)
         link = cwd / ".agents" / "skills"
-        if not skills.is_dir() or self.home.resolve() not in cwd.resolve().parents or link.exists() or link.is_symlink():
+        if not use.is_dir() or self.home.resolve() not in cwd.resolve().parents:
             return
         try:
+            if link.is_symlink() and os.path.realpath(link) == os.path.realpath(self.home / "skills"):
+                _unlink(link)  # older Ken pointed it at <home>/skills
+            if os.path.lexists(link):
+                return
             link.parent.mkdir(exist_ok=True)
-            link_dir(link, skills)
+            link_dir(link, use)
         except OSError as e:
             log.warning("couldn't share Ken's skills with Codex in %s: %s", cwd, e)
 
     def _tools_stamp(self, pid: str) -> tuple:
-        """Changes when its tools, keys or Ken's skills do, so an open chat reopens with them."""
+        """Changes when its tools, keys or skills do, so an open chat reopens with them."""
         out = [self.backend(pid)]
-        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills"):
+        others = [d for dirs in self.other_skills.values() for d in dirs]
+        for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills",
+                  self.home / "skills-off.json", *others):
             try:
                 out.append(f.stat().st_mtime)
             except OSError:
@@ -722,26 +800,46 @@ class Engine:
         return out
 
     def list_skills(self) -> list[dict]:
-        """Ken's skills: one folder each in <home>/skills, named and described by its SKILL.md."""
-        out, d = [], self.home / "skills"
-        for f in sorted(d.iterdir()) if d.is_dir() else []:
-            md = f / "SKILL.md"
-            if f.name.startswith(".") or not md.is_file():
-                continue
-            meta, text = {}, md.read_text(errors="replace")
-            if text.startswith("---"):
-                for line in text.split("---", 2)[1].splitlines():
-                    key, _, value = line.partition(":")
-                    if key.strip() in ("name", "description"):
-                        meta[key.strip()] = value.strip().strip("\"'")
-            out.append({"id": f.name, "name": meta.get("name") or f.name, "about": meta.get("description", "")[:200]})
+        """Ken's skills (one folder each in <home>/skills), then the ones from the person's other AI
+        apps, with which app and whether it's on. Each is named and described by its SKILL.md."""
+        out = [{"id": f.name, **self._skill_meta(f)} for f in _skill_folders(self.home / "skills")]
+        mine, off = {s["id"] for s in out}, skills_off(self.home)
+        for sid, app, f in other_skills(self.other_skills):
+            out.append({"id": sid, **self._skill_meta(f), "app": app, "on": sid not in off,
+                        **({"same_name": True} if f.name in mine else {})})
         return out
 
+    @staticmethod
+    def _skill_meta(f: Path) -> dict:
+        meta, text = {}, (f / "SKILL.md").read_text(errors="replace")
+        if text.startswith("---"):
+            for line in text.split("---", 2)[1].splitlines():
+                key, _, value = line.partition(":")
+                if key.strip() in ("name", "description"):
+                    meta[key.strip()] = value.strip().strip("\"'")
+        return {"name": meta.get("name") or f.name, "about": meta.get("description", "")[:200]}
+
     def _skill_dir(self, sid: str) -> Path:
+        if ":" in sid:
+            found = next((f for i, _, f in other_skills(self.other_skills) if i == sid), None)
+            if not found:
+                raise KeyError(sid)
+            return found
         d = self.home / "skills" / sid
         if not sid or "/" in sid or "\\" in sid or sid.startswith(".") or not d.is_dir():
             raise KeyError(sid)
         return d
+
+    def switch_skill(self, sid: str, on: bool) -> list[dict]:
+        """A skill from another app, on or off for Ken. Its own folder is left as it is."""
+        if ":" not in sid:
+            raise KeyError(sid)
+        self._skill_dir(sid)
+        off = skills_off(self.home)
+        off = off - {sid} if on else off | {sid}
+        (self.home / "skills-off.json").write_text(json.dumps(sorted(off), indent=2) + "\n")
+        self.sync_skills()
+        return self.list_skills()
 
     def read_skill(self, sid: str) -> dict:
         """A skill to read: its SKILL.md (without the front matter) and what else its folder holds."""
@@ -754,6 +852,8 @@ class Engine:
         return {**meta, "text": text.strip(), "parts": parts}
 
     def remove_skill(self, sid: str) -> list[dict]:
+        if ":" in sid:
+            raise KeyError(sid)  # another app's skill: switch it off instead
         d = self._skill_dir(sid)
         if (d / ".from-ken").exists():
             (d.parent / f".removed-{sid}").touch()
@@ -1033,6 +1133,7 @@ class Engine:
             s = None
         if s is None:
             brain = self.brain_for(pid)
+            self.sync_skills()
             if brain.name == "codex":
                 self._share_skills(self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid)))
             self.chat_tools[pid] = self._tools_stamp(pid)
@@ -1166,9 +1267,9 @@ class Engine:
             self.chat_tasks.discard(asyncio.current_task())
 
     async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
-                      listener: Callable[[str], Awaitable[None]] | None = None) -> str:
+                      listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:
         """A scheduled job in a fresh session of its own, so nothing left over in the chat can steer
-        it, and only its final answer reaches them."""
+        it, and only its final answer reaches them, after `preface` (a caught-up job says it's late)."""
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         session = self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
@@ -1195,6 +1296,8 @@ class Engine:
         text = self.mask(pid, text)
         if not text:
             return ""
+        if preface:
+            text = f"{preface}\n\n{text}"
         self.log_message(pid, "ken", text, **({"job": job} if job else {}))
         # The chat's own session didn't see this; it hears it with their next message.
         said = json.loads(self.kv_get(f"jobs:said:{pid}") or "[]")[-4:]
@@ -1375,6 +1478,7 @@ class Engine:
             self._set_run(rid, status="running", started=time.time(), activity="starting")
             self.emit("run.started", project=pid, run=rid)
             cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
+            self.sync_skills()
             if self.brain_for(pid).name == "codex":
                 self._share_skills(cwd)
             note = (f'\n\nBackground run: "{run["title"]}". Nobody is watching; '

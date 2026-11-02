@@ -12,12 +12,11 @@ import { basename, join, resolve } from "node:path";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, codeHash, hash, oneAtATime } from "./lib.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime, placements } from "./lib.mjs";
 
 const FPS = 30;
 const W = 1080, H = 1920;
 const SHEET_LIFT = 340; // as in src/theme.ts
-const PLACEMENTS = { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over", browser: "over" };
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -39,6 +38,7 @@ mkdirSync(join(layers, "graphics"), { recursive: true });
 const code = codeHash();
 
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
+const PLACEMENTS = placements();
 const graphics = (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? PLACEMENTS[g.type] ?? "sheet" }));
 
 // ---- Captions: what they look like at every frame, exactly as Reel.tsx's Captions draws them.
@@ -146,10 +146,24 @@ if (plan) process.exit(0);
 
 // ---- Draw what's missing.
 const started = Date.now();
+// A line every tenth of the way, so a slow draw shows it's moving (and a stuck one shows where).
+const progress = (what, total) => {
+  let shown = 0;
+  return (done) => {
+    const tenth = Math.floor((done / total) * 10);
+    if (tenth > shown && tenth < 10) {
+      shown = tenth;
+      console.log(`${what}: ${done}/${total} (${Math.round((Date.now() - started) / 1000)}s)`);
+    }
+  };
+};
 if (capTodo.length || clipTodo.length) {
   await oneAtATime("compose");
+  const step = (what) => console.log(`${what} (${Math.round((Date.now() - started) / 1000)}s)`);
   const serveUrl = await cachedBundle(work, props, { video: false });
+  step("bundle ready");
   const browser = await openBrowser("chrome");
+  step("Chrome open");
   try {
     if (capTodo.length) {
       const inputProps = { ...props, pick: capTodo.map(([, f]) => f) };
@@ -157,7 +171,7 @@ if (capTodo.length || clipTodo.length) {
       const dir = join(layers, "captions", `.draw-${process.pid}`);
       await renderFrames({
         serveUrl, composition, inputProps, puppeteerInstance: browser, imageFormat: "png", outputDir: dir,
-        frameRange: [0, capTodo.length - 1], onStart: () => {}, onFrameUpdate: () => {}, concurrency, logLevel: "error",
+        frameRange: [0, capTodo.length - 1], onStart: () => {}, onFrameUpdate: progress("captions", capTodo.length), concurrency, logLevel: "error",
       });
       // renderFrames numbers its files in frame order, zero-padded, so sorted names line up with capTodo.
       const drawn = readdirSync(dir).filter((f) => f.endsWith(".png")).sort();
@@ -170,10 +184,11 @@ if (capTodo.length || clipTodo.length) {
       const composition = await selectComposition({ serveUrl, id: "GraphicsLayer", inputProps: props, puppeteerInstance: browser });
       for (const c of clipTodo) {
         const tmp = `${c.file}.part.mov`;
+        const drawn = progress("graphics", c.b - c.a);
         await renderMedia({
           serveUrl, composition, inputProps: props, puppeteerInstance: browser, codec: "prores", proResProfile: "4444",
           imageFormat: "png", pixelFormat: "yuva444p10le", muted: true, frameRange: [c.a, c.b - 1], outputLocation: tmp,
-          overwrite: true, concurrency, logLevel: "error",
+          overwrite: true, concurrency, logLevel: "error", onProgress: ({ renderedFrames }) => drawn(renderedFrames),
         });
         renameSync(tmp, c.file);
         console.log(`drew graphics ${(c.a / FPS).toFixed(1)}–${(c.b / FPS).toFixed(1)}s (${Math.round((Date.now() - started) / 1000)}s)`);

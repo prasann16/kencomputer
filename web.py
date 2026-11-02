@@ -520,6 +520,12 @@ class WebApp:
         except KeyError:
             return _json({"error": "No such skill."}, 404)
 
+    async def switch_skill(self, request):
+        try:
+            return _json(self.engine.switch_skill(request.match_info["sid"], bool((await self._body(request)).get("on"))))
+        except KeyError:
+            return _json({"error": "No such skill."}, 404)
+
     async def skill(self, request):
         try:
             return _json(self.engine.read_skill(request.match_info["sid"]))
@@ -719,6 +725,7 @@ class WebApp:
         r.add_route("*", "/api/about/{pid}/memory/{name}", self.note)
         r.add_delete("/api/skills/{sid}", self.remove_skill)
         r.add_get("/api/skills/{sid}", self.skill)
+        r.add_put("/api/skills/{sid}", self.switch_skill)
         r.add_put("/api/agents/{pid}/keys/{name}", self.put_key)
         r.add_delete("/api/agents/{pid}/keys/{name}", self.remove_key)
         r.add_post("/api/runs", self.start_run)
