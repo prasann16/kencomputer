@@ -1156,7 +1156,14 @@ class Engine:
 
     def record_usage(self, session, pid: str, kind: str, **extra) -> None:
         """What one message or job used, per model: a line in usage.jsonl here, and the same numbers
-        in usage stats (off with KEN_USAGE_STATS=0). Never what was said."""
+        in usage stats (off with KEN_USAGE_STATS=0). Never what was said. Fails silently: counting
+        must never get in the way of an answer."""
+        try:
+            self._record_usage(session, pid, kind, **extra)
+        except Exception as e:
+            log.debug("usage not recorded: %s", e)
+
+    def _record_usage(self, session, pid: str, kind: str, **extra) -> None:
         rows = getattr(session, "usage", None) or []
         if getattr(session, "spent", None) is not None and session.session_id:
             self.kv_set(f"spent:{session.session_id}", json.dumps(session.spent))

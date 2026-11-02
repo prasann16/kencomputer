@@ -100,3 +100,17 @@ async def test_engine_records_usage_numbers_only_and_keeps_totals_for_resume(tmp
                                   "model": "m", "cost_usd": 0.3, "input_tokens": 1, "output_tokens": 2,
                                   "cache_read_tokens": 3, "cache_write_tokens": 4})]
     assert json.loads(e.kv_get("spent:sess-9")) == Done.spent
+
+
+def test_recording_usage_never_breaks_anything(tmp_path):
+    from test_engine import FakeBrain
+    from engine import Engine, HOME
+
+    e = Engine(tmp_path, FakeBrain())
+
+    class Broken:
+        session_id = "s"
+        spent = {"m": object()}  # can't be saved
+        usage = [{"model": "m"}]
+
+    e.record_usage(Broken(), HOME, "chat")  # no exception
