@@ -165,9 +165,10 @@ ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the ap
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
-# The Claude plan's usage: /usage, and a heads-up when it's nearly used up.
+# The AI plan's usage: /usage, and a heads-up when it's nearly used up.
 USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"))
 BRAINS["claude"].on_rate_limit = USAGE.record
+BRAINS["codex"].on_rate_limit = USAGE.record_codex
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
@@ -1665,8 +1666,11 @@ async def model(arg: str = "") -> dict:
 
 
 async def usage(arg: str = "") -> dict:
-    """/usage: how much of the Claude plan is used, in a few phone-sized lines."""
-    return {"reply": USAGE.report(ENGINE.backend(HOME))}
+    """/usage: how much of the AI plan and of this computer's memory is used, in a few phone-sized lines."""
+    backend = ENGINE.backend(HOME)
+    if backend == "codex":
+        await BRAINS["codex"].usage()  # Codex answers when asked; Claude's readings come in as it works
+    return {"reply": USAGE.report(backend)}
 
 
 async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2000,7 +2004,7 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
-                ("usage", "How much of your Claude plan is used"),
+                ("usage", "How much of your AI plan and memory is used"),
                 ("kill", "Turn Ken off in an emergency"),
             ])
         except Exception as e:

@@ -1,4 +1,4 @@
-"""/usage and the heads-up: plan readings, saying it once per window."""
+"""/usage and the heads-up: plan readings (Claude and ChatGPT), saying it once per window, memory."""
 import os
 import tempfile
 from pathlib import Path
@@ -56,15 +56,47 @@ def test_heads_up_once_per_window_and_again_after_it_resets():
     assert len(said) == 2
 
 
+GB = 1024 ** 3
+
+
 def test_usage_text():
     u, _ = fresh()
-    assert "No usage reading yet" in u.report("claude", NOW)
-    assert "only shown for Claude" in u.report("codex", NOW)
+    assert "No reading yet" in u.report("claude", NOW, mem={})
     u.record(RAW, NOW)
-    text = u.report("claude", NOW)
+    text = u.report("claude", NOW, mem={"total": 16 * GB, "available": 6 * GB}, ken=1.5 * GB)
     assert "5 hour  ▰▱▱▱▱▱▱▱▱▱ 12%" in text and "Weekly  ▰▰▰▰▰▱▱▱▱▱ 49%" in text
+    assert "Memory  ▰▰▰▰▰▰▱▱▱▱ 62% · 10.0GB of 16.0GB" in text and "Ken is using 1.5GB of it" in text
+
+
+# What Codex's account/rateLimits/read answers (openai-codex 0.163).
+CODEX = {"primary": {"usedPercent": 84, "windowDurationMins": 300, "resetsAt": int(NOW + 1800)},
+         "secondary": {"usedPercent": 30, "windowDurationMins": 10080, "resetsAt": int(NOW + 4 * 86400)},
+         "planType": "plus", "rateLimitReachedType": None}
+
+
+def test_chatgpt_plan_readings_and_heads_up():
+    u, said = fresh()
+    u.record_codex(CODEX, NOW)
+    assert said == [f"Heads-up: you've used 84% of your ChatGPT plan's 5 hour limit. It resets {usage.when(NOW + 1800, NOW)}."]
+    text = u.report("codex", NOW, mem={})
+    assert text.startswith("Your ChatGPT plan:") and "5 hour  ▰▰▰▰▰▰▰▰▱▱ 84%" in text and "Weekly  ▰▰▰▱▱▱▱▱▱▱ 30%" in text
+    assert "No reading yet" in u.report("claude", NOW, mem={})  # each plan keeps its own readings
+
+
+def test_this_computers_memory_is_read():
+    mem = usage.memory()
+    assert mem["total"] > 0 and 0 <= mem["available"] <= mem["total"]
+    assert usage.ken_memory() > 0 or not usage._run("ps", "-o", "pid=")
 
 
 def test_when_today_and_later():
     assert usage.when(None) == "unknown"
     assert ":" in usage.when(NOW + 60, NOW)
+    assert usage.when(NOW + 20 * 86400, NOW)[:3].isalpha() and ":" not in usage.when(NOW + 20 * 86400, NOW)  # 'Nov 23'
+
+
+def test_a_free_chatgpt_plan_has_a_monthly_window():
+    u, _ = fresh()
+    u.record_codex({"primary": {"usedPercent": 4, "windowDurationMins": 43200, "resetsAt": int(NOW + 20 * 86400)},
+                    "secondary": None, "planType": "free"}, NOW)
+    assert "Monthly  ▱▱▱▱▱▱▱▱▱▱ 4%" in u.report("codex", NOW, mem={})

@@ -31,6 +31,17 @@ def codex_client(*, cwd=None, env=None):
     ))
 
 
+async def read_usage(client) -> dict | None:
+    """The ChatGPT plan's usage windows as Codex reports them (rateLimits), or None if it can't say."""
+    from openai_codex.generated.v2_all import GetAccountRateLimitsResponse
+
+    try:
+        r = await asyncio.wait_for(client._client.request("account/rateLimits/read", {}, response_model=GetAccountRateLimitsResponse), 10)
+        return r.rate_limits.model_dump(mode="json", by_alias=True)
+    except Exception:
+        return None
+
+
 def mcp_config(servers: dict) -> dict:
     """Translate Ken's Claude-compatible external MCP configuration to Codex."""
     result = {}
@@ -145,6 +156,8 @@ class CodexSession(Session):
                         raise asyncio.CancelledError
             if not completed:
                 raise RuntimeError("Codex disconnected before the turn completed")
+            if self.brain.on_rate_limit is not None and (snapshot := await read_usage(self.client)):
+                self.brain.on_rate_limit(snapshot)  # the plan's usage after this turn, for /usage and the heads-up
             return final
         except asyncio.CancelledError:
             await self.interrupt()
@@ -187,6 +200,21 @@ class CodexBrain(Brain):
 
     def __init__(self, model_fn=lambda: "", *, mcp_factory=None):
         self.model_fn, self.mcp_factory = model_fn, mcp_factory
+        self.on_rate_limit = None  # every turn's plan usage reading
+
+    async def usage(self) -> dict | None:
+        """Ask Codex for the plan's usage now, for /usage."""
+        client = codex_client()
+        try:
+            await client.__aenter__()
+            snapshot = await read_usage(client)
+        except Exception:
+            return None
+        finally:
+            await client.close()
+        if snapshot and self.on_rate_limit is not None:
+            self.on_rate_limit(snapshot)
+        return snapshot
 
     def session(self, *, cwd, system, resume=None, model_fn=None, mcp_fn=None, env_fn=None):
         return CodexSession(self, cwd, system, resume, model_fn, mcp_fn, env_fn)
