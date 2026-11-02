@@ -32,7 +32,8 @@ async function running({ origin, token }) {
   catch { return null; }
 }
 
-const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home } }, () => resolve()));
+// Capped, so a start command that never returns can't leave the window on "Opening…": connect() then says so.
+const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { env: { ...process.env, KEN_HOME: home }, timeout: 30000 }, () => resolve()));
 // install.sh puts its own copy of Ken (and a venv) in the Ken home.
 const terminalInstall = path.join(home, 'app', 'bot.py');
 const appAgent = 'dev.kencomputer.app', appAgentFile = path.join(os.homedir(), 'Library/LaunchAgents', appAgent + '.plist');
@@ -114,6 +115,17 @@ function lastError() {
   } catch { return ''; }
 }
 
+// /kill on the phone leaves this note: Ken stays off, and the window says so, until Turn Ken On removes it.
+const offNote = path.join(home, 'off');
+const turnOnLink = 'loading.html?turn-on';
+
+async function stayOff() {
+  if (!existsSync(offNote)) return;
+  await win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'off' }).catch(() => {});
+  while (existsSync(offNote)) await new Promise((resolve) => setTimeout(resolve, 1000));
+  await win.loadFile(path.join(__dirname, 'loading.html')).catch(() => {});
+}
+
 // Connect to the running service, starting (or, after an app update, restarting) it if needed.
 // A busy Mac can take minutes to start the engine: while it's alive it's left to finish, never
 // restarted (that threw away a slow start and began again). `onSlow` fires once if it's taking a
@@ -131,6 +143,7 @@ async function connect(onSlow = () => {}, fresh = false) {
   let slow = false, goneSince = null, restarted = false;
   const pids = new Set();
   while (seconds() < 300 && pids.size < 4) {  // up to 5 minutes while it's alive; a few crashes in a row end it
+    if (existsSync(offNote)) throw new Error('Ken is off.');  // turned off meanwhile: don't keep starting it
     if (ready(await running(service()))) return service();
     if (!slow && seconds() > 10) { slow = true; onSlow(); }
     const pid = await engineAlive();
@@ -149,7 +162,9 @@ async function connect(onSlow = () => {}, fresh = false) {
 // Connect, and keep at it: no dialog to answer. If it fails, the window says so and it starts the engine over every 30 seconds.
 async function keepConnecting(fresh = false) {
   for (let attempt = 0; ; attempt++) {
+    await stayOff();
     try { return await connect(() => win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'slow' }).catch(() => {}), fresh || attempt > 0); } catch (error) {
+      if (existsSync(offNote)) continue;
       console.error(error.message);
       await win.loadFile(path.join(__dirname, 'loading.html'), { hash: 'trouble' }).catch(() => {});
       await new Promise((resolve) => setTimeout(resolve, 30000));
@@ -169,7 +184,8 @@ function watchEngine() {
     if (healing || quitting || now - wokeAt < 60000) return;
     if ((await running(service())) !== null) { misses = 0; return; }
     // Not answering: 15 seconds and it's brought back, or 2 minutes if it's alive (a busy Mac can be that slow).
-    if (++misses < (await engineAlive() ? 24 : 3)) return;
+    // Turned off with /kill: say so straight away.
+    if (++misses < (existsSync(offNote) ? 1 : await engineAlive() ? 24 : 3)) return;
     healing = true; misses = 0;
     await win.loadFile(path.join(__dirname, 'loading.html'));
     const found = await keepConnecting(true);  // it stopped answering: start it over
@@ -290,6 +306,7 @@ async function start() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', trafficLightPosition: { x: 20, y: 21 },
     icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.on('close', (event) => { if (!quitting) { event.preventDefault(); win.hide(); } });
+  win.webContents.on('will-navigate', (event, url) => { if (url.startsWith('file:') && url.includes(turnOnLink)) { event.preventDefault(); rmSync(offNote, { force: true }); } });
   win.on('hide', installIfIdle);
   nativeTheme.on('updated', () => { if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground()); });
   const updated = existsSync(quietRelaunch);
@@ -311,7 +328,7 @@ async function start() {
   session.defaultSession.setPermissionCheckHandler((wc, permission) => ours(wc) && ['media', 'fullscreen'].includes(permission));
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) =>
     callback(ours(wc) && (permission === 'fullscreen' || (permission === 'media' && (details.mediaTypes || []).every((type) => type === 'audio')))));
-  win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); external(url); } });
+  win.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin && !url.includes(turnOnLink)) { event.preventDefault(); external(url); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(origin + '/api/chats/') && url.includes('/files/')) win.webContents.downloadURL(url);
     else external(url);
