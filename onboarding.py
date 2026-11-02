@@ -203,7 +203,11 @@ class Onboarding:
             if self.fd is None or self.exited:
                 raise OSError("sign-in not running")
             before = len(self.output)
-            os.write(self.fd, code.strip().encode() + b"\r")
+            # Typed, then Enter, like a person: a long code and Enter arriving together reads as a paste, and an Enter
+            # inside a paste doesn't submit, so the CLI would sit there with the code in its box.
+            os.write(self.fd, code.strip().encode())
+            await asyncio.sleep(0.5)
+            os.write(self.fd, b"\r")
         except OSError:
             return {**await self.start(), "error": "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."}
         # The CLI answers a code within seconds: the token, or an error such as "OAuth error: … 400". Say which at once.
