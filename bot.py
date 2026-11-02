@@ -165,8 +165,9 @@ ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the ap
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
-# The AI plan's usage: /usage, and a heads-up when it's nearly used up.
-USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"))
+# The AI plan's usage and the computer's memory: /usage, and a heads-up when either is nearly used up.
+USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
+              jobs=lambda: [r["title"] for r in ENGINE.list_runs(active=True) if r["status"] == "running"])
 BRAINS["claude"].on_rate_limit = USAGE.record
 BRAINS["codex"].on_rate_limit = USAGE.record_codex
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
@@ -2093,7 +2094,8 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
+                  asyncio.create_task(USAGE.watch_memory())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")

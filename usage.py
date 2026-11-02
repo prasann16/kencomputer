@@ -1,5 +1,5 @@
-"""Usage: how much of the AI plan is used, and how much of this computer's memory, for /usage and a
-heads-up before the plan runs out.
+"""Usage: how much of the AI plan is used, and how much of this computer's memory, for /usage, a
+heads-up before the plan runs out, and one when the computer is running out of memory.
 
 Claude Code reports the plan's usage windows (5 hour, weekly) as rate limit events, only when they
 change; Codex reports the ChatGPT plan's after each turn. Ken keeps the latest reading of each window
@@ -9,6 +9,7 @@ out never comes as a surprise.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ WINDOW_NAMES = {"five_hour": "5 hour", "seven_day": "weekly", "monthly": "monthl
                 "seven_day_sonnet": "weekly Sonnet", "overage": "extra usage"}
 PLAN_NAMES = {"claude": "Claude", "codex": "ChatGPT"}
 WARN_AT = 80  # % of a window used when Ken gives the heads-up
+LOW_MEMORY_FOR = 120  # seconds memory must stay critical before Ken says so (a short spike isn't news)
 
 
 # ------------------------------------------------------------------ the plan
@@ -152,6 +154,60 @@ def ken_memory(root: int | None = None) -> int:
     return total
 
 
+def memory_critical() -> bool | None:
+    """Is this computer out of memory right now? On a Mac, macOS's own memory pressure is red (the
+    graph in Activity Monitor); elsewhere, under 5% is free. None where it can't tell. Microseconds."""
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+            import ctypes.util
+
+            level, size = ctypes.c_int(), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            if libc.sysctlbyname(b"kern.memorystatus_vm_pressure_level", ctypes.byref(level), ctypes.byref(size), None, 0) == 0:
+                return level.value >= 4  # 1 normal, 2 warning, 4 critical
+        except (OSError, AttributeError):
+            pass
+        return None
+    mem = memory()
+    return 100 * mem["available"] / mem["total"] < 5 if mem.get("total") else None
+
+
+def app_name(command: str) -> str:
+    """The name someone would know a program by: the app it belongs to ('Google Chrome' for its
+    helpers), else the program's name, without a reverse-DNS prefix ('VirtualMachine')."""
+    app = next((part[:-4] for part in command.split("/") if part.endswith(".app")), None)
+    if app:
+        return app
+    name = os.path.basename(command).removesuffix(".exe")
+    return name.rsplit(".", 1)[-1] if name.count(".") >= 2 and " " not in name else name
+
+
+def biggest_app() -> tuple[str, int]:
+    """The program using the most memory, all its processes added up (a browser's helpers count as
+    the browser), leaving out Ken's own: ('Google Chrome', bytes). ('', 0) where `ps` isn't there."""
+    mine = set()
+    rows = []
+    for line in _run("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "rss=", "-o", "comm=").splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), int(parts[2]) * 1024, parts[3]))
+    kids: dict[int, list[int]] = {}
+    for pid, ppid, _, _ in rows:
+        kids.setdefault(ppid, []).append(pid)
+    todo = [os.getpid()]
+    while todo:
+        pid = todo.pop()
+        mine.add(pid)
+        todo += kids.get(pid, [])
+    by: dict[str, int] = {}
+    for pid, _, rss, comm in rows:
+        if pid in mine:
+            continue
+        by[app_name(comm)] = by.get(app_name(comm), 0) + rss
+    return max(by.items(), key=lambda kv: kv[1], default=("", 0))
+
+
 def gb(n: float) -> str:
     return f"{n / 1024 ** 3:.1f}GB"
 
@@ -161,9 +217,12 @@ def gb(n: float) -> str:
 class Usage:
     """The latest plan readings and which heads-ups Ken has already given, in usage.json."""
 
-    def __init__(self, home: Path, say: Callable[[str], None] = lambda text: None) -> None:
+    def __init__(self, home: Path, say: Callable[[str], None] = lambda text: None,
+                 jobs: Callable[[], list[str]] = lambda: []) -> None:
         self.path = Path(home) / "usage.json"
         self.say = say  # one message to them, in the app and on the phone
+        self.jobs = jobs  # Ken's background jobs running now, by name
+        self._low_since: float | None = None  # when memory went critical, while it is
 
     def load(self) -> dict:
         try:
@@ -230,3 +289,45 @@ class Usage:
             if ken:
                 lines.append(f"Ken is using {gb(ken)} of it")
         return "\n".join(lines)
+
+    # -- running out of memory
+
+    def low_memory(self, critical: bool | None, now: float | None = None) -> bool:
+        """Whether to say it now: memory critical for LOW_MEMORY_FOR seconds, and not said yet today."""
+        now = time.time() if now is None else now
+        if not critical:
+            self._low_since = None
+            return False
+        self._low_since = self._low_since or now
+        if now - self._low_since < LOW_MEMORY_FOR:
+            return False
+        state, today = self.load(), time.strftime("%Y-%m-%d", time.localtime(now))
+        if state.get("memory_said") == today:
+            return False
+        state["memory_said"] = today
+        self.save(state)
+        return True
+
+    def low_memory_text(self, app: tuple[str, int], ken: int, jobs: list[str]) -> str:
+        computer = "Mac" if sys.platform == "darwin" else "computer"
+        if not (ken or app[1]):  # no `ps` (Windows): who's using it is unknown
+            return f"Your {computer} is running out of memory. Closing some apps or windows will help."
+        if ken >= app[1]:
+            what = f' for the background job "{jobs[0]}"' if len(jobs) == 1 else " for background jobs" if jobs else ""
+            return (f"Your {computer} is running out of memory, and Ken is using {gb(ken)} of it{what}. "
+                    "Say stop if you want me to stop.")
+        return (f"Your {computer} is running out of memory. {app[0]} is using {gb(app[1])}. "
+                "Closing it, or some of its windows, will help.")
+
+    async def watch_memory(self, every: float = 60) -> None:
+        """Once a minute, a microsecond check; the slower look at who's using memory only when it's needed."""
+        while True:
+            try:
+                if self.low_memory(memory_critical()):
+                    app, ken = await asyncio.to_thread(biggest_app), await asyncio.to_thread(ken_memory)
+                    text = self.low_memory_text(app, ken, self.jobs())
+                    log.warning("%s", text)
+                    self.say(text)
+            except Exception as e:
+                log.warning("memory check failed: %s", e)
+            await asyncio.sleep(every)
