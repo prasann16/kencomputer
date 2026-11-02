@@ -1,6 +1,6 @@
 import { createContext, type CSSProperties, type ReactNode, useContext } from "react";
 
-import { useTheme } from "../theme";
+import { type Theme, useTheme } from "../theme";
 
 // Where a graphic's content goes: the paper sheet under the speaker, or the whole screen. GraphicFrame sets it.
 export interface AreaBox {
@@ -42,9 +42,16 @@ export const Area = ({ children, style }: { children: ReactNode; style?: CSSProp
 const fibres =
   "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.08 0 0 0 0 0.05 0 0 0 0.09 0'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>\")";
 
-export const paperStyle = (color: string): CSSProperties => ({ backgroundColor: color, backgroundImage: fibres });
+export const paperStyle = (color: string, texture = true): CSSProperties => ({ backgroundColor: color, backgroundImage: texture ? fibres : undefined });
 
-// Text where *starred words* are set in the accent serif italic: "Europe *figured it out*".
+// The accent type (style.accentFont, the serif by default): italic only where the serif would be italic.
+export const accentType = (theme: Theme, italic = false): CSSProperties => ({
+  fontFamily: theme.accentFont,
+  fontWeight: theme.accentWeight,
+  fontStyle: italic && theme.accentItalic ? "italic" : "normal",
+});
+
+// Text where *starred words* are set in the accent: "Europe *figured it out*" (the serif italic by default).
 export const Rich = ({ text, accent }: { text: string; accent?: string }) => {
   const theme = useTheme();
   const parts = text.split(/(\*[^*]+\*)/g).filter(Boolean);
@@ -52,7 +59,7 @@ export const Rich = ({ text, accent }: { text: string; accent?: string }) => {
     <>
       {parts.map((part, i) =>
         part.startsWith("*") && part.endsWith("*") ? (
-          <span key={i} style={{ fontFamily: FONT_SERIF, fontStyle: "italic", fontWeight: 400, color: accent ?? theme.accent }}>
+          <span key={i} style={{ ...accentType(theme, true), color: accent ?? theme.accent }}>
             {part.slice(1, -1)}
           </span>
         ) : (
@@ -63,7 +70,7 @@ export const Rich = ({ text, accent }: { text: string; accent?: string }) => {
   );
 };
 
-export const FONT_SERIF = "'Instrument Serif', serif";
+export const FONT_SERIF = "'Instrument Serif', serif"; // older graphics use it directly; new ones use accentType
 
 // A serif headline in ink.
 export const Heading = ({ children, size, style }: { children: ReactNode; size?: number; style?: CSSProperties }) => {

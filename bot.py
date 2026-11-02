@@ -14,7 +14,7 @@ if "--ken-mcp" in sys.argv[1:]:
     mcp_main()
     raise SystemExit(0)
 
-if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"]):  # Ken sets up Remotion the first time it's needed
+if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["--video-stills"], ["--video-colors"]):  # Ken sets up Remotion the first time it's needed
     import os
     from pathlib import Path
 
@@ -45,11 +45,11 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, Engine, first_contact_prompt, prepare_skills
+from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
-from ken_mcp import external_server, media_server
+from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
@@ -85,11 +85,19 @@ KEN_HOME.mkdir(parents=True, exist_ok=True)
 os.environ["PATH"] = str(KEN_HOME / "tools" / "node" / "bin") + os.pathsep + os.environ.get("PATH", "")
 # How Ken runs itself from a shell: the app's engine, or this checkout's Python and bot.py.
 KEN_CMD = f'"{sys.executable}"' if getattr(sys, "frozen", False) else f'"{sys.executable}" "{Path(__file__).resolve()}"'
+SHARED_MCP: dict[str, dict] = {}  # name -> how a chat reaches a server every chat shares, once the app server is up
+
+
 def browser_mcp() -> dict:
     """The user's own Chrome, through Google's Chrome DevTools MCP server.
 
     The Mac app ships the server and its own Node (KEN_NODE, KEN_BROWSER_MCP); a
-    terminal install uses Node from PATH. Without Node, Ken has no browser tools."""
+    terminal install uses Node from PATH. Without Node, Ken has no browser tools.
+    Chats share one server through the app server, so Chrome asks to allow Ken once."""
+    return {"browser": SHARED_MCP["browser"]} if "browser" in SHARED_MCP else browser_command()
+
+
+def browser_command() -> dict:
     import shutil
 
     env = {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}
@@ -128,7 +136,8 @@ def video_prompt() -> str:
         "(cuts, trims, captions, a vertical crop) are ffmpeg: fast, nothing to install. Talking video to reel: "
         f"`transcribe_media`, then `{KEN_CMD} --video-cut <folder>` (numbers the words; pass the ranges to keep, in "
         "the order they were said) cuts at the voice's real edges and writes props.json; fill in its hook, emphasis "
-        f"and graphics; `{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
+        f"and graphics, with colours from `{KEN_CMD} --video-colors <folder>` (the footage's own); "
+        f"`{KEN_CMD} --video-stills <folder> <seconds...>` shows frames; `{KEN_CMD} --video-render "
         "<folder>` makes reel.mp4. Remotion draws only the captions and graphics and keeps each, so fixes take a "
         "minute or two. Remotion isn't installed until the first reel: say in a line "
         "that you're setting up video tools (one time, a few minutes). Work in a folder under videos/ in "
@@ -186,7 +195,7 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-async def send_video(bot, chat_id: int, path: Path) -> bool:
+async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool:
     """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
     over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
     ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
@@ -197,7 +206,7 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
         with open(out, "rb") as fh:
             await bot.send_video(
                 chat_id, fh, caption=path.name, filename=path.with_suffix(".mp4").name,
-                supports_streaming=True, write_timeout=300, read_timeout=300, **meta,
+                supports_streaming=True, write_timeout=300, read_timeout=300, disable_notification=quiet, **meta,
             )
     finally:
         if out != path:
@@ -205,8 +214,8 @@ async def send_video(bot, chat_id: int, path: Path) -> bool:
     return True
 
 
-async def flush_outbox(bot, chat_id: int) -> None:
-    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat."""
+async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
+    """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
         if not OUTBOX_DIR.exists():
             return
@@ -218,7 +227,7 @@ async def flush_outbox(bot, chat_id: int) -> None:
                 if size == 0:
                     path.unlink(missing_ok=True)
                     continue
-                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path):
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
                     log_history("assistant", f"[sent video: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
@@ -226,14 +235,14 @@ async def flush_outbox(bot, chat_id: int) -> None:
                     await bot.send_message(
                         chat_id,
                         f"📁 {path.name} is too big to send ({size // (1024 * 1024)}MB). "
-                        f"It's on the machine at {path}",
+                        f"It's on the machine at {path}", disable_notification=quiet,
                     )
                     continue
                 with open(path, "rb") as fh:
                     if path.suffix.lower() in PHOTO_SUFFIXES:
-                        await bot.send_photo(chat_id, fh, caption=path.name)
+                        await bot.send_photo(chat_id, fh, caption=path.name, disable_notification=quiet)
                     else:
-                        await bot.send_document(chat_id, fh, filename=path.name)
+                        await bot.send_document(chat_id, fh, filename=path.name, disable_notification=quiet)
                 log_history("assistant", f"[sent file: {path.name}]")
                 path.unlink(missing_ok=True)
             except Exception as e:
@@ -398,7 +407,8 @@ SYSTEM_PROMPT = (
     "the file is missing, you were installed by the human on a machine they control. "
     f"STANDING JOBS: {JOBS_FILE} holds your scheduled jobs — a JSON array of objects "
     'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}; '
-    '"on": false pauses a job without deleting it. '
+    '"on": false pauses a job without deleting it; "date": "2026-10-31" makes it one-time: it runs that '
+    'day only and Ken removes it after (use it for reminders, not "days" plus a date check in the prompt). '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -674,16 +684,18 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
             pass
 
 
-async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
-    """Telegram is one more window onto Ken's one conversation (the same one the app shows)."""
+async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
+                        files: list[str] | None = None) -> None:
+    """Telegram is one more window onto Ken's one conversation (the same one the app shows).
+    A photo or file shows in the app as their message (`said`, the caption, with `files`)."""
+    shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
-        # 👀 on their message: seen. The note says it's queued, not an answer, and how to stop.
+        # 👀 on their message: seen. Ken takes it into what it's doing, the way Claude Code does.
         try:
             await update.effective_message.set_reaction(ReactionEmoji.EYES)
         except TelegramError:
             pass
-        await update.effective_message.reply_text("⏳ Still on the previous task — this one is queued. (/stop kills the current one.)")
     stop = asyncio.Event()
     typing = asyncio.create_task(keep_typing(update, stop))
     try:
@@ -696,8 +708,8 @@ async def handle_prompt(update: Update, prompt: str, context: str = "") -> None:
             await flush_outbox(update.get_bot(), chat_id)
 
         await ENGINE.send_message(
-            HOME, prompt, log_user=not prompt.startswith("("), via="telegram", listener=deliver,
-            prompt=context + prompt, origin=update.effective_message.message_id,
+            HOME, prompt if said is None else said, files, log_user=shown, via="telegram", listener=deliver,
+            prompt=context + prompt, origin=update.effective_message.message_id, steer=shown,
         )
     finally:
         stop.set()
@@ -816,15 +828,18 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             name = msg.document.file_name or f"image-{time.strftime('%Y%m%d-%H%M%S')}"
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
+        if path.exists():
+            path = INBOX_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}"
+        name = path.name
         await tg_file.download_to_drive(str(path))
     except Exception as e:
         log.warning("image download failed: %s", e)
         await msg.reply_text(f"Couldn't save that image: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent image: {name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent image: {name}]")  # the caption goes in with the message
     await handle_prompt(
-        update,
+        update, said=caption, files=[name], prompt=
         f"(The human sent you an image, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Open and actually look at the file before replying — never guess its contents. "
@@ -833,7 +848,9 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024  # the Bot API hands bots files up to 20 MB
+# The Bot API hands bots files up to 20 MB. Hosted Ken talks to Telegram through its own server, which also
+# delivers big uploads from its Send a video page, so it raises this with TELEGRAM_DOWNLOAD_MB.
+TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 1024 * 1024
 
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -855,7 +872,8 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if (item.file_size or 0) > TELEGRAM_DOWNLOAD_LIMIT:
         size = item.file_size / (1024 * 1024)
         await msg.reply_text(
-            f"That's {size:.0f} MB, and Telegram only lets me download files up to 20 MB. "
+            f"That's {size:.0f} MB, and Telegram only lets me download files up to "
+            f"{TELEGRAM_DOWNLOAD_LIMIT // (1024 * 1024)} MB. "
             "Send me a link to it instead (iCloud, Google Drive or Dropbox), or drop it into the Ken app on your computer."
         )
         return
@@ -871,9 +889,9 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(f"Couldn't save that: {e}")
         return
     caption = (msg.caption or "").strip()
-    log_history("you", f"[sent {kind}: {path.name}]" + (f" {caption}" if caption else ""))
+    log_history("you", f"[sent {kind}: {path.name}]")
     await handle_prompt(
-        update,
+        update, said=caption, files=[path.name], prompt=
         f"(The human sent you {kind}, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
         + "Look at the file itself before replying (for a video: its length, and a few frames or the "
@@ -1048,17 +1066,19 @@ def get_oauth_token() -> str:
     return ""
 
 
-async def send_outbound(bot, text: str, reply_to: int | None = None) -> None:
+async def send_outbound(bot, text: str, reply_to: int | None = None, quiet: bool = False) -> None:
     """Ken speaking first. It quotes `reply_to` (the message that started this work) when there
-    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last."""
+    is one, and nothing otherwise: a morning brief isn't an answer to whatever they said last.
+    `quiet` lands it without a buzz."""
     if bot is None or not ALLOWED_USER_ID:
         return
     for i, chunk in enumerate(split_chunks(text.strip() or "…")):
         quote = quoting(reply_to if i == 0 else None)
         try:
-            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML, **quote)
+            await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML,
+                                   disable_notification=quiet, **quote)
         except BadRequest:
-            await bot.send_message(ALLOWED_USER_ID, chunk, **quote)
+            await bot.send_message(ALLOWED_USER_ID, chunk, disable_notification=quiet, **quote)
 
 
 JOB_LABELS = {"morning-brief": "☀️ Morning brief", "nightly-review": "🌙 Nightly review"}
@@ -1117,9 +1137,12 @@ def _job_due(job: dict, now: time.struct_time, state: dict) -> bool:
         return False
     days = str(job.get("days", "daily")).lower()
     today = time.strftime("%a", now).lower()[:3]
-    if days == "weekdays" and today in ("sat", "sun"):
+    if job.get("date"):  # a one-time job: that day only
+        if job["date"] != time.strftime("%Y-%m-%d", now):
+            return False
+    elif days == "weekdays" and today in ("sat", "sun"):
         return False
-    if days not in ("daily", "weekdays") and today not in days:
+    elif days not in ("daily", "weekdays") and today not in days:
         return False
     late = (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute)
     if not 0 <= late <= CATCH_UP_HOURS * 60:
@@ -1139,6 +1162,16 @@ def all_jobs() -> list[dict]:
     for a in ENGINE.list_agents():
         jobs += [{**j, "agent": a["id"]} for j in ENGINE.agent_jobs(a["id"])]
     return jobs
+
+
+def remove_job(job: dict) -> None:
+    """Take a job out of its file: a one-time job once it has run, or once its day has passed."""
+    path = ENGINE._adir(job["agent"]) / "jobs.json" if job.get("agent") else JOBS_FILE
+    try:
+        jobs = json.loads(path.read_text())
+        path.write_text(json.dumps([j for j in jobs if not (isinstance(j, dict) and j.get("name") == job.get("name"))], indent=1) + "\n")
+    except (KeyError, OSError, ValueError) as e:
+        log.warning("couldn't remove job %s: %s", job.get("name"), e)
 
 
 def job_key(job: dict) -> str:
@@ -1217,7 +1250,7 @@ def set_privacy(share: bool) -> dict:
 def list_jobs() -> list[dict]:
     """The standing jobs, for the settings page: what runs on its own, and when, and for which agent."""
     names = {a["id"]: a["name"] for a in ENGINE.list_agents()}
-    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "on": j.get("on", True),
+    return [{"name": j["name"], "time": j.get("time", ""), "days": j.get("days", "daily"), "date": j.get("date", ""), "on": j.get("on", True),
              "agent": j.get("agent", ""), "agent_name": names.get(j.get("agent", ""), ""),
              "summary": job_summary(str(j.get("prompt", "")))}
             for j in all_jobs() if j.get("name")]
@@ -1267,7 +1300,12 @@ async def scheduler() -> None:
                     state[key] = time.strftime("%Y-%m-%d (first seen)", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
+                if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
+                    remove_job(job)  # its day passed while Ken was off
+                    continue
                 if _job_due(job, now, state):
+                    if job.get("date"):
+                        remove_job(job)  # one-time: it runs now and is gone
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
                     log.info("job due: %s", job_key(job))
@@ -1354,11 +1392,18 @@ async def start_engine() -> WebApp | None:
     global ACCOUNTS
     ACCOUNTS = setup
     use_signed_in_account()
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy))
+    browser = browser_command().get("browser")
+    shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared)
+    host, port = os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777"))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
         try:
-            await web_app.start(os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777")))
+            await web_app.start(host, port)
+            local = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+            for name in shared:
+                SHARED_MCP[name] = {"type": "http", "url": f"http://{local}:{port}/mcp/{name}",
+                                    "headers": {"Authorization": f"Bearer {web_app.token}"}}
             return web_app
         except OSError as e:
             if attempt == 14:
@@ -1396,12 +1441,13 @@ async def notify_telegram(app) -> None:
                                     reply_to=ev.get("origin"))
             elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
+                quiet = ev.get("via") == "app"  # they're at the Mac: it shows on the phone without a buzz
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
-                    await send_outbound(app.bot, "💻 In the app: " + words[:3500] + attached)
+                    await send_outbound(app.bot, "💻 " + words[:3500] + attached, quiet=quiet)
                 elif ev.get("role") == "ken" and words:
-                    await send_outbound(app.bot, words)
-                    await flush_outbox(app.bot, ALLOWED_USER_ID)  # files Ken made for it come along
+                    await send_outbound(app.bot, words, quiet=quiet)
+                    await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
 
@@ -1887,7 +1933,11 @@ class Phone:
         return True
 
     async def start(self, token: str) -> None:
-        app = Application.builder().token(token).concurrent_updates(True).build()
+        builder = Application.builder().token(token).concurrent_updates(True)
+        # Hosted Ken: a server that stands in for Telegram's Bot API (same methods, same URLs under it).
+        if api := os.environ.get("TELEGRAM_API_URL", "").rstrip("/"):
+            builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
+        app = builder.build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
                          ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill)):
             app.add_handler(CommandHandler(name, fn))
@@ -2030,7 +2080,8 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    skills = prepare_skills(KEN_HOME, SOURCE / "skills")
+    ENGINE.other_skills = OTHER_SKILLS
+    skills = prepare_skills(KEN_HOME, SOURCE / "skills", OTHER_SKILLS)
     if skills:
         BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]
     prepare_codex_home(KEN_HOME / "codex")

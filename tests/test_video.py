@@ -69,11 +69,22 @@ def test_skills_live_in_one_folder_that_claude_loads_as_a_plugin(tmp_path):
     plugin = prepare_skills(tmp_path)
     assert plugin == tmp_path / ".skills-plugin"
     assert (plugin / ".claude-plugin" / "plugin.json").is_file()
-    assert (plugin / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (plugin / "skills").resolve() == (tmp_path / ".skills-in-use").resolve()
     (tmp_path / "skills" / "fruit").mkdir()
     (tmp_path / "skills" / "fruit" / "SKILL.md").write_text("---\nname: fruit\n---\n")
-    assert (plugin / "skills" / "fruit" / "SKILL.md").is_file()  # what Claude sees is the shared folder
     assert prepare_skills(tmp_path) == plugin  # every start: nothing to redo
+    assert (plugin / "skills" / "fruit" / "SKILL.md").is_file()  # what Claude sees is Ken's skills folder
+
+
+def test_an_older_ken_link_moves_to_the_skills_in_use(tmp_path):
+    import os
+    from engine import link_dir
+    (tmp_path / "skills").mkdir()
+    (tmp_path / ".skills-plugin").mkdir()
+    link_dir(tmp_path / ".skills-plugin" / "skills", tmp_path / "skills")
+    prepare_skills(tmp_path)
+    assert os.path.realpath(tmp_path / ".skills-plugin" / "skills") == os.path.realpath(tmp_path / ".skills-in-use")
+    assert (tmp_path / "skills").is_dir()  # the old target is left alone
 
 
 def test_adding_a_skill_reopens_open_chats(tmp_path):
@@ -93,7 +104,7 @@ def test_codex_finds_kens_skills_in_kens_own_folders_only(tmp_path):
     work = tmp_path / "work"
     work.mkdir()
     e._share_skills(work)
-    assert (work / ".agents" / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (work / ".agents" / "skills").resolve() == (tmp_path / ".skills-in-use").resolve()
     theirs = tmp_path.parent / (tmp_path.name + "-their-code")
     theirs.mkdir()
     e._share_skills(theirs)
@@ -116,3 +127,45 @@ def test_brain_lists_kens_skills_and_removes_one(tmp_path):
     assert page["name"] == "remotion-best-practices" and page["text"] == "body" and page["parts"] == ["create"]
     assert e.remove_skill("remotion") == []
     assert not (tmp_path / "skills" / "remotion").exists()
+
+
+def test_skills_from_other_ai_apps_are_used_and_can_be_switched_off(tmp_path):
+    import os
+    import pytest
+    from test_engine import FakeBrain
+
+    def skill(d, name, about):
+        (d / name).mkdir(parents=True)
+        (d / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {about}\n---\nDo {name}.\n")
+
+    home, claude = tmp_path / "ken", tmp_path / "claude-skills"
+    home.mkdir()
+    skill(claude, "pdf", "Fill PDFs")
+    skill(claude, "video", "Their own video skill")
+    skill(home / "skills", "video", "Ken's video skill")
+    (claude / ".hidden").mkdir()
+    e = Engine(home, FakeBrain())
+    e.other_skills = {"Claude Code": [claude], "Codex": [tmp_path / "nothing-here"]}
+    plugin = prepare_skills(home, others=e.other_skills)
+    seen = plugin / "skills"
+    assert (seen / "pdf" / "SKILL.md").read_text().startswith("---\nname: pdf")  # their skill, read where it is
+    assert "Ken's video" in (seen / "video" / "SKILL.md").read_text()  # a name Ken has stays Ken's
+    skills = {s["id"]: s for s in e.list_skills()}
+    assert skills["claude-code:pdf"] == {"id": "claude-code:pdf", "name": "pdf", "about": "Fill PDFs", "app": "Claude Code", "on": True}
+    assert skills["claude-code:video"]["same_name"] and "app" not in skills["video"]
+    assert e.read_skill("claude-code:pdf")["text"] == "Do pdf."
+
+    before = e._tools_stamp("home")
+    e.switch_skill("claude-code:pdf", False)
+    assert not os.path.lexists(seen / "pdf") and (claude / "pdf" / "SKILL.md").is_file()  # off for Ken, theirs untouched
+    assert e._tools_stamp("home") != before  # open chats reopen without it
+    e.switch_skill("claude-code:pdf", True)
+    assert (seen / "pdf" / "SKILL.md").is_file()
+
+    skill(claude, "notes", "Take notes")  # made in Claude Code while Ken runs
+    e.sync_skills()
+    assert (seen / "notes" / "SKILL.md").is_file()
+    with pytest.raises(KeyError):
+        e.remove_skill("claude-code:pdf")  # Ken never deletes another app's skill
+    with pytest.raises(KeyError):
+        e.switch_skill("video", False)

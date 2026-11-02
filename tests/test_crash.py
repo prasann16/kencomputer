@@ -125,3 +125,20 @@ def test_feedback_is_sent_as_written_even_with_usage_off(sent, monkeypatch):
     assert event["event"] == "feedback" and event["properties"]["email"] == "me@example.com"
     assert event["properties"]["text"].startswith("Love it, but the brief is long.") and "sk-abc" not in event["properties"]["text"]
     assert not crash.feedback("   ")
+
+
+def test_a_client_hanging_up_early_is_not_an_error(sent):
+    def tcp_keepalive():
+        raise OSError(22, "Invalid argument")
+
+    try:
+        tcp_keepalive()
+    except OSError as e:
+        hung_up = e
+    loop = asyncio.new_event_loop()
+    try:
+        crash.loop_handler(loop, {"message": "Exception in callback", "exception": hung_up})
+        crash.loop_handler(loop, {"message": "Exception in callback", "exception": OSError(22, "Invalid argument")})
+    finally:
+        loop.close()
+    assert len(sent) == 1

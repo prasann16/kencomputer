@@ -35,8 +35,12 @@ try {
 } finally {
   await browser.close({ silent: true });
 }
-if (made.length > 1) {
-  const sheet = join(dir, "sheet.jpg");
-  execFileSync("ffmpeg", ["-v", "error", "-y", ...made.flatMap((f) => ["-i", f]), "-filter_complex", `${made.map((_, i) => `[${i}:v]`).join("")}hstack=${made.length}`, sheet]);
-  console.log(`All of them side by side: ${sheet}`);
-}
+// On the sheet, the parts the apps cover with their own buttons (the top 250, bottom 480 and right 140 px of the
+// 1080x1920 frame) are tinted red, so text that strays into them shows. The single stills stay clean.
+const zones = ["0:0:iw:ih*250/1920", "0:ih-ih*480/1920:iw:ih*480/1920", "iw-iw*140/1080:0:iw*140/1080:ih"]
+  .map((box) => `drawbox=${box}:color=red@0.12:t=fill`).join(",");
+const marked = made.map((_, i) => `[${i}:v]${zones}[z${i}]`).join(";");
+const sheet = join(dir, "sheet.jpg");
+execFileSync("ffmpeg", ["-v", "error", "-y", ...made.flatMap((f) => ["-i", f]), "-filter_complex",
+  made.length > 1 ? `${marked};${made.map((_, i) => `[z${i}]`).join("")}hstack=${made.length}` : `[0:v]${zones}`, sheet]);
+console.log(`${made.length > 1 ? "All of them side by side" : "With the safe zones marked"}: ${sheet}`);
