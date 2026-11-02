@@ -68,8 +68,8 @@ curl -fsSL https://kencomputer.dev/install | bash
   computer like the personal computer it is. Passwords are only readable by you.
 - **What leaves it:** your messages go to Claude or ChatGPT to be answered, the same as using
   them directly, and through Telegram if you use Ken on your phone. Anonymous crash reports
-  and usage counts (never what you say, your files or your logins) can be turned off in
-  Settings → Privacy. [Exactly what's sent](https://kencomputer.dev/privacy).
+  and usage counts, including how much AI each task used (never what you say, your files or
+  your logins), can be turned off in Settings → Privacy. [Exactly what's sent](https://kencomputer.dev/privacy).
 - **Nothing is reachable from outside.** The app talks to Ken on `127.0.0.1` with a private
   token.
 - **Only you.** On Telegram, Ken answers only your account.

@@ -31,6 +31,20 @@ def codex_client(*, cwd=None, env=None):
     ))
 
 
+def turn_usage(updates: list[dict], model: str | None) -> list[dict]:
+    """What one Codex turn used, from its tokenUsage updates: each has `last` (the call just made)
+    and `total` (the thread so far). Codex doesn't price it, so cost_usd is None."""
+    if not updates:
+        return []
+    first, end = updates[0], updates[-1]
+    diff = lambda k: max(0, (end["total"].get(k) or 0) - (first["total"].get(k) or 0) + (first["last"].get(k) or 0))
+    cached = diff("cachedInputTokens")
+    return [{"model": model or "codex-default", "cost_usd": None,
+             "input_tokens": max(0, diff("inputTokens") - cached),  # OpenAI counts cached input inside input
+             "output_tokens": diff("outputTokens"),
+             "cache_read_tokens": cached, "cache_write_tokens": diff("cacheWriteInputTokens")}]
+
+
 async def read_usage(client) -> dict | None:
     """The ChatGPT plan's usage windows as Codex reports them (rateLimits), or None if it can't say."""
     from openai_codex.generated.v2_all import GetAccountRateLimitsResponse
@@ -119,6 +133,7 @@ class CodexSession(Session):
         partial, spoken = {}, set()
         final = None
         completed = False
+        self.usage, tokens = [], []  # Codex's token counts as they come in, for what this turn used
         try:
             self.turn = await self.thread.turn(prompt, model=self._model())
             async for event in self.turn.stream():
@@ -147,8 +162,11 @@ class CodexSession(Session):
                             spoken.add(item["id"])
                             final = text
                             await on_text(text)
+                elif event.method == "thread/tokenUsage/updated":
+                    tokens.append(payload["tokenUsage"])
                 elif event.method == "turn/completed":
                     completed = True
+                    self.usage = turn_usage(tokens, self._model())
                     turn = payload["turn"]
                     if turn["status"] == "failed":
                         raise RuntimeError((turn.get("error") or {}).get("message") or "Codex turn failed")
