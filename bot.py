@@ -45,7 +45,7 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, Engine, first_contact_prompt, prepare_skills
+from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
@@ -2018,7 +2018,8 @@ def main() -> None:
     lock = one_engine()  # noqa: F841
     ensure_home()
     ensure_setup_file()
-    skills = prepare_skills(KEN_HOME, SOURCE / "skills")
+    ENGINE.other_skills = OTHER_SKILLS
+    skills = prepare_skills(KEN_HOME, SOURCE / "skills", OTHER_SKILLS)
     if skills:
         BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]
     prepare_codex_home(KEN_HOME / "codex")
