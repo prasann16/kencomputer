@@ -46,6 +46,7 @@ import crash
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
+from usage import Usage
 from web import WebApp
 from connections import Connections
 from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
@@ -164,6 +165,11 @@ ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the ap
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
+# The AI plan's usage and the computer's memory: /usage, and a heads-up when either is nearly used up.
+USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
+              jobs=lambda: [r["title"] for r in ENGINE.list_runs(active=True) if r["status"] == "running"])
+BRAINS["claude"].on_rate_limit = USAGE.record
+BRAINS["codex"].on_rate_limit = USAGE.record_codex
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
@@ -1660,6 +1666,19 @@ async def model(arg: str = "") -> dict:
     return {"reply": f"✓ {match} — from the next task."}
 
 
+async def usage(arg: str = "") -> dict:
+    """/usage: how much of the AI plan and of this computer's memory is used, in a few phone-sized lines."""
+    backend = ENGINE.backend(HOME)
+    if backend == "codex":
+        await BRAINS["codex"].usage()  # Codex answers when asked; Claude's readings come in as it works
+    return {"reply": USAGE.report(backend)}
+
+
+async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if authorized(update):
+        await update.effective_message.reply_text((await usage())["reply"])
+
+
 async def cmd_coffee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if authorized(update):
         await update.effective_message.reply_text(coffee())
@@ -1704,6 +1723,7 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 COMMANDS = {
     "model": model,
+    "usage": usage,
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
     "awake": lambda arg="": {"awake": is_awake()},
@@ -1964,7 +1984,7 @@ class Phone:
             builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
         app = builder.build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill), ("usage", cmd_usage)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
@@ -1985,6 +2005,7 @@ class Phone:
                 ("stop", "Stop the current reply"),
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
+                ("usage", "How much of your AI plan and memory is used"),
                 ("kill", "Turn Ken off in an emergency"),
             ])
         except Exception as e:
@@ -2073,7 +2094,8 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice())]
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
+                  asyncio.create_task(USAGE.watch_memory())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
