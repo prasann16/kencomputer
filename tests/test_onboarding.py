@@ -100,3 +100,15 @@ async def test_the_link_is_the_one_the_browser_opened(tmp_path, monkeypatch):
     setup, _ = make(tmp_path)
     assert (await setup.start()) == {"url": URL, "browser_url": opened}
     setup.stop()
+
+
+async def test_a_rejected_code_says_so_at_once(tmp_path, monkeypatch):
+    # The CLI rejects a bad code within seconds and waits for Enter: say why, don't wait out the minute.
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "OAuth error: Request failed with status code 400 Press Enter to retry."\nsleep 30\n')
+    setup, calls = make(tmp_path)
+    await setup.start()
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(RuntimeError, match=r"Claude didn’t accept that code \(OAuth error: Request failed with status code 400\)"):
+        await setup.submit("bad-code")
+    assert asyncio.get_running_loop().time() - started < 5
+    assert calls == []

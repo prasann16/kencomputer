@@ -202,11 +202,26 @@ class Onboarding:
         try:
             if self.fd is None or self.exited:
                 raise OSError("sign-in not running")
+            before = len(self.output)
             os.write(self.fd, code.strip().encode() + b"\r")
         except OSError:
             return {**await self.start(), "error": "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."}
-        token = await self._wait_for(TOKEN, 60)
+        # The CLI answers a code within seconds: the token, or an error such as "OAuth error: … 400". Say which at once.
+        token, problem = "", ""
+        for _ in range(60 * 5):
+            if match := TOKEN.search(self.output):
+                token = match.group(0)
+                break
+            if match := FAILED.search(self.output[before:]):
+                problem = re.sub(r"\s*Press Enter.*$", "", match.group(0)).strip()
+                break
+            if self.exited:
+                break
+            await asyncio.sleep(0.2)
         self.stop()
+        if problem:
+            self._failed(f"Claude didn’t accept that code ({problem}). Connect again and paste the new code.", problem)
+            raise RuntimeError(self.error)
         if not token:
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
         await self._save(token)
