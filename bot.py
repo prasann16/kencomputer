@@ -847,7 +847,9 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024  # the Bot API hands bots files up to 20 MB
+# The Bot API hands bots files up to 20 MB. Hosted Ken talks to Telegram through its own server, which also
+# delivers big uploads from its Send a video page, so it raises this with TELEGRAM_DOWNLOAD_MB.
+TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 1024 * 1024
 
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -869,7 +871,8 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if (item.file_size or 0) > TELEGRAM_DOWNLOAD_LIMIT:
         size = item.file_size / (1024 * 1024)
         await msg.reply_text(
-            f"That's {size:.0f} MB, and Telegram only lets me download files up to 20 MB. "
+            f"That's {size:.0f} MB, and Telegram only lets me download files up to "
+            f"{TELEGRAM_DOWNLOAD_LIMIT // (1024 * 1024)} MB. "
             "Send me a link to it instead (iCloud, Google Drive or Dropbox), or drop it into the Ken app on your computer."
         )
         return
@@ -1873,7 +1876,11 @@ class Phone:
         return True
 
     async def start(self, token: str) -> None:
-        app = Application.builder().token(token).concurrent_updates(True).build()
+        builder = Application.builder().token(token).concurrent_updates(True)
+        # Hosted Ken: a server that stands in for Telegram's Bot API (same methods, same URLs under it).
+        if api := os.environ.get("TELEGRAM_API_URL", "").rstrip("/"):
+            builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
+        app = builder.build()
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
                          ("coffee", cmd_coffee), ("decaf", cmd_decaf)):
             app.add_handler(CommandHandler(name, fn))
