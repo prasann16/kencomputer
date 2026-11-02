@@ -145,8 +145,17 @@ class _Handler(logging.Handler):
         report(exc, msg, handled=True, where=f"{record.module}.{record.funcName}")
 
 
+def _hung_up(exc: BaseException | None) -> bool:
+    """A local client (the app's health check, a browser tab) hung up before the web
+    server set keepalive: macOS answers EINVAL on the dead socket. Nothing broke."""
+    return (isinstance(exc, OSError) and exc.errno == 22
+            and any(f.name == "tcp_keepalive" for f in traceback.extract_tb(exc.__traceback__)))
+
+
 def loop_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """Errors in background tasks nobody awaited: report, then let asyncio log them as usual."""
+    if _hung_up(context.get("exception")):
+        return
     report(context.get("exception"), context.get("message", ""), handled=False, where="asyncio")
     loop.default_exception_handler(context)
 
