@@ -192,7 +192,8 @@ def flush(seconds: float = 3) -> None:
 
 
 # Usage: what people do with Ken, counted, never read. Event names and small fixed values only:
-# no message text, file names, emails, calendar contents or paths. Off with KEN_USAGE_STATS=0.
+# no message text, file names, emails, calendar contents or paths. Includes what each task cost (model,
+# tokens, dollars) so Ken's own plan can be priced. Off with KEN_USAGE_STATS=0.
 EVENTS_PER_HOUR = 300
 _events: list[float] = []
 

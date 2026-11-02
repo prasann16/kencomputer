@@ -29,6 +29,9 @@ class Session:
     session_id: str | None = None
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
+    # What the last ask used, one row per model: model, cost_usd (None when the brain can't price it)
+    # and token counts. Empty when the brain didn't say.
+    usage: list[dict] = []
 
     async def ask(
         self, prompt: str, on_text: OnText, on_tool: OnTool | None = None, on_delta: OnText | None = None
@@ -83,6 +86,23 @@ def describe_tool(name: str, args: dict) -> str:
     return name
 
 
+def spent_since(now: dict | None, before: dict | None) -> list[dict]:
+    """What each model used between two of Claude Code's running totals (its modelUsage, which keeps
+    counting across messages and resumes), one row per model that used anything."""
+    rows = []
+    for model, u in (now or {}).items():
+        b = (before or {}).get(model) or {}
+        if (u.get("costUSD") or 0) < (b.get("costUSD") or 0):
+            b = {}  # Claude Code started counting again
+        diff = lambda k: max(0, (u.get(k) or 0) - (b.get(k) or 0))
+        row = {"model": model, "cost_usd": round(diff("costUSD"), 6),
+               "input_tokens": diff("inputTokens"), "output_tokens": diff("outputTokens"),
+               "cache_read_tokens": diff("cacheReadInputTokens"), "cache_write_tokens": diff("cacheCreationInputTokens")}
+        if any(v for k, v in row.items() if k != "model"):
+            rows.append(row)
+    return rows
+
+
 class ClaudeSession(Session):
     """A persistent Claude Code session (Agent SDK): no per-message cold start."""
 
@@ -98,6 +118,10 @@ class ClaudeSession(Session):
         self.model = ""
         self.busy = False
         self.last_activity = time.monotonic()
+        self.usage: list[dict] = []
+        # Claude Code's running totals so far, to tell what each message added. A resumed session's
+        # totals include its past, so they're unknown (None) until the engine passes in the saved ones.
+        self.spent: dict | None = None if resume else {}
         self.stderr: deque[str] = deque(maxlen=40)  # Claude Code's own error output, logged when a turn fails
         self._heard = False
         self._connecting = asyncio.Lock()
@@ -153,7 +177,7 @@ class ClaudeSession(Session):
             if not self.session_id:
                 raise
             log.warning("resume failed (%s) — starting fresh", e)
-            self.session_id = None
+            self.session_id, self.spent = None, {}
             await self._connect(None)
 
     async def warm(self) -> None:
@@ -198,6 +222,7 @@ class ClaudeSession(Session):
             self.model = model
         self.busy, self._heard = True, False
         self._waiting, self._stopping, self._ended = [], False, False
+        self.usage = []
         self.last_activity = time.monotonic()
         last_text = ""
         final = None
@@ -250,6 +275,10 @@ class ClaudeSession(Session):
                 elif isinstance(msg, ResultMessage):
                     if msg.session_id:
                         self.session_id = msg.session_id
+                    if msg.model_usage is not None:
+                        if self.spent is not None:
+                            self.usage += spent_since(msg.model_usage, self.spent)
+                        self.spent = msg.model_usage
                     result = (msg.result or "").strip()
                     if NEEDS_NEWER_CLI in result or final is TOO_NEW:
                         final = TOO_NEW

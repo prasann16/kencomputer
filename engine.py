@@ -1149,8 +1149,28 @@ class Engine:
                     mcp_fn=lambda: self.agent_tools(pid),
                     env_fn=lambda: self._key_values(pid),
                 )
+            if s.session_id and getattr(s, "spent", {}) is None and (saved := self.kv_get(f"spent:{s.session_id}")):
+                s.spent = json.loads(saved)  # what it had used before, so its next message counts only itself
             self.chats[pid] = s
         return s
+
+    def record_usage(self, session, pid: str, kind: str, **extra) -> None:
+        """What one message or job used, per model: a line in usage.jsonl here, and the same numbers
+        in usage stats (off with KEN_USAGE_STATS=0). Never what was said."""
+        rows = getattr(session, "usage", None) or []
+        if getattr(session, "spent", None) is not None and session.session_id:
+            self.kv_set(f"spent:{session.session_id}", json.dumps(session.spent))
+        if not rows:
+            return
+        brain = self.brain_for(pid).name
+        try:
+            with open(self.home / "usage.jsonl", "a") as f:
+                for r in rows:
+                    f.write(json.dumps({"ts": round(time.time()), "kind": kind, "brain": brain, **extra, **r}) + "\n")
+        except OSError:
+            pass
+        for r in rows:
+            crash.track("ai_usage", kind=kind, brain=brain, agent=pid != HOME, **extra, **r)
 
     def chat_busy(self, pid: str) -> bool:
         lock = self.chat_locks.get(pid)
@@ -1255,6 +1275,7 @@ class Engine:
             finally:
                 crash.track("message", via=via or ("job" if job else "app"), agent=pid != HOME, files=len(files),
                             spoke_first=not log_user and not job, outcome=outcome, seconds=round(time.monotonic() - started, 1))
+                self.record_usage(session, pid, "job" if job else "chat", via=via or ("job" if job else "app"))
                 if session.session_id:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
@@ -1287,6 +1308,8 @@ class Engine:
             log.warning("job %s failed: %s", (job or {}).get("name", "job"), e)
             text = ""
         finally:
+            name = (job or {}).get("name")  # a job they named themselves stays "custom": names are theirs
+            self.record_usage(session, pid, "job", job=name if name in ("morning-brief", "nightly-review") else "custom")
             try:
                 await session.close()
             except Exception:
@@ -1528,6 +1551,7 @@ class Engine:
                     summary = f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
+                self.record_usage(session, pid, "background")
                 try:
                     await session.close()
                 except Exception:
