@@ -1448,6 +1448,9 @@ async def start_engine() -> WebApp | None:
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared)
+    if os.environ.get("KEN_NOTIFY_URL"):
+        task = asyncio.create_task(notify_app())
+        APP_TASKS.add(task)
     host, port = os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777"))
     # After a restart the old process may hold the port for a moment; wait for it.
     for attempt in range(15):
@@ -1503,6 +1506,35 @@ async def notify_telegram(app) -> None:
                     await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
+
+
+APP_TASKS: set = set()
+
+
+async def notify_app() -> None:
+    """Ken in a phone app (hosted Ken): what would buzz on Telegram goes to the app's server as a push, sent to
+    KEN_NOTIFY_URL with the KEN_NOTIFY_TOKEN it gave this computer. The app shows it when it isn't open."""
+    url, token = os.environ.get("KEN_NOTIFY_URL", ""), os.environ.get("KEN_NOTIFY_TOKEN", "")
+    q = ENGINE.subscribe()
+    async with httpx.AsyncClient(timeout=10) as client:
+        while True:
+            ev = await q.get()
+            try:
+                pid = ev.get("project") or HOME
+                if ev["type"] == "approval.created":
+                    pid = ev["approval"]["project"]
+                    note = {"kind": "approval", "title": ev["approval"]["title"]}
+                elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
+                    note = {"kind": "run", "title": ev.get("title", ""), "status": ev.get("status")}
+                elif ev["type"] == "message" and ev.get("role") == "ken" and (ev.get("text") or "").strip():
+                    note = {"kind": "message", "text": ev["text"].strip()[:300]}
+                else:
+                    continue
+                name = "Ken" if pid == HOME else ENGINE.get_agent(pid)["name"]
+                await client.post(url, json={**note, "project": pid, "name": name},
+                                  headers={"Authorization": f"Bearer {token}"})
+            except Exception as e:
+                log.warning("app notify failed: %s", e)
 
 
 async def on_approval_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
