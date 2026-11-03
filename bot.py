@@ -68,7 +68,7 @@ from telegram.ext import (
 
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
-if os.environ.get("TZ"):
+if os.environ.get("TZ") and hasattr(time, "tzset"):  # Windows has no tzset (and Ken there never sets TZ)
     time.tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
 use_included_ai()  # a plan's included AI, unless they've connected their own Claude
 
@@ -1898,7 +1898,8 @@ def set_timezone(arg: str = "") -> dict:
     if not _known_zone(name):
         return {"reply": f"I don't know the time zone {name}. Use one like Europe/Lisbon.", "timezone": os.environ.get("TZ", "")}
     save_env(KEN_HOME / ".env", "TZ", name)
-    time.tzset()
+    if hasattr(time, "tzset"):  # not on Windows
+        time.tzset()
     return {"reply": f"Time zone set to {name}. It's {time.strftime('%H:%M')} there.", "timezone": name}
 
 

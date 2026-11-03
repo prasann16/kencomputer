@@ -20,6 +20,8 @@ from onboarding import BrainOnboarding, CodexOnboarding, Onboarding  # noqa: E40
 from web import WebApp  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+# The Agent37 box is Linux: its shell scripts (and the sign-in helper's) also run on a Mac, not on Windows.
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX shell (bash/sh), as on the Linux box")
 TOKEN = "sk-ant-oat01-" + "a" * 40
 CLAUDE_KEY = "sk-ant-api03-" + "b" * 40
 
@@ -301,6 +303,7 @@ async def test_openai_api_key(tmp_path, monkeypatch, clean_ai):
     assert "OPENAI_API_KEY=sk-proj-" in (tmp_path / ".env").read_text()
 
 
+@posix_only
 def test_sign_in_helper_needs_no_browser(tmp_path, monkeypatch):
     """No xdg-open on a computer in the cloud: the helper records the link and succeeds, so the CLI prints it."""
     monkeypatch.setenv("PATH", "/nonexistent")
@@ -377,8 +380,6 @@ def test_included_ai_running_out_is_said_plainly(monkeypatch, clean_ai):
 
 def test_next_job_time(monkeypatch):
     import bot
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
     brief = {"name": "morning-brief", "time": "07:00", "days": "daily"}
     now = time.mktime(time.strptime("2026-10-05 05:30", "%Y-%m-%d %H:%M"))
     assert time.strftime("%Y-%m-%d %H:%M", time.localtime(bot.next_job_time([brief], {}, now))) == "2026-10-05 07:00"
@@ -394,13 +395,16 @@ def test_timezone_command(monkeypatch, tmp_path):
     import bot
     monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
     monkeypatch.setenv("TZ", "UTC")
-    r = bot.set_timezone("Europe/Lisbon")
-    assert r["timezone"] == "Europe/Lisbon" and os.environ["TZ"] == "Europe/Lisbon"
-    assert "TZ=Europe/Lisbon" in (tmp_path / ".env").read_text()
-    for bad in ("Mars/Olympus", "../../etc/passwd", "Europe/Lisbon; rm -rf ~"):
-        assert bot.set_timezone(bad)["timezone"] == "Europe/Lisbon"
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
+    try:
+        r = bot.set_timezone("Europe/Lisbon")
+        assert r["timezone"] == "Europe/Lisbon" and os.environ["TZ"] == "Europe/Lisbon"
+        assert "TZ=Europe/Lisbon" in (tmp_path / ".env").read_text()
+        for bad in ("Mars/Olympus", "../../etc/passwd", "Europe/Lisbon; rm -rf ~"):
+            assert bot.set_timezone(bad)["timezone"] == "Europe/Lisbon"
+    finally:
+        monkeypatch.setenv("TZ", "UTC")
+        if hasattr(time, "tzset"):
+            time.tzset()
 
 
 def test_no_coffee_in_the_cloud(monkeypatch, hosted):
@@ -468,14 +472,19 @@ async def test_keep_awake_checks_in(monkeypatch):
 
 # ------------------------------------------------------------------ the box's supervisor
 
-def test_box_scripts_parse():
-    for name in ("ken-start", "ken-supervise"):
-        assert subprocess.run(["bash", "-n", str(ROOT / "deploy" / "agent37" / name)]).returncode == 0
+def test_box_image_settings():
     dockerfile = (ROOT / "deploy" / "agent37" / "Dockerfile").read_text()
     assert "KEN_WEB_HOST=0.0.0.0" in dockerfile and "KEN_WEB_PORT=7777" in dockerfile and "KEN_VOICE=0" in dockerfile
     assert "pins.py" in dockerfile  # the image leaves voice out
 
 
+@posix_only
+def test_box_scripts_parse():
+    for name in ("ken-start", "ken-supervise"):
+        assert subprocess.run(["bash", "-n", str(ROOT / "deploy" / "agent37" / name)]).returncode == 0
+
+
+@posix_only
 def test_supervisor_sets_up_restarts_and_updates(tmp_path):
     """A fake Ken that exits twice (like an update) is started again each time, after a git pull."""
     seed, venv, home = tmp_path / "seed", tmp_path / "venv", tmp_path / "home"

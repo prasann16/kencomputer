@@ -61,7 +61,8 @@ fi
 
 fails=0
 while true; do
-  timeout 600 bash -c update  # never hold Ken back more than 10 minutes
+  # Never hold Ken back more than 10 minutes (where there's a `timeout`; a Mac has none).
+  if command -v timeout >/dev/null; then timeout 600 bash -c update; else update; fi
   started=$(date +%s)
   log "starting Ken ($(git -C "$APP" rev-parse --short HEAD 2>/dev/null))"
   "$VENV/bin/python" "$APP/bot.py"
