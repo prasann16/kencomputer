@@ -76,14 +76,19 @@ class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
 
 
-def friendly_error(e: Exception, brain: str) -> str:
-    """What to tell the person when a reply fails: plain words and what to do, never raw JSON."""
+# Words from Claude Code, the SDKs and the AI services that must never reach a person as they are.
+AI_WORDS = ("api", "login", "auth", "unauthorized", "forbidden", "overloaded", "rate limit", "usage limit", "billing",
+            "credit", "anthropic", "openai", "claude code", "codex", "connection", "network", "timed out", "timeout")
+
+
+def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
+    """A failed reply in one plain sentence, and the one thing to do about it: "retry" (Try again), "connect"
+    (connect their own Claude or ChatGPT) or "reconnect" (their own account stopped working). Never the raw error:
+    no Claude Code or SDK wording, status codes or model ids. The real error goes to the log."""
     from onboarding import included_ai_in_use
 
-    included = included_ai_in_use() and brain == "Claude"
-    if isinstance(e, NoAnswer):
-        return (f"{'The AI included with your plan' if included else brain} didn't answer for "
-                f"{NO_ANSWER_LIMIT // 60} minutes, so I stopped waiting. Try again in a minute.")
+    name = "ChatGPT" if brain.lower() == "codex" else "Claude"
+    included = included_ai_in_use() and brain.lower() == "claude"
     text = str(e)
     try:
         detail = json.loads(text[text.index("{"):])
@@ -92,29 +97,35 @@ def friendly_error(e: Exception, brain: str) -> str:
         pass
     low = text.lower()
     status = e.status if isinstance(e, AIUnavailable) else None
+    codes = set(re.findall(r"\b([45]\d\d)\b", low))
+    has = lambda *words: any(w in low for w in words)
+    ai = isinstance(e, (AIUnavailable, NoAnswer)) or bool(codes) or has(*AI_WORDS)
 
-    if included and (status == 402 or "402" in low or "included ai" in low):
-        # The AI that came with their plan ran out for the month: say what ran out and what they can do.
-        return ("The AI included with your plan has run out for this month, so I can't start new work. You can "
-                "connect your own ChatGPT or Claude in Settings → AI accounts, upgrade your plan, or wait until the 1st "
-                "when it resets.")
-    if included and (status in (401, 403) or "401" in low or "403" in low):
-        # Not their key: the service behind their plan refused. Nothing they did, nothing to reconnect.
-        return ("The AI included with your plan isn't working right now. That's on our side, not something you did. "
-                "Try again in a few minutes, or connect your own ChatGPT or Claude in Settings → AI accounts.")
-    if "model" in low and ("not supported" in low or "not found" in low or "does not exist" in low):
-        return f"{brain} can't use that model with your account. Pick another model at the top and send again."
-    if status == 429 or "usage limit" in low or "rate limit" in low or "429" in low:
-        return f"You've reached your {brain} plan's limit for now. Try again later, or switch to the other AI at the top."
-    if status == 402 or "credit balance" in low:
-        return f"Your {brain} account is out of credit. Add credit there, or connect a different account in Settings → AI accounts."
-    if status in (401, 403) or "401" in low or "unauthorized" in low or "authentication" in low or "invalid api key" in low:
-        return f"Ken's sign-in to {brain} has expired or was refused. Reconnect it in Settings → AI accounts."
-    if (status or 0) >= 500 or "overloaded" in low or "529" in low or "503" in low:
-        return f"{brain} is busy or not answering right now. Try again in a minute."
-    if isinstance(e, AIUnavailable):
-        return f"Ken couldn't reach {brain} just now. Try again in a minute."
-    return f"Something went wrong: {text}"
+    if included:
+        if status == 402 or "402" in codes or has("included ai", "billing", "credit balance"):
+            return "You've used this month's included AI.", "connect"
+        if ai:  # refused, down, unreachable or silent: none of it is theirs to fix
+            return "Ken couldn't reach its AI just now.", "retry"
+        return "Something went wrong on Ken's side.", "retry"
+    if isinstance(e, NoAnswer):
+        return f"{name} didn't answer, so I stopped waiting.", "retry"
+    if has("model") and has("not supported", "not found", "does not exist", "not available"):
+        return f"{name} can't use that model with your account. Pick another model at the top.", "retry"
+    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit"):
+        return f"You've reached your {name} plan's limit for now.", "retry"
+    if status == 402 or "402" in codes or has("credit balance", "billing"):
+        return f"Your {name} account is out of credit.", "reconnect"
+    if status in (401, 403) or codes & {"401", "403"} or has("not logged in", "/login", "unauthorized", "authentication",
+                                                              "invalid api key", "invalid x-api-key", "expired", "oauth"):
+        return f"Your {name} connection stopped working.", "reconnect"
+    if ai:
+        return f"{name} isn't answering just now.", "retry"
+    return "Something went wrong on Ken's side.", "retry"
+
+
+def friendly_error(e: BaseException, brain: str) -> str:
+    """What to tell the person when a reply fails (see explain_failure)."""
+    return explain_failure(e, brain)[0]
 
 
 async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT, first: float | None = None):
@@ -430,7 +441,7 @@ class Engine:
         """Ask again after a reply that failed: the message they sent before it, without logging it twice.
         None when there's nothing to retry (Ken is busy, or the last reply didn't fail)."""
         recent = self.messages(pid, limit=40)
-        if self.chat_busy(pid) or not recent or not (recent[-1].get("error") and recent[-1].get("retry")):
+        if self.chat_busy(pid) or not recent or not (recent[-1].get("error") and recent[-1].get("action")):
             return None
         asked = next((m for m in reversed(recent) if m["role"] == "you"), None)
         if asked is None:
@@ -1318,9 +1329,11 @@ class Engine:
                 await session.close()
                 self.chats.pop(pid, None)
                 quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
-                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if quiet else friendly_error(e, self.backend(pid).capitalize())
-                # Retry and "use your own AI" show beside it in the app (a job's failure has no message to retry).
-                self.log_message(pid, "ken", msg, error=True, **({} if job else {"retry": True}), **({"via": via} if via else {}))
+                msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
+                               if quiet else explain_failure(e, self.backend(pid)))
+                # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
+                self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
+                                 **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(msg)
             finally:
@@ -1595,10 +1608,8 @@ class Engine:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                if isinstance(e, (NoAnswer, AIUnavailable)):
-                    summary = f"Failed: {friendly_error(e, self.backend(pid).capitalize())}"
-                elif not isinstance(e, asyncio.TimeoutError):
-                    summary = f"Failed: {e}"
+                if isinstance(e, NoAnswer) or not isinstance(e, asyncio.TimeoutError):
+                    summary = f"Failed: {friendly_error(e, self.backend(pid))}"
                 else:
                     summary = ("Stopped: it hit the one-hour limit." if time.monotonic() - began >= RUN_LIMIT - 60
                                else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")

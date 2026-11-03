@@ -14,7 +14,8 @@ function showFailure(message) {
     document.body.append(bar);
   }
   const reload = Object.assign(document.createElement('button'), { textContent: 'Reload', onclick: () => location.reload() });
-  bar.replaceChildren(document.createTextNode(`Something went wrong: ${message || 'unknown error'}. `), reload);
+  console.error(message);
+  bar.replaceChildren(document.createTextNode('Something went wrong on this page. '), reload);
 }
 addEventListener('error', (e) => showFailure(e.message));
 // A mouse click (on a button, tab or link) shouldn't leave a focus ring behind (it shows up on the next key press, like ⌘\).
@@ -614,7 +615,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const [dropped, setDropped] = useState(null);
   const messages = chat ? chat.messages : [];
   // A reply that failed (the AI was out, refused or didn't answer): try the same message again, or use another AI.
-  const last = messages[messages.length - 1], failed = last && last.role === 'ken' && last.error && last.retry;
+  const last = messages[messages.length - 1], failed = last && last.role === 'ken' && last.error && last.action;
   const [retrying, setRetrying] = useState(false);
   useEffect(() => setRetrying(false), [last?.id]);
   const retry = () => { setRetrying(true); api(`/api/chats/${pid}/retry`, { json: {} }).catch((e) => { setRetrying(false); toast(e.message); }); };
@@ -674,9 +675,9 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
           <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
-        ${!busy && failed && html`<div class="msg-actions" role="group" aria-label="What to do next">
-          <button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>
-          <button class="btn sm ghost" onClick=${onAIAccounts}>${HOSTED ? 'Connect your own Claude or ChatGPT' : 'AI accounts'}</button></div>`}
+        ${!busy && failed && html`<div class="msg-actions">${last.action === 'retry'
+          ? html`<button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>`
+          : html`<button class="btn sm" onClick=${onAIAccounts}>${last.action === 'connect' ? 'Connect your Claude or ChatGPT' : `Reconnect ${last.brain === 'codex' ? 'ChatGPT' : 'Claude'}`}</button>`}</div>`}
         ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Live} stream=${stream} activity=${activity} onStop=${stop}/>`
           : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>

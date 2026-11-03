@@ -1,6 +1,7 @@
 """Nothing hangs: an AI that fails or never answers ends the turn in seconds with plain words and a way out."""
 
 import asyncio
+import re
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import engine as engine_mod  # noqa: E402
 from brains import AIUnavailable, ClaudeBrain, ClaudeSession, Session, give_up  # noqa: E402
 from codex_brain import error_status  # noqa: E402
-from engine import HOME, Engine, NoAnswer, friendly_error, until_idle  # noqa: E402
+from engine import HOME, Engine, NoAnswer, explain_failure, until_idle  # noqa: E402
 from test_engine import FakeBrain, FakeSession  # noqa: E402
 
 
@@ -114,25 +115,64 @@ def included(monkeypatch, on=True):
     monkeypatch.setattr(onboarding, "included_ai_in_use", lambda: on)
 
 
-def test_plain_words_for_every_ai_failure(monkeypatch):
+def test_one_plain_sentence_and_one_button_for_every_failure(monkeypatch):
     included(monkeypatch, False)
-    assert "expired" in friendly_error(AIUnavailable(401, "authentication_failed"), "Claude")
-    assert "busy or not answering" in friendly_error(AIUnavailable(529, "overloaded"), "Claude")
-    assert "busy or not answering" in friendly_error(AIUnavailable(500, "api_error"), "Codex")
-    assert "couldn't reach Claude" in friendly_error(AIUnavailable(None, "unknown"), "Claude")
-    assert "limit" in friendly_error(AIUnavailable(429, "rate_limit"), "Claude")
-    assert "out of credit" in friendly_error(AIUnavailable(402, "billing_error"), "Claude")
-    assert "didn't answer for 2 minutes" in friendly_error(NoAnswer(), "Claude")
-    for e in (AIUnavailable(401, ""), AIUnavailable(None, ""), NoAnswer()):
-        assert "{" not in friendly_error(e, "Claude")
+    assert explain_failure(AIUnavailable(401, "authentication_failed"), "claude") == ("Your Claude connection stopped working.", "reconnect")
+    assert explain_failure(RuntimeError("Not logged in · Please run /login"), "claude") == ("Your Claude connection stopped working.", "reconnect")
+    assert explain_failure(AIUnavailable(401, "401 Unauthorized"), "codex") == ("Your ChatGPT connection stopped working.", "reconnect")
+    assert explain_failure(AIUnavailable(529, "overloaded"), "claude") == ("Claude isn't answering just now.", "retry")
+    assert explain_failure(AIUnavailable(None, "unknown"), "codex") == ("ChatGPT isn't answering just now.", "retry")
+    assert explain_failure(AIUnavailable(429, "rate_limit"), "claude") == ("You've reached your Claude plan's limit for now.", "retry")
+    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("Your Claude account is out of credit.", "reconnect")
+    assert explain_failure(NoAnswer(), "claude") == ("Claude didn't answer, so I stopped waiting.", "retry")
+    assert explain_failure(ValueError("list index out of range"), "claude") == ("Something went wrong on Ken's side.", "retry")
 
 
 def test_included_ai_failures_never_blame_the_person(monkeypatch):
     included(monkeypatch)
-    refused = friendly_error(AIUnavailable(401, "authentication_failed"), "Claude")
-    assert "not something you did" in refused and "connect your own" in refused and "expired" not in refused
-    assert "run out for this month" in friendly_error(AIUnavailable(402, "billing_error"), "Claude")
-    assert "included with your plan didn't answer" in friendly_error(NoAnswer(), "Claude")
+    for e in (AIUnavailable(401, "authentication_failed"), RuntimeError("Not logged in · Please run /login"),
+              AIUnavailable(529, "overloaded"), AIUnavailable(None, "unknown"), NoAnswer()):
+        assert explain_failure(e, "claude") == ("Ken couldn't reach its AI just now.", "retry")
+    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used this month's included AI.", "connect")
+    assert explain_failure(RuntimeError("API Error: 402 Out of included AI"), "claude")[1] == "connect"
+
+
+# What Claude Code, the SDKs and the services really say when things fail: none of it may reach a person.
+RAW = [
+    "Not logged in · Please run /login",
+    "Invalid API key · Please run /login",
+    'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+    'API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Out of included AI"}}',
+    'API Error: 403 {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked"}}',
+    "API Error: Repeated 529 Overloaded errors. The API is at capacity — check your inference gateway (127.0.0.1:8802).",
+    'API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}',
+    "API Error: Request timed out.",
+    "API Error: Connection error.",
+    "Claude AI usage limit reached|1793750400",
+    "Credit balance is too low",
+    '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6\' model is not supported when using Codex with a ChatGPT account."}}',
+    "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header",
+    "stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)",
+    "Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for details",
+    "Traceback (most recent call last):\n  File \"brains.py\", line 1\nKeyError: 'session_id'",
+    "Claude Code ended without completing the turn (error_max_turns).",
+]
+BANNED = re.compile(r"/login|\brun |API|x-api-key|\b[1-5]\d\d\b|claude-[a-z]|gpt-|Traceback|stderr|\{")
+
+
+def clean(text):
+    return not BANNED.search(text)
+
+
+@pytest.mark.parametrize("hosted", [False, True])
+@pytest.mark.parametrize("brain", ["claude", "codex"])
+def test_no_raw_error_wording_ever(monkeypatch, hosted, brain):
+    included(monkeypatch, hosted)
+    errors = [RuntimeError(r) for r in RAW] + [AIUnavailable(c, r) for c in (None, 400, 401, 402, 403, 404, 429, 500, 529) for r in RAW[:3]] + [NoAnswer()]
+    for e in errors:
+        text, action = explain_failure(e, brain)
+        assert clean(text), (str(e), text)
+        assert action in ("retry", "connect", "reconnect")
 
 
 class SilentSession(Session):
@@ -192,8 +232,8 @@ async def test_a_failed_reply_says_so_and_try_again_asks_the_same_thing(flaky, t
     flaky.log_message(HOME, "you", "what's 17 x 23?")
     assert not await flaky.send_message(HOME, "what's 17 x 23?", log_user=False)
     failed = flaky.messages(HOME)[-1]
-    assert failed["role"] == "ken" and failed["error"] and failed["retry"]
-    assert "busy or not answering" in failed["text"]
+    assert failed["role"] == "ken" and failed["error"] and failed["action"] == "retry"
+    assert failed["text"] == "Claude isn't answering just now."
 
     app = WebApp(flaky, tmp_path, rev="abc")
     app._brain_connected = lambda pid: True
@@ -258,3 +298,34 @@ async def test_codex_stops_retrying_a_refused_request():
     with pytest.raises(AIUnavailable) as caught:
         await session.ask("hi", nothing)
     assert caught.value.status == 401 and Turn.interrupted and not session.heard
+
+
+@pytest.mark.parametrize("hosted", [False, True])
+async def test_what_reaches_the_chat_screen_is_always_plain(monkeypatch, tmp_path, aiohttp_client, hosted):
+    """Every raw failure, through a real chat turn and the app's own API: the conversation the screen shows never
+    contains Claude Code / SDK wording, status codes or model ids."""
+    from web import WebApp
+
+    included(monkeypatch, hosted)
+    raw = iter(RAW)
+
+    class Raw(FakeSession):
+        async def ask(self, *a, **k):
+            raise RuntimeError(next(raw))
+
+    brain = FakeBrain()
+    brain.session = lambda **kw: Raw(brain, kw["cwd"], kw["system"], None)
+    e = Engine(tmp_path, brain)
+    e.configure_home(tmp_path / "work", lambda: "KEN SOUL", lambda: "KEN AT WORK")
+    e.agents_dir.mkdir()
+    e.requests_dir.mkdir()
+    for _ in RAW:
+        assert not await e.send_message(HOME, "hello")
+    app = WebApp(e, tmp_path, rev="abc")
+    client = await aiohttp_client(app.build())
+    await client.get(f"/login?token={app.token}", allow_redirects=False)
+    shown = [m for m in (await (await client.get(f"/api/chats/{HOME}")).json())["messages"] if m["role"] == "ken"]
+    assert len(shown) == len(RAW)
+    for m in shown:
+        assert clean(m["text"]), m["text"]
+        assert m["action"] in ("retry", "connect", "reconnect")

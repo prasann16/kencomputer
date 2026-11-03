@@ -370,10 +370,10 @@ def test_status_says_included(tmp_path, monkeypatch, clean_ai):
 def test_included_ai_running_out_is_said_plainly(monkeypatch, clean_ai):
     included(monkeypatch)
     onboarding.use_included_ai()
-    msg = friendly_error(Exception('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Out of included AI"}}'), "Claude")
-    assert "run out for this month" in msg and "Settings" in msg and "1st" in msg
+    msg = friendly_error(Exception('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Out of included AI"}}'), "claude")
+    assert msg == "You've used this month's included AI."
     monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
-    assert "run out" not in friendly_error(Exception("API Error: 402 Out of included AI"), "Claude")
+    assert "included" not in friendly_error(Exception("API Error: 402 Out of included AI"), "claude")
 
 
 # ------------------------------------------------------------------ bot: hosted bits
