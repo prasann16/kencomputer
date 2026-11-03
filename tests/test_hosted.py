@@ -42,7 +42,7 @@ def hosted(monkeypatch):
 @pytest.fixture
 def clean_ai(monkeypatch):
     for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-              "OPENROUTER_API_KEY", "OPENAI_API_KEY", "KEN_INCLUDED_AI_URL"):
+              "KEN_INCLUDED_AI_TOKEN", "OPENAI_API_KEY", "KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_MODEL"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -317,11 +317,17 @@ def test_sign_in_helper_needs_no_browser(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------------ the plan's included AI
 
+def included(monkeypatch):
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://host.example/ai/")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "person-token")
+
+
 def test_included_ai_until_they_connect_their_own(monkeypatch, clean_ai):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    """The host's AI endpoint and this person's token, never a provider key; their own Claude wins."""
+    included(monkeypatch)
     assert onboarding.use_included_ai()
-    assert os.environ["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
-    assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "sk-or-v1-test"
+    assert os.environ["ANTHROPIC_BASE_URL"] == "https://host.example/ai"
+    assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "person-token"
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
     assert not onboarding.use_included_ai()
     assert "ANTHROPIC_AUTH_TOKEN" not in os.environ and "ANTHROPIC_BASE_URL" not in os.environ
@@ -335,19 +341,36 @@ def test_without_included_ai_nothing_changes(monkeypatch, clean_ai):
     assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "someone-elses"
 
 
+def test_included_ai_needs_https(monkeypatch, clean_ai):
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "http://host.example/ai")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "person-token")
+    assert not onboarding.use_included_ai() and "ANTHROPIC_AUTH_TOKEN" not in os.environ
+
+
+def test_included_ai_model_is_the_plans(monkeypatch, clean_ai, tmp_path):
+    import bot
+    included(monkeypatch)
+    monkeypatch.setenv("KEN_INCLUDED_AI_MODEL", "claude-sonnet-test")
+    onboarding.use_included_ai()
+    assert bot.active_model("claude") == "claude-sonnet-test"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    onboarding.use_included_ai()
+    assert bot.active_model("claude") != "claude-sonnet-test"
+
+
 def test_status_says_included(tmp_path, monkeypatch, clean_ai):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    included(monkeypatch)
     o = Onboarding(tmp_path, lambda: True, _noop, lambda: True)
     assert o.status()["how"] == "included"
 
 
 def test_included_ai_running_out_is_said_plainly(monkeypatch, clean_ai):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    included(monkeypatch)
     onboarding.use_included_ai()
-    msg = friendly_error(Exception('API Error: 402 {"error":{"message":"Key limit exceeded"}}'), "Claude")
+    msg = friendly_error(Exception('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Out of included AI"}}'), "Claude")
     assert "run out for this month" in msg and "Settings" in msg and "1st" in msg
-    monkeypatch.delenv("OPENROUTER_API_KEY")
-    assert "run out" not in friendly_error(Exception("API Error: 402 Key limit exceeded"), "Claude")
+    monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
+    assert "run out" not in friendly_error(Exception("API Error: 402 Out of included AI"), "Claude")
 
 
 # ------------------------------------------------------------------ bot: hosted bits

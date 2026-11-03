@@ -49,7 +49,8 @@ from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_ski
 from usage import Usage
 from web import WebApp
 from connections import Connections
-from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_key, save_env, use_included_ai, voice_installed
+from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
+                        included_ai_model, save_env, use_included_ai, voice_installed)
 from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
@@ -1672,12 +1673,17 @@ async def refresh_models_file(app=None, *, backend="claude") -> None:
             models_file(backend).write_text("\n".join(m.model for m in result.data) + "\n")
             return
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        token = "" if api_key else await asyncio.to_thread(get_oauth_token)
-        if not api_key and not token:
+        # The plan's included AI: the host's endpoint lists the models it offers, for this person's token.
+        base = os.environ.get("ANTHROPIC_BASE_URL", "") if os.environ.get("ANTHROPIC_AUTH_TOKEN") else ""
+        token = "" if api_key or base else await asyncio.to_thread(get_oauth_token)
+        if not api_key and not token and not base:
             return
         headers = {"anthropic-version": "2023-06-01"}
         if api_key:
             headers["x-api-key"] = api_key
+            base = ""
+        elif base:
+            headers["Authorization"] = f"Bearer {os.environ['ANTHROPIC_AUTH_TOKEN']}"
         else:
             headers.update({
                 "Authorization": f"Bearer {token}",
@@ -1685,7 +1691,7 @@ async def refresh_models_file(app=None, *, backend="claude") -> None:
             })
         async with httpx.AsyncClient() as h:
             r = await h.get(
-                "https://api.anthropic.com/v1/models",
+                f"{base or 'https://api.anthropic.com'}/v1/models",
                 params={"limit": 1000},
                 headers=headers,
                 timeout=15,
@@ -1788,6 +1794,8 @@ def set_model(name: str, backend=None) -> None:
 def active_model(backend=None) -> str:
     """The chosen model, else the newest Opus the account offers (the list is newest first)."""
     backend = backend or ENGINE.backend(HOME)
+    if backend == "claude" and included_ai_in_use() and included_ai_model():
+        return included_ai_model()  # the plan's included AI runs on the model the plan comes with
     try:
         chosen = (KEN_HOME / ("model-codex" if backend == "codex" else "model")).read_text().strip()
     except OSError:

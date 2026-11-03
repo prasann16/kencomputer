@@ -79,11 +79,13 @@ def friendly_error(e: Exception, brain: str) -> str:
     except (ValueError, AttributeError):
         pass
     low = text.lower()
-    included = os.environ.get("OPENROUTER_API_KEY") and os.environ.get("ANTHROPIC_AUTH_TOKEN") == os.environ.get("OPENROUTER_API_KEY")
-    if included and brain == "Claude" and ("402" in low or "credit" in low or "key limit" in low or "limit exceeded" in low):
+    from onboarding import included_ai_in_use
+
+    if included_ai_in_use() and brain == "Claude" and ("402" in low or "included ai" in low):
         # The AI that came with their plan ran out for the month: say what ran out and what they can do.
         return ("The AI included with your plan has run out for this month, so I can't start new work. You can "
-                "upgrade your plan, connect your own AI in Settings → AI accounts, or wait until the 1st when it resets.")
+                "connect your own ChatGPT or Claude in Settings → AI accounts, upgrade your plan, or wait until the 1st "
+                "when it resets.")
     if "model" in low and ("not supported" in low or "not found" in low or "does not exist" in low):
         return f"{brain} can't use that model with your account. Pick another model at the top and send again."
     if "usage limit" in low or "rate limit" in low or "429" in low:

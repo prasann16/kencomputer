@@ -26,9 +26,9 @@ AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)
 TOKEN = re.compile(r"sk-ant-oat[A-Za-z0-9_-]+")
 CLAUDE_API_KEY = re.compile(r"^sk-ant-api[A-Za-z0-9_-]{20,}$")
 OPENAI_API_KEY = re.compile(r"^sk-[A-Za-z0-9_-]{20,}$")
-# AI a hosting plan includes: an OpenRouter key in the environment, which Claude Code reaches through
-# OpenRouter's Anthropic-compatible API. The person's own Claude sign-in or key always comes first.
-INCLUDED_AI_URL = "https://openrouter.ai/api"
+# AI a hosting plan includes: the host runs an Anthropic-compatible endpoint (KEN_INCLUDED_AI_URL) that holds the
+# real key and meters each person's spend; this computer only gets a token for it (KEN_INCLUDED_AI_TOKEN), so no
+# provider key is ever here. The person's own Claude sign-in or key always comes first.
 # What the CLI prints when the sign-in goes wrong, e.g. "OAuth error: …" or "Failed to exchange authorization code…".
 FAILED = re.compile(r"(?im)^.*\b(error|failed|denied|not allowed|not permitted|invalid|expired)\b.*$")
 # Whisper download sizes in MB, for a progress bar while the voice model arrives.
@@ -73,7 +73,19 @@ def voice_installed() -> bool:
 
 
 def included_ai_key() -> str:
-    return os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not os.environ.get("KEN_INCLUDED_AI_URL", "").startswith("https://"):
+        return ""
+    return os.environ.get("KEN_INCLUDED_AI_TOKEN", "").strip()
+
+
+def included_ai_in_use() -> bool:
+    key = included_ai_key()
+    return bool(key) and os.environ.get("ANTHROPIC_AUTH_TOKEN") == key
+
+
+def included_ai_model() -> str:
+    """The model the plan's included AI runs on, if the host set one."""
+    return os.environ.get("KEN_INCLUDED_AI_MODEL", "").strip()
 
 
 def use_included_ai() -> bool:
@@ -82,7 +94,7 @@ def use_included_ai() -> bool:
     own = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
     key = included_ai_key()
     if key and not own:
-        os.environ["ANTHROPIC_BASE_URL"] = os.environ.get("KEN_INCLUDED_AI_URL") or INCLUDED_AI_URL
+        os.environ["ANTHROPIC_BASE_URL"] = os.environ["KEN_INCLUDED_AI_URL"].rstrip("/")
         os.environ["ANTHROPIC_AUTH_TOKEN"] = key
         return True
     if key and os.environ.get("ANTHROPIC_AUTH_TOKEN") == key:
