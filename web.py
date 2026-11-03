@@ -442,6 +442,16 @@ class WebApp:
         self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True))
         return _json({"ok": True, "message": message})
 
+    async def retry(self, request):
+        pid = self._pid(request)
+        if not self._brain_connected(pid):
+            return _json({"error": f"Connect {self.engine.backend(pid).capitalize()} in Settings → AI accounts first."}, 400)
+        work = self.engine.retry_last(pid)
+        if work is None:
+            return _json({"error": "There's nothing to try again."}, 409)
+        self._spawn(work)
+        return _json({"ok": True})
+
     async def stop(self, request):
         return _json({"stopped": await self.engine.stop_chat(self._pid(request))})
 
@@ -768,6 +778,7 @@ class WebApp:
         r.add_post("/api/chats/{pid}/warm", self.warm_chat)
         r.add_post("/api/chats/{pid}/messages", self.post_message)
         r.add_post("/api/chats/{pid}/stop", self.stop)
+        r.add_post("/api/chats/{pid}/retry", self.retry)
         r.add_post("/api/chats/{pid}/files", self.upload)
         r.add_post("/api/chats/{pid}/files/paths", self.attach_paths)
         r.add_get("/api/chats/{pid}/files/{name}", self.download)

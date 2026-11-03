@@ -18,6 +18,25 @@ log = logging.getLogger("ken")
 # version X or newer is required"). Ken retries on the default model instead of showing it.
 NEEDS_NEWER_CLI = "does not support this model"
 TOO_NEW = object()
+# When the AI service fails, the brain's own runtime retries for minutes while Ken looks like it's thinking.
+# Ken stops at once on an answer that won't change (a refused key, no credit) and after RETRY_LIMIT seconds
+# of retrying anything else (busy, down, unreachable), and says so.
+FINAL_STATUSES = {400, 401, 402, 403, 404}
+RETRY_LIMIT = 20
+
+
+class AIUnavailable(RuntimeError):
+    """The AI service didn't answer: `status` is its HTTP status (None when it couldn't be reached)."""
+
+    def __init__(self, status: int | None, error: str = ""):
+        self.status, self.error = status, error or ""
+        super().__init__(f"AI request failed ({status or 'no connection'}): {error}")
+
+
+def give_up(status: int | None, error: str, retrying_for: float, next_wait: float) -> bool:
+    """Whether to stop retrying an AI request now rather than keep the person waiting."""
+    final = status in FINAL_STATUSES or error in ("authentication_failed", "billing_error", "invalid_request")
+    return final or retrying_for + next_wait > RETRY_LIMIT
 
 OnText = Callable[[str], Awaitable[None]]
 OnTool = Callable[[str], Awaitable[None]]
@@ -29,6 +48,7 @@ class Session:
     session_id: str | None = None
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
+    heard: bool = False  # whether this ask got anything from the AI yet; the engine stops one that never answers
     # What the last ask used, one row per model: model, cost_usd (None when the brain can't price it)
     # and token counts. Empty when the brain didn't say.
     usage: list[dict] = []
@@ -220,8 +240,9 @@ class ClaudeSession(Session):
         if model != self.model:
             await self.client.set_model(model or None)
             self.model = model
-        self.busy, self._heard = True, False
+        self.busy, self._heard, self.heard = True, False, False
         self._waiting, self._stopping, self._ended = [], False, False
+        retrying, failed = None, None  # when Claude Code started retrying the AI, and why Ken stopped it
         self.usage = []
         self.last_activity = time.monotonic()
         last_text = ""
@@ -230,7 +251,19 @@ class ClaudeSession(Session):
         try:
             await self.client.query(prompt)
             async for msg in self._messages():
-                self._heard, self.last_activity = True, time.monotonic()
+                if isinstance(msg, SystemMessage) and msg.subtype == "api_retry":
+                    # The AI service failed and Claude Code is about to try again: none of this is progress.
+                    status, error = msg.data.get("error_status"), str(msg.data.get("error") or "")
+                    retrying = retrying or time.monotonic()
+                    if failed is None and give_up(status, error, time.monotonic() - retrying,
+                                                  (msg.data.get("retry_delay_ms") or 0) / 1000):
+                        log.warning("AI request failed (%s %s); stopping instead of retrying", status, error)
+                        failed = AIUnavailable(status, error)
+                        await self.client.interrupt()
+                    continue
+                if not (isinstance(msg, SystemMessage) and msg.subtype in ("init", "status")):
+                    self._heard = self.heard = True
+                    self.last_activity = time.monotonic()
                 # Save the session as soon as it exists, not only when a long
                 # task finishes. An interrupted attempt can then resume too.
                 sid = msg.data.get('session_id') if isinstance(msg, SystemMessage) else getattr(msg, 'session_id', None)
@@ -282,6 +315,8 @@ class ClaudeSession(Session):
                             self.usage += spent_since(msg.model_usage, self.spent)
                         self.spent = msg.model_usage
                     result = (msg.result or "").strip()
+                    if failed is not None:
+                        raise failed
                     if NEEDS_NEWER_CLI in result or final is TOO_NEW:
                         final = TOO_NEW
                     elif msg.is_error and getattr(msg, 'terminal_reason', None) not in {'aborted_streaming', 'aborted_tools'}:

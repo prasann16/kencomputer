@@ -30,11 +30,18 @@ async function api(path, opts = {}) {
   } else if (opts.body !== undefined) {
     init.body = opts.body;
   }
-  if (opts.timeout) init.signal = AbortSignal.timeout(opts.timeout);
-  const r = await fetch(path, init);
+  // Nothing waits forever: a request Ken doesn't answer fails with plain words, and whatever asked shows a way out.
+  init.signal = AbortSignal.timeout(opts.timeout || 30000);
+  let r;
+  try { r = await fetch(path, init); }
+  catch (e) {
+    throw new Error(e.name === 'TimeoutError' || e.name === 'AbortError'
+      ? 'Ken didn’t answer in time. Check your connection and try again.'
+      : 'Can’t reach Ken right now. Check your connection and try again.');
+  }
   if (r.status === 401) { location.reload(); throw new Error('signed out'); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || r.statusText);
+  if (!r.ok) throw new Error(data.error || (r.status >= 500 ? 'Ken couldn’t do that just now. Try again in a moment.' : r.statusText));
   return data;
 }
 
@@ -43,11 +50,11 @@ const ATTACHED = new Set();
 async function upload(pid, list, attach) {
   const query = attach ? '?attach=1' : '';
   let saved;
-  if (typeof list[0] === 'string') saved = (await api(`/api/chats/${pid}/files/paths${query}`, { json: { paths: list } })).saved || [];  // picked in the Mac app
+  if (typeof list[0] === 'string') saved = (await api(`/api/chats/${pid}/files/paths${query}`, { json: { paths: list }, timeout: 600000 })).saved || [];  // picked in the Mac app
   else {
     const fd = new FormData();
     for (const f of list) fd.append('file', f, f.name);
-    saved = (await api(`/api/chats/${pid}/files${query}`, { body: fd })).saved || [];
+    saved = (await api(`/api/chats/${pid}/files${query}`, { body: fd, timeout: 600000 })).saved || [];
   }
   if (attach) saved.forEach((name) => ATTACHED.add(name));
   return saved;
@@ -424,10 +431,15 @@ function useSmooth(text) {
   return text.slice(0, shown);
 }
 
-function Live({ stream, activity }) {
+function Live({ stream, activity, onStop }) {
   const text = useSmooth(stream || '');
+  // Never a spinner without end: Ken stops an AI that doesn't answer within two minutes and says so; if this
+  // screen hears nothing for longer than that, it says so too and offers Stop.
+  const [waited, setWaited] = useState(0);
+  useEffect(() => { setWaited(0); const started = Date.now(); const t = setInterval(() => setWaited(Date.now() - started), 5000); return () => clearInterval(t); }, [stream, activity]);
+  const label = activity || (stream ? 'Writing…' : waited > 150000 ? 'This is taking longer than it should' : waited > 30000 ? 'Still thinking…' : 'Thinking…');
   // The status line sticks to the bottom of the view, so it stays visible under a long answer.
-  const status = html`<div class="typing" role="status"><span class="pulse"></span><span class="ellipsis">${activity || (stream ? 'Writing…' : 'Thinking…')}</span></div>`;
+  const status = html`<div class="typing" role="status"><span class="pulse"></span><span class="ellipsis">${label}</span>${!stream && !activity && waited > 150000 && onStop && html` <button class="text-action" onClick=${onStop}>Stop</button>`}</div>`;
   return stream ? html`<div class="msg"><div class="txt live">${md(text)}</div></div>${status}` : status;
 }
 
@@ -443,7 +455,7 @@ function ApprovalCard({ a, project, toast }) {
   const decide = async (decision) => {
     setBusy(true);
     try {
-      await api(`/api/approvals/${a.id}`, { json: { decision, body: editing ? body : undefined } });
+      await api(`/api/approvals/${a.id}`, { json: { decision, body: editing ? body : undefined }, timeout: 120000 });
       toast(decision === 'approve' ? `Approved. ${project ? project.name : 'Ken'} is on it.` : 'Skipped.');
     } catch (e) { toast(e.message); setBusy(false); }
   };
@@ -494,9 +506,9 @@ function DoneItem({ run, project, openRun }) {
 }
 
 function RunDrawer({ rid, projects, tick, onClose, toast }) {
-  const [run, setRun] = useState(null);
+  const [run, setRun] = useState(null), [failed, setFailed] = useState('');
   const logRef = useRef(null);
-  useEffect(() => { api(`/api/runs/${rid}`).then(setRun).catch((e) => toast(e.message)); }, [rid, tick]);
+  useEffect(() => { api(`/api/runs/${rid}`).then((r) => { setRun(r); setFailed(''); }).catch((e) => { setFailed(e.message); toast(e.message); }); }, [rid, tick]);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [run && run.events.length]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -511,7 +523,7 @@ function RunDrawer({ rid, projects, tick, onClose, toast }) {
       <header>
         <div style="flex:1;min-width:0">
           <div class="row meta"><${Chip} project=${project} /><span>${run ? (active ? 'running · ' + elapsed(run) : run.status) : ''}</span></div>
-          <h2>${run ? run.title : 'Loading…'}</h2>
+          <h2>${run ? run.title : failed ? 'Couldn’t load this job' : 'Loading…'}</h2>
         </div>
         <button class="icon-btn" aria-label="Close" onClick=${onClose}>${Icon.close}</button>
       </header>
@@ -583,7 +595,7 @@ function PreviewModal({ file, onClose, toast }) {
   <//>`;
 }
 
-function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup }) {
+function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup, loadError, onReload, onAIAccounts }) {
   const thread = useRef(null);
   const [dragging, setDragging] = useState(false);
   // Drop files anywhere in the window, or paste them, to attach to the message.
@@ -601,6 +613,12 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   }, []);
   const [dropped, setDropped] = useState(null);
   const messages = chat ? chat.messages : [];
+  // A reply that failed (the AI was out, refused or didn't answer): try the same message again, or use another AI.
+  const last = messages[messages.length - 1], failed = last && last.role === 'ken' && last.error && last.retry;
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => setRetrying(false), [last?.id]);
+  const retry = () => { setRetrying(true); api(`/api/chats/${pid}/retry`, { json: {} }).catch((e) => { setRetrying(false); toast(e.message); }); };
+  const stop = () => api(`/api/chats/${pid}/stop`, { json: {} }).catch((e) => toast(e.message));
   const clearedAt = chat ? chat.cleared_at || 0 : 0;
   const busy = chat && chat.busy;
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
@@ -651,11 +669,15 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) setBelow(false); }}>
       <div class="thread conversation-thread">
-        ${!chat && html`<p class="quiet-copy" role="status">Loading your conversation…</p>`}
+        ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
+          : html`<p class="quiet-copy" role="status">Loading your conversation…</p>`)}
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
           <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}>${item.el}</div>`)}
-        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Live} stream=${stream} activity=${activity}/>`
+        ${!busy && failed && html`<div class="msg-actions" role="group" aria-label="What to do next">
+          <button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>
+          <button class="btn sm ghost" onClick=${onAIAccounts}>${HOSTED ? 'Connect your own Claude or ChatGPT' : 'AI accounts'}</button></div>`}
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Live} stream=${stream} activity=${activity} onStop=${stop}/>`
           : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>
     </div>
@@ -664,7 +686,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
-        onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${() => api(`/api/chats/${pid}/stop`, { json: {} })}
+        onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${stop}
         onSend=${async (text, files) => { sent(); await onSend(text, files); }}/>
     </div>
     ${dragging && html`<div class="dropzone">Drop files into your message</div>`}
@@ -711,7 +733,9 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
   useEffect(() => {
     if (step !== 'code') return;
     const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) { clearInterval(timer); onDone(r); } } catch {} }, 2000);
-    return () => clearInterval(timer);
+    // A sign-in left open stops being watched after 15 minutes, and says so.
+    const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
+    return () => { clearInterval(timer); clearTimeout(limit); };
   }, [step]);
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
   return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect ${label}</h1>
@@ -744,7 +768,9 @@ function RemoteConnect({ onDone, backend = 'claude', onBack }) {
   useEffect(() => {
     if (!url) return;
     const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) { clearInterval(timer); onDone(r); } } catch {} }, 2000);
-    return () => clearInterval(timer);
+    // A sign-in left open stops being watched after 15 minutes, and says so.
+    const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
+    return () => { clearInterval(timer); clearTimeout(limit); };
   }, [url]);
   const pick = (h) => { setHow(h); setError(''); setValue(''); setUrl(''); setCode(''); if (h === 'signin') go({ action: 'start' }); };
   const field = (placeholder, submit) => html`<input class="connect-input" type=${how === 'signin' ? 'text' : 'password'} autocomplete="off" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && submit()}/>`;
@@ -993,7 +1019,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected, meta = {} }) 
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
-  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch(() => {}); }, []);
+  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
@@ -1007,7 +1033,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected, meta = {} }) 
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
         return html`<div><span>${included ? on(`${label} · Included with your plan`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
-    ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
+    ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
     ${tab === 'phone' && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`}
     ${tab === 'feedback' && html`<div class="set-body feedback">${sent
       ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p><button class="text-action" onClick=${() => { setSent(false); setTab('claude'); }}>Back to Settings</button>`
@@ -1203,7 +1229,7 @@ function App() {
   const changeRuntime=async(change)=>{
     if(changingBrain)return;
     const target=pidRef.current; ++runtimeVersion.current; setChangingBrain(true);
-    try{await api(`/api/chats/${target}/runtime`,{method:'PUT',json:{backend:model.backend,...change}});if(pidRef.current===target){setChoices(null);await loadModel();warm(target);}}
+    try{await api(`/api/chats/${target}/runtime`,{method:'PUT',json:{backend:model.backend,...change},timeout:60000});if(pidRef.current===target){setChoices(null);await loadModel();warm(target);}}
     catch(e){toast(e.message);}finally{setChangingBrain(false);}
   };
   const [awake,setAwake]=useState(null);
@@ -1265,6 +1291,9 @@ function App() {
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
   useEffect(() => { if (online) { setOffline(false); return; } const t = setTimeout(() => setOffline(true), 1200); return () => clearTimeout(t); }, [online]);
+  // ...and if it stays down, say so plainly with a way out instead of reconnecting forever.
+  const [lost, setLost] = useState(false);
+  useEffect(() => { if (online) { setLost(false); return; } const t = setTimeout(() => setLost(true), 20000); return () => clearTimeout(t); }, [online]);
   const [loadError, setLoadError] = useState('');
   const pid = route.pid || 'home';
   const pidRef = useRef(pid); pidRef.current = pid;
@@ -1429,7 +1458,7 @@ function App() {
       return true;
     }
     if(value.startsWith('/')){
-      const result=await api('/api/command',{json:{text:text.trim()}});
+      const result=await api('/api/command',{json:{text:text.trim()},timeout:120000});
       setChoices(result.choices?.length?result.choices.map(m=>({label:m,text:text.trim().split(' ')[0]+' '+m})):null);
       if(result.reply)toast(result.reply);
       if(value.startsWith('/model'))loadModel();
@@ -1443,7 +1472,7 @@ function App() {
     if ((chat && chat.busy) || outbox.some((m) => m.project === pid && !['failed','voice-failed'].includes(m.delivery))) { toast('Stop or finish the reply before clearing this thread.'); return; }
     setClearing(true); generation.current++;
     try {
-      const result = await api(`/api/chats/${pid}/reset`, { json: {} });
+      const result = await api(`/api/chats/${pid}/reset`, { json: {} , timeout: 60000 });
       sessionStorage.removeItem('ken-draft:' + pid); setDraft(null); setChoices(null);
       for(const note of Object.values(voiceDrafts()))if(note.project===pid)saveVoiceDraft(note.id,null);
       setOutbox((all) => all.filter((m) => m.project !== pid));
@@ -1463,9 +1492,9 @@ function App() {
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main"><${ChatHeader} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError && !restarting ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}
+  return html`<div class="shell"><main class="main"><${ChatHeader} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}
     ${meta.usage?.lines?.some((l) => l.low) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
-    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>setConnections(true)}/>`}
   </main>
     ${docFile && html`<${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/>`}
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
