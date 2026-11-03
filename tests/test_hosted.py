@@ -117,7 +117,7 @@ async def test_web_token_from_the_host(engine, aiohttp_client, monkeypatch):
 async def test_meta_says_hosted_and_passes_plan_usage(engine, aiohttp_client, hosted, monkeypatch):
     monkeypatch.setenv("KEN_ACCOUNT_URL", "/account")
     app, client = await signed_in(engine, aiohttp_client)
-    usage = {"plan": "Basic", "lines": [{"label": "Awake time", "left": "12 h", "of": "30 h"},
+    usage = {"plan": "Basic", "lines": [{"label": "Awake time", "left": "4 h", "of": "10 h"},
                                         {"label": "AI", "left": "$0.50", "low": True}, {"nope": 1}],
              "manage_url": "javascript:alert(1)"}
     meta = await (await client.get("/api/meta", headers={"X-Ken-Usage": json.dumps(usage)})).json()
