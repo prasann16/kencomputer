@@ -131,3 +131,10 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 .top-tabs .ken-mark{width:22px;height:24px;margin-right:12px;flex-shrink:0}  /* the app's mark, on its own; Chat and Brain are equal tabs */
 .skill-row{display:flex;align-items:flex-start;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}.skill-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.skill-row span{font-size:13px;color:var(--faint)}
 .skill-row .skill-open{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}.skill-row .skill-open:hover b{text-decoration:underline}.skill-parts{margin-top:16px!important}.skill-app{margin:28px 0 4px;font-size:15px;font-weight:600}.skill-row .job-switch{margin-top:4px;flex-shrink:0}
+/* Ken in the cloud: the code to type on ChatGPT's page, and what's left of the plan in Settings. */
+.connect .connect-device-code{font:600 26px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:3px;color:var(--ink);user-select:all}
+.connect code{font-size:12.5px}
+.plan-usage{display:flex;flex-direction:column;gap:6px;margin:0 0 14px;padding:12px 14px;border:1px solid var(--line-strong);border-radius:10px;font-size:13.5px}
+.plan-usage .plan-lines div{display:flex;justify-content:space-between;gap:12px;color:var(--muted)}
+.plan-usage .plan-lines div.low{color:var(--danger)}
+.plan-usage .text-action{align-self:flex-start;font-size:13px}

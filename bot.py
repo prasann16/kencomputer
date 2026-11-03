@@ -49,7 +49,7 @@ from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_ski
 from usage import Usage
 from web import WebApp
 from connections import Connections
-from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, save_env
+from onboarding import Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_key, save_env, use_included_ai, voice_installed
 from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
@@ -67,6 +67,9 @@ from telegram.ext import (
 
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
+if os.environ.get("TZ"):
+    time.tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
+use_included_ai()  # a plan's included AI, unless they've connected their own Claude
 
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", str(KEN_HOME / "work")))
@@ -103,6 +106,13 @@ def browser_command() -> dict:
 
     env = {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}
     args = ["--autoConnect"]
+    if os.environ.get("KEN_PLATFORM"):
+        # A computer in the cloud has no Chrome of theirs: Ken's own headless Chromium, if this plan has one.
+        chromium = os.environ.get("KEN_CHROMIUM", "")
+        if os.environ.get("KEN_BROWSER") != "1" or not chromium or not Path(chromium).exists():
+            return {}
+        args = ["--headless", "--isolated", f"--executablePath={chromium}", "--chromeArg=--no-sandbox",
+                "--chromeArg=--disable-dev-shm-usage"]
     node, script = os.environ.get("KEN_NODE"), os.environ.get("KEN_BROWSER_MCP")
     if node and script and Path(script).exists():
         return {"browser": {"type": "stdio", "command": node, "args": [script, *args], "env": {**env, "ELECTRON_RUN_AS_NODE": "1"}}}
@@ -112,6 +122,23 @@ def browser_command() -> dict:
     if shutil.which("npx"):
         return {"browser": {"type": "stdio", "command": shutil.which("npx"), "args": ["-y", "chrome-devtools-mcp@1.10.1", *args], "env": env}}
     return {}
+
+
+def apps_mcp() -> dict:
+    """Their apps (Gmail, Google Calendar and more), when the computer's host provides an apps MCP server."""
+    url, token = os.environ.get("KEN_APPS_MCP_URL", ""), os.environ.get("KEN_APPS_MCP_TOKEN", "")
+    if not url.startswith("https://") or not token:
+        return {}
+    return {"apps": {"type": "http", "url": url, "headers": {"Authorization": f"Bearer {token}"}}}
+
+
+APPS_PROMPT = (
+    "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and more). When "
+    "they ask for something in an app that isn't connected yet, use the apps tools to start the connection and "
+    "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
+    "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
+    "toward their plan's monthly app actions, so don't loop over hundreds of items without asking."
+)
 
 
 def media_mcp(backend="claude") -> dict:
@@ -352,6 +379,25 @@ HOSTED_PROMPT = (
     "from the app). It shows any file you name by its full path in your reply, and plays videos and pictures "
     "right in the chat, so name the full path of anything you made for them (a reel, a PDF), as well as putting "
     "it in the outbox for Telegram."
+)
+
+HOSTED_WEB_PROMPT = (
+    "IN THE CLOUD: you run on your own computer in the cloud, not on their computer. They talk to you in the Ken "
+    "app in their web browser (the same app: chat, Brain, Settings). There is no Chrome, Mac or phone of theirs "
+    "here, and no voice notes yet. Their time zone is set from their browser; if it's wrong, set it with a POST to "
+    "http://127.0.0.1:${KEN_WEB_PORT:-7777}/api/command with {\"text\": \"/timezone Area/City\"} and the header "
+    "\"Authorization: Bearer $(cat ~/.ken/web-token)\". While nobody's using you this computer sleeps; it wakes "
+    "for their messages and for your scheduled jobs (a job may start a minute or two late). Files you make live "
+    "here: name the full path of anything you made for them so they can open it in the app. If you're asked how "
+    "much of their plan is left, tell them it's under Settings."
+)
+
+HEADLESS_BROWSER_PROMPT = (
+    "BROWSER: you have your own browser on this computer (headless Chromium; there's no screen). Use the browser "
+    "tools for anything that needs a website or a form: open pages, read them, click, type, take screenshots to "
+    "check what you see. It isn't their browser, so it isn't signed in to their accounts: if a site needs their "
+    "login, say so and ask how they'd like to proceed. Before you post, send, buy, or change an account setting, "
+    "show them exactly what you'll do and wait for a yes."
 )
 
 SKILLS_RULE = (
@@ -609,13 +655,17 @@ def build_system() -> str:
     except Exception:
         pass
     if browser_mcp():
-        system += "\n\n" + BROWSER_PROMPT
+        system += "\n\n" + (HEADLESS_BROWSER_PROMPT if os.environ.get("KEN_PLATFORM") else BROWSER_PROMPT)
+    if apps_mcp():
+        system += "\n\n" + APPS_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
-    if os.environ.get("KEN_HOSTED"):
+    if os.environ.get("KEN_PLATFORM"):
+        system += "\n\n" + HOSTED_WEB_PROMPT
+    elif os.environ.get("KEN_HOSTED"):
         system += "\n\n" + HOSTED_PROMPT
     pending = unresolved_setup()
     if pending:
@@ -803,8 +853,14 @@ async def self_update() -> None:
                     log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
                     pip = KEN_HOME / "venv" / "bin" / "pip"  # on Windows, winrun.py installs them
                     if pip.exists():
+                        reqs = app_dir / "requirements.txt"
+                        if os.environ.get("KEN_VOICE") == "0":  # set up without voice: don't bring it back
+                            from pins import without_voice
+
+                            reqs = KEN_HOME / "requirements-installed.txt"
+                            reqs.write_text(without_voice((app_dir / "requirements.txt").read_text()))
                         p = await asyncio.create_subprocess_exec(
-                            str(pip), "install", "-q", "-r", str(app_dir / "requirements.txt"),
+                            str(pip), "install", "-q", "-r", str(reqs),
                             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
                         )
                         await p.communicate()
@@ -937,6 +993,9 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     voice = msg.voice or msg.audio
     if voice is None:
+        return
+    if not voice_available():
+        await msg.reply_text("🎙️ Voice notes don't work on this Ken yet. Type it to me instead?")
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
     model_cached = (
@@ -1381,10 +1440,52 @@ async def scheduler() -> None:
         await asyncio.sleep(20)
 
 
-def voice_available() -> bool:
-    import importlib.util
+def next_job_time(jobs: list[dict], state: dict, now: float, hours: int = 48) -> float | None:
+    """When the next scheduled job comes due (epoch seconds, on the minute), looking `hours` ahead; None if none.
+    A job that's due already (missed while the computer slept) counts as now."""
+    start = int(now // 60) * 60
+    for minute in range(hours * 60 + 1):
+        at = start + minute * 60
+        local = time.localtime(at)
+        if any(_job_due(job, local, state) for job in jobs):
+            return float(at)
+    return None
 
-    return importlib.util.find_spec("faster_whisper") is not None
+
+def upcoming_job() -> float | None:
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+    except Exception:
+        state = {}
+    return next_job_time(all_jobs(), state, time.time())
+
+
+async def keep_awake() -> None:
+    """A computer in the cloud sleeps when nobody's using it, and work running inside it doesn't count as use. Every
+    minute, tell the host (KEN_KEEPALIVE_URL) whether Ken is in the middle of something, so it keeps the computer up
+    until the work is done, and when the next scheduled job is due, so it wakes the computer for it."""
+    url, token = os.environ.get("KEN_KEEPALIVE_URL", ""), os.environ.get("KEN_KEEPALIVE_TOKEN", "")
+    if not url.startswith("https://") or not token:
+        return
+    async with httpx.AsyncClient(timeout=15) as client:
+        while True:
+            try:
+                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active)
+                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12]},
+                                  headers={"Authorization": f"Bearer {token}"})
+            except Exception as e:
+                log.warning("keep-awake check-in failed: %s", e)
+            await asyncio.sleep(60)
+
+
+def voice_available() -> bool:
+    return voice_installed()
+
+
+async def warmup() -> None:
+    """Load the voice model in the background, when this Ken has voice at all (a computer in the cloud may not)."""
+    if voice_available():
+        await warmup_voice()
 
 
 def use_signed_in_account(prefer=None) -> None:
@@ -1417,7 +1518,8 @@ async def brain_connected(backend=None) -> None:
 
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **CONNECTIONS.mcp(only, backend=backend)}
+    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
+                                          **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.tools_prompt = lambda only: "\n\n".join(
         x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
@@ -1442,7 +1544,7 @@ async def start_engine() -> WebApp | None:
     codex_setup = CodexOnboarding(KEN_HOME, lambda: brain_connected("codex"), voice_ready)
     await codex_setup.refresh()
     setup = BrainOnboarding({
-        "claude": Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token()),
+        "claude": Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token() or included_ai_key()),
                              lambda: brain_connected("claude"), voice_ready),
         "codex": codex_setup,
     }, lambda: ENGINE.backend(HOME))
@@ -1779,12 +1881,43 @@ async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 
+def set_timezone(arg: str = "") -> dict:
+    """/timezone Area/City: the time zone Ken's schedule runs on, saved for next time. The app on a computer in
+    the cloud sends the browser's own; there's no system clock setting to change there."""
+    name = arg.strip()
+    if not name:
+        return {"reply": f"Ken's time zone is {os.environ.get('TZ') or time.strftime('%Z')}.", "timezone": os.environ.get("TZ", "")}
+    if not _known_zone(name):
+        return {"reply": f"I don't know the time zone {name}. Use one like Europe/Lisbon.", "timezone": os.environ.get("TZ", "")}
+    save_env(KEN_HOME / ".env", "TZ", name)
+    time.tzset()
+    return {"reply": f"Time zone set to {name}. It's {time.strftime('%H:%M')} there.", "timezone": name}
+
+
+def _known_zone(name: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+){0,2}", name):
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(name)
+        return True
+    except Exception:
+        return False
+
+
+def _awake_command(arg: str = "") -> dict:
+    # Keeping the computer awake is a Mac thing: a computer in the cloud wakes and sleeps on its own.
+    return {"awake": None if os.environ.get("KEN_PLATFORM") else is_awake()}
+
+
 COMMANDS = {
     "model": model,
     "usage": usage,
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
-    "awake": lambda arg="": {"awake": is_awake()},
+    "awake": _awake_command,
+    "timezone": set_timezone,
 }
 
 
@@ -2152,8 +2285,8 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
-                  asyncio.create_task(USAGE.watch_memory())]
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(keep_awake())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")

@@ -31,7 +31,15 @@ MAX_UPLOAD = 200 * 1024 * 1024
 
 
 def load_token(home: Path) -> str:
+    """The app's access token. A hosting service that signs people in itself sets KEN_WEB_TOKEN and sends it
+    as a Bearer token on every request it forwards; otherwise Ken makes one and keeps it in ~/.ken/web-token."""
     f = home / "web-token"
+    if given := os.environ.get("KEN_WEB_TOKEN", "").strip():
+        if len(given) < 24:
+            raise ValueError("KEN_WEB_TOKEN must be at least 24 characters.")
+        f.write_text(given + "\n")  # `ken open` and Ken's own requests to its app read it here
+        f.chmod(0o600)
+        return given
     try:
         tok = f.read_text().strip()
         if tok:
@@ -42,6 +50,44 @@ def load_token(home: Path) -> str:
     f.write_text(tok + "\n")
     f.chmod(0o600)
     return tok
+
+
+def hosted_web() -> bool:
+    """Ken on a computer in the cloud that people use in their browser (KEN_PLATFORM names the host)."""
+    return bool(os.environ.get("KEN_PLATFORM"))
+
+
+def trusted_origins(request: web.Request) -> set[str]:
+    """Where a request to this app may come from: this app's own page. Behind an HTTPS proxy Ken itself sees
+    plain http, while the browser's page is https://the same host, so that form counts too."""
+    origins = {f"{request.scheme}://{request.host}", f"https://{request.host}"}
+    proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+    if proto in ("http", "https"):
+        origins.add(f"{proto}://{request.host}")
+    return origins
+
+
+USAGE_HEADER = "X-Ken-Usage"  # what the hosting service says is left of the plan, shown in the app
+
+
+def plan_usage(request: web.Request) -> dict | None:
+    """The plan usage a hosting service passes with each request: {"plan": "...", "lines": [{"label", "left", "of"?,
+    "low"?}], "note"?, "manage_url"?}. Shown as given; anything malformed is ignored."""
+    raw = request.headers.get(USAGE_HEADER, "")
+    if not raw or len(raw) > 4000:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    text = lambda v: str(v)[:120] if isinstance(v, (str, int, float)) else ""
+    lines = [{"label": text(l.get("label")), "left": text(l.get("left")), "of": text(l.get("of")), "low": bool(l.get("low"))}
+             for l in data.get("lines", []) if isinstance(l, dict) and l.get("label")][:6]
+    url = text(data.get("manage_url"))
+    return {"plan": text(data.get("plan")), "lines": lines, "note": text(data.get("note"))[:300],
+            "manage_url": url if url.startswith(("https://", "/")) else ""}
 
 
 def _json(data, status: int = 200) -> web.Response:
@@ -78,7 +124,7 @@ class WebApp:
     async def auth_mw(self, request: web.Request, handler):
         path = request.path
         origin = request.headers.get("Origin")
-        if origin and origin != f"{request.scheme}://{request.host}":
+        if origin and origin not in trusted_origins(request):
             return _json({"error": "Untrusted origin."}, 403)
         if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
             return await handler(request)
@@ -88,7 +134,8 @@ class WebApp:
             text=(
                 "<!doctype html><meta name=viewport content='width=device-width'>"
                 "<body style='font:16px system-ui;padding:40px;background:#F6F4EF;color:#1B1A17'>"
-                "<h2>Ken is locked</h2><p>Open it with the link from <code>ken open</code> on the Ken computer.</p>"
+                + ("<h2>Ken is locked</h2><p>Sign in again on the website you use to open Ken.</p>" if hosted_web() else
+                   "<h2>Ken is locked</h2><p>Open it with the link from <code>ken open</code> on the Ken computer.</p>")
             ),
             content_type="text/html",
             status=401,
@@ -128,9 +175,11 @@ class WebApp:
     # ------------------------------------------------------------------ pages
 
     async def index(self, request: web.Request) -> web.FileResponse:
+        # The live updates socket is this same host: ws:// on this computer, wss:// behind an HTTPS proxy.
+        host = request.host if all(c.isalnum() or c in ".-:[]" for c in request.host) else "localhost"
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
-            "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; frame-src 'none'; base-uri 'none'",
+            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}; object-src 'none'; frame-src 'none'; base-uri 'none'",
         })
 
     async def static_file(self, request: web.Request) -> web.StreamResponse:
@@ -145,7 +194,11 @@ class WebApp:
     async def meta(self, request):
         return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands),
                       # busy: don't restart the engine (e.g. to update) now
-                      "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
+                      "busy": self.engine.busy() or bool(self.setup and self.setup.active),
+                      # In the cloud: no Mac features, and the plan's usage when the hosting service passes it.
+                      "hosted": hosted_web(), "usage": plan_usage(request),
+                      "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
+                      "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", "")})
 
     async def setup_status(self, request):
         return _json(self.setup.status() if self.setup else {
@@ -162,6 +215,12 @@ class WebApp:
                 return _json(await self.setup.start(backend=b.get("backend")))
             if b.get("action") == "skip-phone":
                 return _json(self.setup.skip_phone())
+            if b.get("action") == "token":  # a Claude token made with `claude setup-token` on another computer
+                return _json(await self.setup.save_token(str(b.get("token", ""))))
+            if b.get("action") == "api-key":
+                return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
+            if b.get("action") == "disconnect":
+                return _json(await self.setup.disconnect(backend=b.get("backend")))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
         except (RuntimeError, ValueError) as exc:

@@ -1,0 +1,68 @@
+#!/bin/bash
+# Keeps Ken running on a computer with no service manager.
+#   - First boot: Ken's code, memory folders and standing jobs go onto the persistent disk (~/.ken).
+#   - Every start: update Ken (git pull, then its Python packages), the same way a server Ken updates.
+#   - Ken exits to restart into an update (and if it crashes): start it again, a little slower each
+#     time it keeps failing fast.
+# Everything is safe to run again with last time's files on disk.
+set -u
+KEN_HOME="${KEN_HOME:-$HOME/.ken}"
+APP="$KEN_HOME/app"
+SEED=/opt/ken/app-seed
+VENV=/opt/ken/venv
+
+log() { printf '%s [ken] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+setup() {
+  mkdir -p "$KEN_HOME/work" "$KEN_HOME/memory" "$HOME/.local/bin"
+  chmod 700 "$KEN_HOME"
+  if [ ! -d "$APP/.git" ]; then
+    log "first boot: copying Ken onto this computer's disk"
+    rm -rf "$APP.new" && cp -a "$SEED" "$APP.new" && mv "$APP.new" "$APP"
+  fi
+  # The packages live in the image (/opt); Ken finds them at ~/.ken/venv like any other install.
+  [ "$(readlink "$KEN_HOME/venv" 2>/dev/null)" = "$VENV" ] || { rm -rf "$KEN_HOME/venv"; ln -s "$VENV" "$KEN_HOME/venv"; }
+  [ -f "$KEN_HOME/.env" ] || { touch "$KEN_HOME/.env"; chmod 600 "$KEN_HOME/.env"; }
+  [ -f "$KEN_HOME/work/SOUL.md" ] || sed "s/{{NAME}}/${KEN_OWNER_NAME:-my human}/g" "$APP/SOUL.template.md" > "$KEN_HOME/work/SOUL.md"
+  [ -f "$KEN_HOME/jobs.json" ] || cp "$APP/jobs.default.json" "$KEN_HOME/jobs.json"
+  [ -f "$KEN_HOME/hosting.md" ] || cat > "$KEN_HOME/hosting.md" <<'NOTE'
+# This machine: Ken's own computer in the cloud
+
+- A small Linux computer in the cloud that only this person's Ken uses, provisioned by the service they signed up with. Same open-source Ken software as a self-install.
+- Everything of theirs lives here: SOUL.md, memory, history, files, credentials. It sleeps when nobody is using it and keeps its disk.
+- What leaves this machine: calls to the AI that runs you (their own Claude or ChatGPT account or key, or the AI included with their plan), and whatever a connected app or website is told to fetch or send.
+- Operator access: the service that hosts this computer can run commands on it, for setup, updates and support. Say so plainly if asked who can see their data.
+- Backups: the hosting provider keeps nightly copies of this computer's disk for a week.
+NOTE
+  rm -f "$KEN_HOME/off"  # a restart turns Ken back on after /kill
+  cp "$APP/ken" "$HOME/.local/bin/ken" 2>/dev/null && chmod +x "$HOME/.local/bin/ken"
+}
+
+update() {
+  git -C "$APP" pull --ff-only -q || log "update: git pull failed; starting the version that's here"
+  "$VENV/bin/python" "$APP/pins.py" "$APP/requirements.txt" > "$KEN_HOME/requirements-installed.txt" \
+    && "$VENV/bin/pip" install -q -r "$KEN_HOME/requirements-installed.txt" \
+    || log "update: installing Python packages failed; starting anyway"
+}
+
+setup
+export KEN_HOME APP VENV
+export -f log update
+# The host's apps server (managed Composio on Agent37) reaches Ken under generic names. Its token
+# is issued fresh each time the instance boots, so it's read here, never saved.
+export KEN_APPS_MCP_URL="${KEN_APPS_MCP_URL:-${AGENT37_COMPOSIO_MCP_URL:-}}"
+export KEN_APPS_MCP_TOKEN="${KEN_APPS_MCP_TOKEN:-${AGENT37_MANAGED_TOKEN:-}}"
+[ "${KEN_APPS:-1}" = "1" ] || export KEN_APPS_MCP_URL=""
+
+fails=0
+while true; do
+  timeout 600 bash -c update  # never hold Ken back more than 10 minutes
+  started=$(date +%s)
+  log "starting Ken ($(git -C "$APP" rev-parse --short HEAD 2>/dev/null))"
+  "$VENV/bin/python" "$APP/bot.py"
+  code=$?
+  if [ $(( $(date +%s) - started )) -lt 60 ]; then fails=$((fails + 1)); else fails=0; fi
+  wait=$(( fails < 6 ? 2 ** fails : 60 ))
+  log "Ken exited ($code); starting again in ${wait}s"
+  sleep "$wait"
+done
