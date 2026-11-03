@@ -329,3 +329,10 @@ async def test_what_reaches_the_chat_screen_is_always_plain(monkeypatch, tmp_pat
     for m in shown:
         assert clean(m["text"]), m["text"]
         assert m["action"] in ("retry", "connect", "reconnect")
+
+
+async def test_ken_speaking_first_that_fails_leaves_no_error_without_a_question(flaky):
+    """Ken's hello on a new install hits a failing AI: nothing to answer or retry, so the chat stays empty (and the
+    person's first message then gets the plain error and Try again)."""
+    assert not await flaky.send_message(HOME, "", log_user=False, via="app", prompt="say hello")
+    assert flaky.messages(HOME) == []

@@ -1332,6 +1332,9 @@ class Engine:
                 msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
                                if quiet else explain_failure(e, self.backend(pid)))
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
+                # Ken speaking first (its hello) that failed says nothing: there's no message of theirs to answer or retry.
+                if not text.strip() and not job and not log_user:
+                    return False
                 self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
                                  **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
                 if listener is not None:
