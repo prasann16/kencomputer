@@ -206,3 +206,30 @@ async def test_a_message_sent_as_the_turn_ends_gets_its_own_answer_in_the_same_r
     await session.ask('first', on_text)
     assert said == ['one', 'two'] and not session.busy
     assert not await session.steer('late')  # nothing running: it waits for its own turn
+
+
+async def test_claude_codes_own_api_error_line_is_not_a_reply():
+    """A refused request (e.g. a plan's included AI used up) comes as an AssistantMessage marked with an error, then a
+    failed result: Ken says it once, in its own words, instead of showing the raw "API Error: 402 …" as a reply."""
+    import pytest
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    class Client:
+        async def query(self, prompt):
+            pass
+
+        async def receive_messages(self):
+            yield AssistantMessage(content=[TextBlock(text='API Error: 402 Out of included AI')], model='m', error='billing_error')
+            yield ResultMessage(subtype='success', duration_ms=1, duration_api_ms=1, is_error=True, num_turns=1,
+                                session_id='s', result='API Error: 402 Out of included AI')
+
+    session = ClaudeSession(ClaudeBrain(), '.', '', None)
+    session.client, session.model = Client(), ''
+    said = []
+
+    async def on_text(text):
+        said.append(text)
+
+    with pytest.raises(RuntimeError, match='402'):
+        await session.ask('hi', on_text)
+    assert said == []

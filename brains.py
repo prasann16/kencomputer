@@ -260,6 +260,8 @@ class ClaudeSession(Session):
                             await self.client.interrupt()  # they stopped: a message sent mid-turn starts no new work
                     continue
                 if isinstance(msg, AssistantMessage):
+                    if getattr(msg, "error", None):
+                        continue  # Claude Code's own "API Error: …" line: the turn fails and Ken says it in plain words
                     for block in msg.content:
                         if isinstance(block, ToolUseBlock) and on_tool is not None:
                             await on_tool(describe_tool(block.name, block.input))
