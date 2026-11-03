@@ -347,7 +347,11 @@ HOSTED_PROMPT = (
     "and never repeat a secret back. For a website that needs their login, use your own browser on this computer. "
     "YOUR CLOCK: scheduled jobs use this computer's time, which starts on UTC. As soon as you know where they live, "
     "set it with `sudo timedatectl set-timezone Area/City` and tell them in one line. While nobody's talking to you "
-    "this computer sleeps; it wakes for their messages and for your scheduled jobs."
+    "this computer sleeps; it wakes for their messages and for your scheduled jobs. "
+    "THE KEN APP: they may talk to you in the Ken phone app instead of Telegram (messages from it say they're "
+    "from the app). It shows any file you name by its full path in your reply, and plays videos and pictures "
+    "right in the chat, so name the full path of anything you made for them (a reel, a PDF), as well as putting "
+    "it in the outbox for Telegram."
 )
 
 SKILLS_RULE = (
