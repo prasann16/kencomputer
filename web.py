@@ -58,12 +58,18 @@ def hosted_web() -> bool:
 
 
 def trusted_origins(request: web.Request) -> set[str]:
-    """Where a request to this app may come from: this app's own page. Behind an HTTPS proxy Ken itself sees
-    plain http, while the browser's page is https://the same host, so that form counts too."""
-    origins = {f"{request.scheme}://{request.host}", f"https://{request.host}"}
+    """Where a request to this app may come from: this app's own page. Behind an HTTPS proxy Ken sees plain http and
+    often an internal address as its host, while the browser's page is https://the public name: the https form,
+    the name a proxy forwards (X-Forwarded-Host, X-Forwarded-Proto) and KEN_PUBLIC_ORIGINS count too. A page
+    elsewhere can't send those headers here without a preflight, which this check refuses."""
+    hosts = {request.host}
+    forwarded = request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+    if forwarded:
+        hosts.add(forwarded)
     proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
-    if proto in ("http", "https"):
-        origins.add(f"{proto}://{request.host}")
+    schemes = {request.scheme, "https"} | ({proto} if proto in ("http", "https") else set())
+    origins = {f"{scheme}://{host}" for scheme in schemes for host in hosts}
+    origins |= {o.strip().rstrip("/") for o in os.environ.get("KEN_PUBLIC_ORIGINS", "").split(",") if o.strip()}
     return origins
 
 

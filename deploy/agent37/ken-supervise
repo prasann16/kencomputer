@@ -53,6 +53,11 @@ export -f log update
 export KEN_APPS_MCP_URL="${KEN_APPS_MCP_URL:-${AGENT37_COMPOSIO_MCP_URL:-}}"
 export KEN_APPS_MCP_TOKEN="${KEN_APPS_MCP_TOKEN:-${AGENT37_MANAGED_TOKEN:-}}"
 [ "${KEN_APPS:-1}" = "1" ] || export KEN_APPS_MCP_URL=""
+# The addresses a browser may open this Ken at directly (the instance URL and its port URL), so its own
+# page is trusted there; Ken sees an internal address as its host.
+if [ -n "${AGENT37_INSTANCE_ID:-}" ]; then
+  export KEN_PUBLIC_ORIGINS="${KEN_PUBLIC_ORIGINS:-https://${AGENT37_INSTANCE_ID}.agent37.app,https://${AGENT37_INSTANCE_ID}-${KEN_WEB_PORT:-7777}.agent37.app}"
+fi
 
 fails=0
 while true; do
