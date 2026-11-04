@@ -2137,6 +2137,10 @@ class Handoff:
         return self.phone.status()
 
 
+# Hosted Ken: Telegram updates are pushed to Ken by its host (PHONE.receive) instead of fetched.
+PUSHED = os.environ.get("KEN_TELEGRAM_PUSH") == "1"
+
+
 class Phone:
     """Ken on your phone: the user's own Telegram bot, one more window onto the same Ken.
     Connected, paired and disconnected while Ken runs (Settings → Phone).
@@ -2195,7 +2199,8 @@ class Phone:
         app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION | filters.Document.ALL, on_file))
         await app.initialize()
         await app.start()
-        await app.updater.start_polling(allowed_updates=["message", "callback_query"])
+        if not PUSHED:
+            await app.updater.start_polling(allowed_updates=["message", "callback_query"])
         self.app, self.username = app, app.bot.username
         self.notify = asyncio.create_task(notify_telegram(app))
         try:
@@ -2211,6 +2216,30 @@ class Phone:
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
         log.info("ken is on Telegram as @%s", self.username)
+
+    async def receive(self, data: dict) -> bool:
+        """Hosted Ken: an update the host pushes (its computer sleeps, so it can't fetch them). The host only pushes
+        its person's messages, so whoever they're from is the owner, and {"ken_relay": "unlinked"} means they've
+        disconnected Telegram. False while Telegram isn't running yet (the host tries again)."""
+        global ALLOWED_USER_ID
+        if self.app is None:
+            return False
+        if data.get("ken_relay") == "unlinked":
+            ALLOWED_USER_ID = 0
+            save_env(KEN_HOME / ".env", "ALLOWED_USER_ID", "0")
+            log.info("telegram disconnected")
+            return True
+        update = Update.de_json(data, self.app.bot)
+        user = update.effective_user if update else None
+        if user is None:
+            return True
+        if user.id != ALLOWED_USER_ID:
+            ALLOWED_USER_ID = user.id
+            save_env(KEN_HOME / ".env", "ALLOWED_USER_ID", str(user.id))
+            save_env(KEN_HOME / ".env", "TELEGRAM_OWNER", (user.first_name or "").replace("\n", " ")[:60])
+            log.info("telegram linked")
+        await self.app.update_queue.put(update)
+        return True
 
     def keep_starting(self, token: str) -> None:
         """At boot the network may not be up yet: keep trying until Telegram answers."""
@@ -2236,7 +2265,8 @@ class Phone:
         self.notify = self.retry = None
         if app:
             try:
-                await app.updater.stop()
+                if app.updater.running:
+                    await app.updater.stop()
                 await app.stop()
                 await app.shutdown()
             except Exception:

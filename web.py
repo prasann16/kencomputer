@@ -303,6 +303,20 @@ class WebApp:
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
+    async def telegram_update(self, request):
+        """Hosted Ken: a Telegram update its host pushes (see bot.py's Phone.receive)."""
+        if not self.phone or os.environ.get("KEN_TELEGRAM_PUSH") != "1":
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+        except Exception:
+            return _json({"error": "invalid update"}, 400)
+        if not isinstance(data, dict):
+            return _json({"error": "invalid update"}, 400)
+        if not await self.phone.receive(data):
+            return _json({"error": "Ken's Telegram is still starting"}, 503)
+        return _json({"ok": True})
+
     async def phone_handoff(self, request):
         """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
         if not self.phone:
@@ -820,6 +834,7 @@ class WebApp:
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
+        r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

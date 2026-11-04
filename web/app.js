@@ -963,6 +963,17 @@ function PhoneSteps({ toast, onPaired }) {
 
 // First run, step 2 of 2 (after Connect Claude): the two ways to reach Ken, and the phone set up
 // or skipped. Then the chat opens and Ken takes it from there.
+// Ken in the cloud: Telegram is linked on the account page (the site keeps the bot); here it's just where to go.
+function HostedTelegram({ account }) {
+  const [phone, setPhone] = useState(null), [error, setError] = useState('');
+  useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
+  const link = (account || '/account') + '#telegram';
+  return html`<p class="np-help">Talk to Ken in Telegram too. Same Ken, same memory, and it can message you there (your morning brief, reminders, finished jobs).</p>
+    ${error ? html`<p class="connect-error" role="alert">${error}</p>` : !phone ? html`<p class="np-note">Loading…</p>`
+      : phone.paired ? html`<div class="conn-list"><div><span class="conn-on"><i></i>Connected${phone.owner ? ` · ${phone.owner}` : ''}</span><a class="text-action" href=${link} target="_top">Manage</a></div></div>`
+      : html`<a class="btn primary" href=${link} target="_top">Connect Telegram</a>`}`;
+}
+
 function PhoneSetup({ onDone, toast }) {
   const [busy, setBusy] = useState(false);
   const skip = async () => { setBusy(true); try { onDone(await api('/api/setup', { json: { action: 'skip-phone' } })); } catch (e) { toast(e.message); setBusy(false); } };
@@ -1029,13 +1040,14 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected, meta = {} }) 
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
     ${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}
     ${!meta.usage && meta.account_url && html`<p class="np-note"><a class="text-action" href=${meta.account_url}>Your plan and billing</a></p>`}
-    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], ...(HOSTED ? [] : [['phone', 'Phone']]), ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], (HOSTED ? ['phone', 'Telegram'] : ['phone', 'Phone']), ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
         return html`<div><span>${included ? on(`${label} · Included with your plan`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
     ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
-    ${tab === 'phone' && html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`}
+    ${tab === 'phone' && (HOSTED ? html`<div class="set-body"><${HostedTelegram} account=${meta.account_url}/></div>`
+      : html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
     ${tab === 'feedback' && html`<div class="set-body feedback">${sent
       ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p><button class="text-action" onClick=${() => { setSent(false); setTab('claude'); }}>Back to Settings</button>`
       : html`<p class="np-help">A bug, an idea, something you'd love Ken to do: it goes straight to the people who make Ken.</p>
