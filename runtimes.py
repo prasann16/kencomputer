@@ -80,8 +80,14 @@ def _good_enough(name: str, found: tuple, pinned: tuple) -> bool:
     return found >= pinned if name == "claude" else found[:2] == pinned[:2]
 
 
+def _runs(pin: dict) -> str:
+    """The program's own version (Claude Code 2.1.300), not its pip package's (claude-agent-sdk 0.2.167)."""
+    return pin.get("runs") or pin["version"]
+
+
 def _on_this_computer(name: str, version: str) -> str | None:
-    seen = set()
+    """The newest copy on this computer, if it's new enough (a Mac can have an old one lying around)."""
+    seen, best = set(), (None, ())
     for folder in os.environ.get("PATH", "").split(os.pathsep) + PLACES:
         program = Path(folder).expanduser() / name
         if not folder or program in seen or not program.is_file() or not os.access(program, os.X_OK):
@@ -91,9 +97,10 @@ def _on_this_computer(name: str, version: str) -> str | None:
             out = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=15).stdout
         except (OSError, subprocess.SubprocessError):
             continue
-        if _good_enough(name, _version(out), _version(version)):
-            return str(program)
-    return None
+        found = _version(out)
+        if _good_enough(name, found, _version(version)) and found > best[1]:
+            best = (str(program), found)
+    return best[0]
 
 
 def _download(name: str, pin: dict) -> str:
@@ -142,7 +149,7 @@ def setup() -> None:
             remembered, checked = ((_folder() / f"{name}.path").read_text().split("\n") + [""])[:2]
         except OSError:
             remembered, checked = "", ""
-        if checked != pin["version"]:
+        if checked != _runs(pin):
             remembered = ""
         for program in (remembered, str(downloaded)):
             if program and Path(program).is_file():
@@ -165,10 +172,10 @@ async def ensure(name: str) -> None:
             return
         _state[name] = {"progress": 0}
         try:
-            program = await asyncio.to_thread(_on_this_computer, name, pin["version"])
+            program = await asyncio.to_thread(_on_this_computer, name, _runs(pin))
             if program:
                 _folder().mkdir(parents=True, exist_ok=True)
-                (_folder() / f"{name}.path").write_text(f"{program}\n{pin['version']}")
+                (_folder() / f"{name}.path").write_text(f"{program}\n{_runs(pin)}")
             else:
                 program = await asyncio.to_thread(_download, name, pin)
         except Exception as exc:

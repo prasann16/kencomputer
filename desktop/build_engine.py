@@ -13,16 +13,25 @@ python = str(root / '.venv' / 'bin' / 'python')
 
 # Claude Code and Codex aren't in the app (~550 MB): Ken uses a copy on the computer or downloads the
 # pinned one when it's first needed (runtimes.py). Pin this Mac's wheel of each, by checksum.
-def pin(package):
+def pin(name, package):
     version = subprocess.run([python, '-c', f'import importlib.metadata as m; print(m.version("{package}"))'],
                              check=True, capture_output=True, text=True).stdout.strip()
     with urllib.request.urlopen(f'https://pypi.org/pypi/{package}/{version}/json', timeout=60) as r:
         files = json.load(r)['urls']
     wheel = next(f for f in files if 'macosx' in f['filename'] and f['filename'].endswith(f"_{platform.machine()}.whl"))
-    return {'version': version, 'url': wheel['url'], 'sha256': wheel['digests']['sha256']}
+    # A copy on the Mac is compared with the program's own version (Claude Code 2.1.300), never the
+    # package's (claude-agent-sdk 0.2.167): that mix-up let a too-old Claude Code in.
+    runs = subprocess.run([python, '-c', f"""import runtimes
+from importlib.util import find_spec; from pathlib import Path; import subprocess
+program = Path(find_spec("{ {'claude': 'claude_agent_sdk', 'codex': 'codex_cli_bin'}[name] }").origin).parent.parent / runtimes.INSIDE["{name}"][0]
+print(".".join(map(str, runtimes._version(subprocess.run([str(program), "--version"], capture_output=True, text=True).stdout))))"""],
+                          check=True, capture_output=True, text=True, cwd=root).stdout.strip()
+    assert runs, f'no version from {name} --version'
+    return {'version': version, 'runs': runs, 'url': wheel['url'], 'sha256': wheel['digests']['sha256']}
+
 
 (root / 'build').mkdir(exist_ok=True)
-(root / 'build' / 'runtimes.json').write_text(json.dumps({'claude': pin('claude-agent-sdk'), 'codex': pin('openai-codex-cli-bin')}, indent=1))
+(root / 'build' / 'runtimes.json').write_text(json.dumps({'claude': pin('claude', 'claude-agent-sdk'), 'codex': pin('codex', 'openai-codex-cli-bin')}, indent=1))
 subprocess.run([
     python, '-m', 'PyInstaller', '--noconfirm', '--clean', '--name', 'ken-engine',
     '--distpath', str(root / 'dist' / f'engine-{arch}'), '--workpath', str(root / 'build' / 'engine'),

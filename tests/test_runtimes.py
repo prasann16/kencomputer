@@ -1,7 +1,12 @@
 """The Mac app gets Claude Code and Codex from this computer or a one-time download (runtimes.py)."""
 import json
+import sys
+
+import pytest
 
 import runtimes
+
+mac_only = pytest.mark.skipif(sys.platform == "win32", reason="the Mac app's runtimes; fake programs are shell scripts")
 
 
 def test_terminal_install_needs_nothing(tmp_path, monkeypatch):
@@ -22,6 +27,7 @@ def test_version_rules():
     assert not runtimes._good_enough("codex", (0, 164, 0), (0, 163, 0))
 
 
+@mac_only
 def test_remembers_a_copy_only_for_the_same_version(tmp_path, monkeypatch):
     pins = tmp_path / "runtimes.json"
     pins.write_text(json.dumps({"codex": {"version": "0.163.0", "url": "", "sha256": ""}}))
@@ -65,3 +71,41 @@ async def test_failed_download_shows_and_try_again_works(tmp_path, monkeypatch):
     monkeypatch.setattr(runtimes, "_download", lambda name, pin: str(claude))
     await runtimes.ensure("claude")  # Try again
     assert runtimes.status() == {} and not runtimes.missing("claude")
+
+
+@mac_only
+def test_old_claude_code_on_the_mac_is_not_used(tmp_path, monkeypatch):
+    # v0.1.37 compared Claude Code 2.0.28 with the SDK's 0.2.167, used it, and got a retired model (404).
+    pins = tmp_path / "runtimes.json"
+    pins.write_text(json.dumps({"claude": {"version": "0.2.167", "runs": "2.1.300", "url": "", "sha256": ""}}))
+    monkeypatch.setattr(runtimes, "PINS", pins)
+    monkeypatch.setattr(runtimes, "_pip_has", lambda name: False)
+    monkeypatch.setattr(runtimes, "_chosen", {})
+    monkeypatch.setattr(runtimes, "PLACES", [])
+    monkeypatch.setenv("KEN_HOME", str(tmp_path))
+    old = tmp_path / "bin" / "claude"
+    old.parent.mkdir()
+    old.write_text("#!/bin/sh\necho '2.0.28 (Claude Code)'\n")
+    old.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{old.parent}:/usr/bin:/bin")
+    (tmp_path / "runtimes").mkdir()
+    (tmp_path / "runtimes" / "claude.path").write_text(f"{old}\n0.2.167")  # what v0.1.37 remembered
+    runtimes.setup()
+    assert runtimes.missing("claude")
+    assert runtimes._on_this_computer("claude", runtimes._runs(runtimes._pins()["claude"])) is None
+    old.write_text("#!/bin/sh\necho '2.1.301 (Claude Code)'\n")
+    assert runtimes._on_this_computer("claude", "2.1.300") == str(old)
+
+
+@mac_only
+def test_the_newest_copy_wins(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtimes, "PLACES", [])
+    folders = []
+    for i, v in enumerate(["2.1.300", "2.1.318", "2.0.28"]):
+        f = tmp_path / str(i)
+        f.mkdir()
+        (f / "claude").write_text(f"#!/bin/sh\necho '{v} (Claude Code)'\n")
+        (f / "claude").chmod(0o755)
+        folders.append(str(f))
+    monkeypatch.setenv("PATH", ":".join(folders))
+    assert runtimes._on_this_computer("claude", "2.1.300") == str(tmp_path / "1" / "claude")
