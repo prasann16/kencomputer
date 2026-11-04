@@ -48,14 +48,47 @@ async function api(path, opts = {}) {
 
 // Files the user attached; they show in their message, not as Ken's file cards.
 const ATTACHED = new Set();
-async function upload(pid, list, attach) {
+// Big files (a phone's raw video) go in 32 MB pieces: a proxy in front of a Ken in the cloud refuses any one request
+// over 100 MB. A piece that fails is sent again (three tries), and Ken says where to carry on, so nothing doubles.
+const PIECE = 32 * 1024 * 1024;
+async function uploadPieces(pid, file, query, onProgress) {
+  const { id } = await api(`/api/chats/${pid}/uploads`, { json: { name: file.name, size: file.size } });
+  let offset = 0;
+  while (offset < file.size) {
+    let tries = 0;
+    for (;;) {
+      try {
+        const r = await api(`/api/chats/${pid}/uploads/${id}?offset=${offset}`, { method: 'PUT', body: file.slice(offset, offset + PIECE), timeout: 300000 });
+        offset = r.received;
+        break;
+      } catch (e) {
+        if (++tries >= 3) throw new Error(`Couldn’t finish uploading ${file.name}. ${e.message}`);
+        await new Promise((ok) => setTimeout(ok, 2000 * tries));
+      }
+    }
+    onProgress?.(offset / file.size);
+  }
+  return (await api(`/api/chats/${pid}/uploads/${id}/done${query}`, { json: {}, timeout: 120000 })).saved || [];
+}
+
+async function upload(pid, list, attach, onProgress) {
   const query = attach ? '?attach=1' : '';
   let saved;
   if (typeof list[0] === 'string') saved = (await api(`/api/chats/${pid}/files/paths${query}`, { json: { paths: list }, timeout: 600000 })).saved || [];  // picked in the Mac app
   else {
-    const fd = new FormData();
-    for (const f of list) fd.append('file', f, f.name);
-    saved = (await api(`/api/chats/${pid}/files${query}`, { body: fd, timeout: 600000 })).saved || [];
+    saved = [];
+    const small = list.filter((f) => f.size <= 48 * 1024 * 1024), big = list.filter((f) => f.size > 48 * 1024 * 1024);
+    if (small.length) {
+      const fd = new FormData();
+      for (const f of small) fd.append('file', f, f.name);
+      saved.push(...((await api(`/api/chats/${pid}/files${query}`, { body: fd, timeout: 600000 })).saved || []));
+    }
+    const total = big.reduce((n, f) => n + f.size, 0);
+    let done = 0;
+    for (const f of big) {
+      saved.push(...await uploadPieces(pid, f, query, (part) => onProgress?.((done + part * f.size) / total)));
+      done += f.size;
+    }
   }
   if (attach) saved.forEach((name) => ATTACHED.add(name));
   return saved;
@@ -250,17 +283,18 @@ function VoiceNote({ src, peaks = [], seconds, pending, failed, onRetry, failure
   const audio = useRef(null), [playing,setPlaying] = useState(false), [position,setPosition] = useState(0), [length,setLength] = useState(seconds || 0);
   // Upload completion and message acknowledgement must not restart playback.
   const source = useRef(src);
-  const [error,setError] = useState('');
+  // A recording that can't be played (a Ken in the cloud may not keep it) stays a picture: waveform, length, words.
+  const [unplayable,setUnplayable] = useState(false);
   useEffect(()=>{const player=audio.current;return()=>{player?.pause();if(source.current.startsWith('blob:'))URL.revokeObjectURL(source.current);};},[]);
-  const play = async () => { try { if (playing) audio.current.pause(); else { if(audio.current.ended)audio.current.currentTime=0; await audio.current.play(); } setError(''); } catch { setError('Couldn’t play this recording.'); } };
+  const play = async () => { try { if (playing) audio.current.pause(); else { if(audio.current.ended)audio.current.currentTime=0; await audio.current.play(); } } catch { setUnplayable(true); } };
   const progress = length ? Math.min(1, position / length) : 0;
   const seek = (e) => { const next = Number(e.target.value); try { audio.current.currentTime=next;setPosition(next); } catch {} };
-  return html`<div class="voice-note"><div class="voice-note-row"><button class="voice-play" aria-label=${playing ? 'Pause voice note' : 'Play voice note'} onClick=${play}>${playing ? Icon.pause : Icon.play}</button>
-    <div class="voice-seek">${peaks.length ? html`<${Waveform} peaks=${peaks} progress=${progress}/>` : html`<div class="voice-track"><span style=${{width:progress*100+'%'}}></span></div>`}<input type="range" min="0" max=${length || 0} step="0.1" value=${position} disabled=${!length} aria-label="Seek voice note" aria-valuetext=${durationLabel(position)+' of '+durationLabel(length)} onInput=${seek}/></div>
+  return html`<div class="voice-note"><div class="voice-note-row">${!unplayable && html`<button class="voice-play" aria-label=${playing ? 'Pause voice note' : 'Play voice note'} onClick=${play}>${playing ? Icon.pause : Icon.play}</button>`}
+    <div class="voice-seek">${peaks.length ? html`<${Waveform} peaks=${peaks} progress=${progress}/>` : html`<div class="voice-track"><span style=${{width:progress*100+'%'}}></span></div>`}${!unplayable && html`<input type="range" min="0" max=${length || 0} step="0.1" value=${position} disabled=${!length} aria-label="Seek voice note" aria-valuetext=${durationLabel(position)+' of '+durationLabel(length)} onInput=${seek}/>`}</div>
     <span class="voice-time">${durationLabel(playing || position > 0 ? position : length)}</span></div>
-    <audio ref=${audio} src=${source.current} preload="metadata" onPlay=${()=>{document.querySelectorAll('.voice-note audio').forEach(other=>{if(other!==audio.current && !other.paused)other.pause();});setPlaying(true);}} onPause=${()=>setPlaying(false)} onEnded=${()=>{setPlaying(false);setPosition(0);}} onTimeUpdate=${()=>setPosition(audio.current.currentTime)} onLoadedMetadata=${()=>{if(Number.isFinite(audio.current.duration))setLength(audio.current.duration);}} onError=${()=>setError('Couldn’t play this recording.')}></audio>
+    <audio ref=${audio} src=${source.current} preload="metadata" onPlay=${()=>{document.querySelectorAll('.voice-note audio').forEach(other=>{if(other!==audio.current && !other.paused)other.pause();});setPlaying(true);}} onPause=${()=>setPlaying(false)} onEnded=${()=>{setPlaying(false);setPosition(0);}} onTimeUpdate=${()=>setPosition(audio.current.currentTime)} onLoadedMetadata=${()=>{if(Number.isFinite(audio.current.duration))setLength(audio.current.duration);}} onError=${()=>setUnplayable(true)}></audio>
     ${transcript ? html`<div class="voice-transcript">${transcript}</div>` : pending && html`<div class="voice-state" role="status"><span class="voice-pending" aria-hidden="true"></span>Listening…</div>`}
-    ${error && html`<small>${error}</small>`}${failed && html`<div class="voice-error">${failure || 'Couldn’t process this voice note.'} ${/No microphone audio/i.test(failure||'') ? window.kenDesktop?.microphoneSettings && html`<button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Microphone settings</button>` : html`<button class="text-action" onClick=${onRetry}>Retry voice note</button>`}</div>`}</div>`;
+    ${failed && html`<div class="voice-error">${failure || 'Couldn’t process this voice note.'} ${/No microphone audio/i.test(failure||'') ? window.kenDesktop?.microphoneSettings && html`<button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Microphone settings</button>` : html`<button class="text-action" onClick=${onRetry}>Retry voice note</button>`}</div>`}</div>`;
 }
 
 function useRecorder(onAudio, toast) {
@@ -306,6 +340,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [uploading, setUploading] = useState(0);
+  const [uploaded, setUploaded] = useState(null);  // a big file's progress, 0 to 1
   const ta = useRef(null);
   const picker = useRef(null);
   const id = useRef('c' + Math.random().toString(36).slice(2, 8)).current;
@@ -324,10 +359,10 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     if (!onAttach || !list || !list.length) return;
     setUploading((n) => n + 1);
     try {
-      const saved = await onAttach([...list]);
+      const saved = await onAttach([...list], setUploaded);
       setFiles((f) => [...new Set([...f, ...saved])]);
     } catch (e) { toast(e.message); }
-    finally { setUploading((n) => n - 1); }
+    finally { setUploading((n) => n - 1); setUploaded(null); }
   };
   useEffect(() => { if (dropped) attach(dropped); }, [dropped]);
   const send = async () => {
@@ -349,7 +384,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     ${recorder.error && html`<div class="mic-error" role="alert">${recorder.error}${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('privacy')}>Microphone settings</button>`}</div>`}
     ${recording && !recorder.heard && recorder.seconds>2 && html`<div class="mic-error" role="status">No sound from your microphone.${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Check input</button>`}</div>`}
     ${commands.length>0 && html`<div class="command-list" role="listbox" aria-label="Chat commands">${commands.map(([name,description],i)=>html`<button role="option" aria-selected=${i===commandIndex} onClick=${()=>{setText(name+' ');ta.current.focus();}}><b>${name}</b><span>${description}</span></button>`)}</div>`}
-    ${uploading > 0 && html`<div class="upload-status" role="status">Attaching files…</div>`}
+    ${uploading > 0 && html`<div class="upload-status" role="status">${uploaded === null ? 'Attaching files…' : `Uploading… ${Math.round(uploaded * 100)}%`}</div>`}
     ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`} alt=${f}/>`:Icon.file}${f}
       <button class="x" aria-label=${'Remove ' + f} onClick=${() => setFiles(files.filter((x) => x !== f))}>${Icon.close}</button></span>`)}</div>`}
     <div class="composer" onClick=${(e) => { if (e.target === e.currentTarget) ta.current?.focus(); }}>
@@ -687,7 +722,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
-        onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list) => upload(pid, list, true)} onStop=${stop}
+        onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list, onProgress) => upload(pid, list, true, onProgress)} onStop=${stop}
         onSend=${async (text, files) => { sent(); await onSend(text, files); }}/>
     </div>
     ${dragging && html`<div class="dropzone">Drop files into your message</div>`}

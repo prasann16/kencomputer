@@ -333,6 +333,8 @@ class Engine:
             "WHERE status IN ('running','queued')", (now,),
         )
         self._bg.append(asyncio.create_task(self._watch_requests()))
+        from workspace import keep_tidy  # old uploads, raw videos and renders go by themselves (workspace.py)
+        self._bg.append(asyncio.create_task(keep_tidy(self.home)))
 
     async def close(self) -> None:
         """Stop what's running before the process exits so tools are not orphaned."""

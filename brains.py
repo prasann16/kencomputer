@@ -92,18 +92,62 @@ class Brain:
         raise NotImplementedError
 
 
+# What a step looks like to the person: plain words, never a command line. Ken's people aren't developers, and the
+# same line shows in the app, in Telegram and on the Mac, so it's made here once.
+_SHELL_WORDS = [  # (any of these in the command, what it means), first match wins
+    (("--video-render",), "Rendering your video"),
+    (("--video-stills",), "Checking how the video looks"),
+    (("--video-cut", "ffmpeg", "ffprobe"), "Editing your video"),
+    (("transcribe",), "Transcribing"),
+    (("remotion", "npx remotion"), "Rendering your video"),
+    (("curl ", "wget ", "http://", "https://"), "Checking online"),
+    (("pip ", "npm install", "npm i ", "uv pip", "apt-get"), "Installing what it needs"),
+    (("git ",), "Updating files"),
+    (("ls ", "find ", "cat ", "head ", "tail ", "grep "), "Looking through files"),
+    (("rm ", "mv ", "cp ", "mkdir "), "Tidying up files"),
+]
+_TOOL_WORDS = {
+    "Read": "Reading", "Write": "Writing", "Edit": "Editing", "MultiEdit": "Editing", "NotebookEdit": "Editing",
+    "Grep": "Looking through files", "Glob": "Looking through files", "LS": "Looking through files",
+    "WebSearch": "Searching the web", "WebFetch": "Reading a web page", "Task": "Getting help with part of this",
+    "Agent": "Getting help with part of this", "TodoWrite": "Planning the steps", "Skill": "Using a skill",
+    "transcribe_media": "Transcribing",
+}
+
+
 def describe_tool(name: str, args: dict) -> str:
-    """One human-readable line for an agent action: 'Bash · npm test'."""
-    for key in ("description", "command", "file_path", "path", "pattern", "url", "query", "prompt"):
-        val = args.get(key) if isinstance(args, dict) else None
-        if isinstance(val, str) and val.strip():
-            detail = " ".join(val.split())
-            if key == "description":
-                return detail[:110]  # already written for humans: "Run the test suite"
-            if key == "file_path" or key == "path":
-                detail = detail.rsplit("/", 1)[-1] or detail
-            return f"{name} · {detail[:110]}"
-    return name
+    """One plain line for an agent action: 'Editing your video', 'Reading invoice.pdf', 'Searching the web for …'."""
+    args = args if isinstance(args, dict) else {}
+    text = lambda key: " ".join(str(args.get(key) or "").split())
+    if text("description") and name not in ("Bash", "Shell", "shell", "local_shell", "exec_command"):
+        return text("description")[:110]  # already written for people: "Run the test suite"
+    if name in ("Bash", "Shell", "shell", "local_shell", "exec_command", "command_execution"):
+        raw = args.get("command")
+        command = " ".join(map(str, raw)) if isinstance(raw, list) else text("command") or text("cmd")
+        low = f" {command.lower()} "
+        for needles, words in _SHELL_WORDS:
+            if any(n in low for n in needles):
+                return words
+        return "Working on it"
+    if name.startswith("mcp__"):  # mcp__apps__GMAIL_SEND_EMAIL -> "Using Gmail"
+        tool = name.split("__")[-1]
+        app = tool.split("_")[0].capitalize() if tool.isupper() else ""
+        return f"Using {app}" if app else "Using one of your apps"
+    words = _TOOL_WORDS.get(name)
+    if words is None:
+        return "Working on it"
+    for key in ("file_path", "path"):
+        if text(key):
+            return f"{words} {text(key).rsplit('/', 1)[-1][:80]}"
+    if name == "WebSearch" and text("query"):
+        return f"{words} for {text('query')[:80]}"
+    if name == "WebFetch" and text("url"):
+        from urllib.parse import urlparse
+        host = urlparse(text("url")).netloc
+        return f"Reading {host}" if host else words
+    if name == "Skill" and text("skill"):
+        return f"Using its {text('skill').split(':')[-1].replace('-', ' ')} skill"
+    return words
 
 
 def spent_since(now: dict | None, before: dict | None) -> list[dict]:

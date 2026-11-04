@@ -281,10 +281,13 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
                     path.unlink(missing_ok=True)
                     continue
                 if size > TELEGRAM_FILE_LIMIT:
+                    # Telegram takes 50 MB from a bot. Where Ken has its own app (in the cloud, or the Mac app), the
+                    # file is there to download; otherwise say where it is on this computer.
+                    site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")  # a Ken in the cloud
+                    where = f"Open Ken to download it: {site}" if site.startswith("https://") else f"It's on this computer at {path}"
                     await bot.send_message(
-                        chat_id,
-                        f"📁 {path.name} is too big to send ({size // (1024 * 1024)}MB). "
-                        f"It's on the machine at {path}", disable_notification=quiet,
+                        chat_id, f"📁 {path.name} is too big for Telegram ({size // (1024 * 1024)} MB). {where}",
+                        disable_notification=quiet,
                     )
                     continue
                 with open(path, "rb") as fh:
@@ -1018,7 +1021,8 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     model_cached = (
         Path.home() / ".cache" / "huggingface" / "hub" / f"models--Systran--faster-whisper-{WHISPER_MODEL}"
     ).exists()
-    if not model_cached:
+    from voice import cloud
+    if not model_cached and not cloud():
         await msg.reply_text("🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
     tg_file = await voice.get_file()
     with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
@@ -1496,12 +1500,14 @@ async def keep_awake() -> None:
 
 
 def voice_available() -> bool:
-    return voice_installed()
+    """Voice notes, transcripts and reels: a local model, or the host transcribing (a Ken in the cloud)."""
+    from voice import cloud
+    return voice_installed() or cloud()
 
 
 async def warmup() -> None:
     """Load the voice model in the background, when this Ken has voice at all (a computer in the cloud may not)."""
-    if voice_available():
+    if voice_installed():  # only a local model has anything to load; the host's needs nothing
         await warmup_voice()
 
 

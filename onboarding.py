@@ -173,7 +173,9 @@ class Onboarding:
 
     def voice_status(self) -> dict:
         if not voice_installed():
-            return {"state": "off"}  # nothing to get ready, so the app shows no progress for it
+            from voice import cloud
+            # Transcribed by the host (a Ken in the cloud): ready at once. Otherwise nothing to get ready.
+            return {"state": "ready" if cloud() else "off"}
         if self.voice_ready():
             return {"state": "ready"}
         name = os.environ.get("WHISPER_MODEL", "small")

@@ -17,6 +17,7 @@ import os
 import secrets
 import re
 import tempfile
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Callable
@@ -30,6 +31,10 @@ log = logging.getLogger("ken")
 WEB_DIR = Path(__file__).parent / "web"
 COOKIE = "ken_token"
 MAX_UPLOAD = 200 * 1024 * 1024
+# Big files (a phone's raw video) come in pieces: a proxy in front of a Ken in the cloud refuses any one request over
+# 100 MB. Each piece is appended to <chat files>/.uploads/<id>.part, and the last one moves it into place.
+MAX_PIECED = 4 * 1024 ** 3
+PIECE_DIR = ".uploads"
 
 
 def load_token(home: Path) -> str:
@@ -531,6 +536,81 @@ class WebApp:
             self._spawn(self.engine.files_dropped(pid, saved))  # dropped: Ken looks right away
         return _json({"saved": saved})
 
+    def _pieces(self, pid: str) -> Path:
+        d = self.engine.files_dir(pid) / PIECE_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    async def upload_start(self, request):
+        """A big file, sent in pieces: say its name and size first. Refused up front if it won't fit."""
+        pid = self._pid(request)
+        b = await self._body(request)
+        name, size = b.get("name"), b.get("size")
+        if not isinstance(name, str) or not name or not isinstance(size, int) or size <= 0:
+            return _json({"error": "That file couldn't be read."}, 400)
+        if size > MAX_PIECED:
+            return _json({"error": f"{name} is too big (the limit is {MAX_PIECED // 1024 ** 3} GB per file)."}, 413)
+        d = self._pieces(pid)
+        for old in d.glob("*"):  # pieces of uploads abandoned a day ago or more
+            try:
+                if time.time() - old.stat().st_mtime > 86400:
+                    old.unlink()
+            except OSError:
+                pass
+        free = shutil.disk_usage(d).free
+        if size + 200 * 1024 ** 2 > free:  # room for the file and a little to work with
+            gb = lambda n: f"{n / 1024 ** 3:.1f} GB"
+            return _json({"error": f"Not enough space for {name}: it needs {gb(size)} and {gb(free)} is free. "
+                                   "Ask Ken to clear old videos, or move up a plan for more room."}, 507)
+        uid = secrets.token_hex(8)
+        (d / f"{uid}.json").write_text(json.dumps({"name": name, "size": size}))
+        (d / f"{uid}.part").write_bytes(b"")
+        return _json({"id": uid})
+
+    def _piece_meta(self, pid: str, uid: str):
+        if not re.fullmatch(r"[0-9a-f]{16}", uid or ""):
+            raise web.HTTPNotFound(text="no such upload")
+        d = self._pieces(pid)
+        meta, part = d / f"{uid}.json", d / f"{uid}.part"
+        if not meta.exists() or not part.exists():
+            raise web.HTTPNotFound(text="no such upload")
+        return json.loads(meta.read_text()), meta, part
+
+    async def upload_piece(self, request):
+        """The next piece, at ?offset= (what's already here). A piece sent twice is ignored, not doubled."""
+        pid = self._pid(request)
+        info, _, part = self._piece_meta(pid, request.match_info["uid"])
+        try:
+            offset = int(request.query.get("offset", "-1"))
+        except ValueError:
+            offset = -1
+        have = part.stat().st_size
+        if offset != have:
+            data = await request.read()  # drain it; tell the browser where to carry on
+            return _json({"received": have})
+        size = have
+        with open(part, "ab") as f:
+            while chunk := await request.content.read(1 << 16):
+                size += len(chunk)
+                if size > info["size"]:
+                    f.truncate(have)
+                    return _json({"error": "The file sent more than it said it would."}, 400)
+                f.write(chunk)
+        return _json({"received": size})
+
+    async def upload_finish(self, request):
+        """All pieces are here: the file takes its place in the chat like any upload."""
+        pid = self._pid(request)
+        info, meta, part = self._piece_meta(pid, request.match_info["uid"])
+        if part.stat().st_size != info["size"]:
+            return _json({"error": "Part of the file is missing. Try attaching it again."}, 409)
+        dest = self.engine.new_file_path(pid, info["name"])
+        part.replace(dest)
+        meta.unlink(missing_ok=True)
+        if request.query.get("attach") != "1":
+            self._spawn(self.engine.files_dropped(pid, [dest.name]))
+        return _json({"saved": [dest.name]})
+
     async def attach_paths(self, request):
         """Files picked in the Mac app arrive as paths on this computer: copied into the chat's folder."""
         pid = self._pid(request)
@@ -829,6 +909,9 @@ class WebApp:
         r.add_post("/api/chats/{pid}/retry", self.retry)
         r.add_post("/api/chats/{pid}/files", self.upload)
         r.add_post("/api/chats/{pid}/files/paths", self.attach_paths)
+        r.add_post("/api/chats/{pid}/uploads", self.upload_start)
+        r.add_put("/api/chats/{pid}/uploads/{uid}", self.upload_piece)
+        r.add_post("/api/chats/{pid}/uploads/{uid}/done", self.upload_finish)
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
         r.add_post("/api/open", self.open_file)
         r.add_get("/api/file", self.shared_file)

@@ -234,9 +234,11 @@ always right). Then:
 - Re-read the cut words in order: does the story flow, is any sentence chopped mid-thought?
 
 Fix what's wrong, check the fix with stills, then render again. Don't send something you wouldn't post. Then send
-`reel.mp4` and say where it's saved, in one short paragraph: "Here's your reel, 52 seconds. I opened with the line
-about quitting your job, cut the two retakes, and added graphics for the 300% number and your three rules. Want the
-captions in your brand orange?"
+`reel.mp4` in one short paragraph: what you did and one question, as a confident editor would, never how you checked
+it (no "I haven't watched it", no "I only checked stills") and never a file path. Videos stay 7 days, so end with
+that: "Here's your reel, 52 seconds. I opened with the line about quitting your job, cut the two retakes, and added
+graphics for the 300% number and your three rules. Want the captions in your brand orange? It's here for 7 days, so
+download it to keep it."
 
 ## Changes later
 
