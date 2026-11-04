@@ -1,7 +1,12 @@
 """The Mac app gets Claude Code and Codex from this computer or a one-time download (runtimes.py)."""
 import json
+import sys
+
+import pytest
 
 import runtimes
+
+mac_only = pytest.mark.skipif(sys.platform == "win32", reason="the Mac app's runtimes; fake programs are shell scripts")
 
 
 def test_terminal_install_needs_nothing(tmp_path, monkeypatch):
@@ -22,6 +27,7 @@ def test_version_rules():
     assert not runtimes._good_enough("codex", (0, 164, 0), (0, 163, 0))
 
 
+@mac_only
 def test_remembers_a_copy_only_for_the_same_version(tmp_path, monkeypatch):
     pins = tmp_path / "runtimes.json"
     pins.write_text(json.dumps({"codex": {"version": "0.163.0", "url": "", "sha256": ""}}))
@@ -67,6 +73,7 @@ async def test_failed_download_shows_and_try_again_works(tmp_path, monkeypatch):
     assert runtimes.status() == {} and not runtimes.missing("claude")
 
 
+@mac_only
 def test_old_claude_code_on_the_mac_is_not_used(tmp_path, monkeypatch):
     # v0.1.37 compared Claude Code 2.0.28 with the SDK's 0.2.167, used it, and got a retired model (404).
     pins = tmp_path / "runtimes.json"
@@ -90,6 +97,7 @@ def test_old_claude_code_on_the_mac_is_not_used(tmp_path, monkeypatch):
     assert runtimes._on_this_computer("claude", "2.1.300") == str(old)
 
 
+@mac_only
 def test_the_newest_copy_wins(tmp_path, monkeypatch):
     monkeypatch.setattr(runtimes, "PLACES", [])
     folders = []
