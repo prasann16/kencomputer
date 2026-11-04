@@ -22,6 +22,10 @@ if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["-
     video_kit.main(sys.argv[1:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))))
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
+    import apps
+    raise SystemExit(apps.main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -134,11 +138,22 @@ def apps_mcp() -> dict:
 
 
 APPS_PROMPT = (
-    "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and more). When "
+    "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and 250+ more). When "
     "they ask for something in an app that isn't connected yet, use the apps tools to start the connection and "
     "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
     "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
     "toward their plan's monthly app actions, so don't loop over hundreds of items without asking."
+)
+
+# Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
+HOSTED_APPS_PROMPT = (
+    "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 250+ more). Never guess "
+    f"what's connected: run `{KEN_CMD} --apps` to see. When they ask for something in an app, run `{KEN_CMD} --apps "
+    "<app name>`: if it isn't connected, reply in one line with the Connect link it prints, exactly as printed (never "
+    "an authorization link from the apps tools themselves), and stop there. You'll get a note when they've connected "
+    "it; then carry on with what they asked. Before you send, post, delete or change anything in an app, show them "
+    "exactly what you'll do and wait for a yes. Each app action counts toward their plan's monthly app actions, so "
+    "don't loop over hundreds of items without asking."
 )
 
 
@@ -658,7 +673,8 @@ def build_system() -> str:
     if browser_mcp():
         system += "\n\n" + (HEADLESS_BROWSER_PROMPT if os.environ.get("KEN_PLATFORM") else BROWSER_PROMPT)
     if apps_mcp():
-        system += "\n\n" + APPS_PROMPT
+        import apps
+        system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()

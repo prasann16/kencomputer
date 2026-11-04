@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import secrets
+import re
 import tempfile
 from pathlib import Path
 from typing import Callable
@@ -316,6 +317,31 @@ class WebApp:
         if not await self.phone.receive(data):
             return _json({"error": "Ken's Telegram is still starting"}, 503)
         return _json({"ok": True})
+
+    async def app_connected(self, request):
+        """Hosted Ken: its host says an app was just connected through a link Ken gave (see engine.app_connected)."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+            slug, name = str(data["slug"]), str(data.get("name") or data["slug"])
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        if not re.fullmatch(r"[a-z0-9_-]{1,60}", slug):
+            return _json({"error": "invalid"}, 400)
+        return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
+
+    async def apps_list(self, request):
+        """Hosted Ken's Settings: the apps connected on the host's Apps page."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await asyncio.to_thread(apps.fetch)
+        except Exception:
+            return _json({"error": "Couldn't check your apps just now."}, 502)
+        return _json({"connected": data.get("connected", []), "apps_url": data.get("apps_url", "")})
 
     async def phone_handoff(self, request):
         """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
@@ -835,6 +861,8 @@ class WebApp:
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
         r.add_post("/api/telegram/update", self.telegram_update)
+        r.add_post("/api/apps/connected", self.app_connected)
+        r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

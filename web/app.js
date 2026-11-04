@@ -964,6 +964,19 @@ function PhoneSteps({ toast, onPaired }) {
 // First run, step 2 of 2 (after Connect Claude): the two ways to reach Ken, and the phone set up
 // or skipped. Then the chat opens and Ken takes it from there.
 // Ken in the cloud: Telegram is linked on the account page (the site keeps the bot); here it's just where to go.
+// Hosted Ken: apps are connected on the host's Apps page; this shows which are, and links there.
+function HostedApps({ account }) {
+  const [apps, setApps] = useState(null), [error, setError] = useState('');
+  const load = () => { setError(''); api('/api/apps', { timeout: 20000 }).then(setApps).catch((e) => setError(e.message)); };
+  useEffect(load, []);
+  const page = apps?.apps_url || ((account || '/account').replace(/\/$/, '') + '/apps');
+  return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 250+ more apps. Ken asks before it sends or changes anything.</p>
+    ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${load}>Try again</button></p>` : !apps ? html`<p class="np-note">Loading…</p>`
+      : apps.connected.length ? html`<div class="conn-list">${apps.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`
+      : html`<p class="np-note">No apps connected yet.</p>`}
+    <a class="btn primary" href=${page} target="_top">Connect apps</a>`;
+}
+
 function HostedTelegram({ account }) {
   const [phone, setPhone] = useState(null), [error, setError] = useState('');
   useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
@@ -1040,12 +1053,13 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected, meta = {} }) 
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
     ${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}
     ${!meta.usage && meta.account_url && html`<p class="np-note"><a class="text-action" href=${meta.account_url}>Your plan and billing</a></p>`}
-    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], (HOSTED ? ['phone', 'Telegram'] : ['phone', 'Phone']), ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
+    <div class="set-tabs" role="tablist">${[['claude', 'AI accounts'], ['tools', 'Tools'], (HOSTED ? ['phone', 'Telegram'] : ['phone', 'Phone']), ...(HOSTED ? [['apps', 'Apps']] : []), ['privacy', 'Privacy']].map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</div>
     ${tab === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
         return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
     ${tab === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
+    ${tab === 'apps' && html`<div class="set-body"><${HostedApps} account=${meta.account_url}/></div>`}
     ${tab === 'phone' && (HOSTED ? html`<div class="set-body"><${HostedTelegram} account=${meta.account_url}/></div>`
       : html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
     ${tab === 'feedback' && html`<div class="set-body feedback">${sent

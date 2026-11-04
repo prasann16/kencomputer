@@ -448,6 +448,25 @@ class Engine:
             return None
         return self.send_message(pid, asked.get("text", ""), asked.get("files") or [], log_user=False, via="app")
 
+    async def app_connected(self, slug: str, name: str) -> str | None:
+        """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
+        recent Ken reply with that link, in the last hour) carries on with what they asked. Returns that chat."""
+        link = f"/account/apps/connect/{slug}"
+        since = time.time() - 3600
+        best = None
+        for pid in [HOME, *[a["id"] for a in self.list_agents()]]:
+            for m in reversed(self.messages(pid, limit=20)):
+                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since:
+                    if best is None or m["ts"] > best[1]:
+                        best = (pid, m["ts"])
+                    break
+        if best is None:
+            return None
+        pid = best[0]
+        self._bg.append(asyncio.create_task(self.send_message(
+            pid, "", log_user=False, via="app", steer=True, prompt=f"(They've just connected {name}. Carry on with what they asked.)")))
+        return pid
+
     async def first_contact(self) -> None:
         """A brand-new install's Home chat was opened: Ken speaks first, exactly as it does on Telegram."""
         if not self.new_install() or HOME in self._greeting or self.chat_busy(HOME) or self.db.execute(
