@@ -86,7 +86,8 @@ def _runs(pin: dict) -> str:
 
 
 def _on_this_computer(name: str, version: str) -> str | None:
-    seen = set()
+    """The newest copy on this computer, if it's new enough (a Mac can have an old one lying around)."""
+    seen, best = set(), (None, ())
     for folder in os.environ.get("PATH", "").split(os.pathsep) + PLACES:
         program = Path(folder).expanduser() / name
         if not folder or program in seen or not program.is_file() or not os.access(program, os.X_OK):
@@ -96,9 +97,10 @@ def _on_this_computer(name: str, version: str) -> str | None:
             out = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=15).stdout
         except (OSError, subprocess.SubprocessError):
             continue
-        if _good_enough(name, _version(out), _version(version)):
-            return str(program)
-    return None
+        found = _version(out)
+        if _good_enough(name, found, _version(version)) and found > best[1]:
+            best = (str(program), found)
+    return best[0]
 
 
 def _download(name: str, pin: dict) -> str:

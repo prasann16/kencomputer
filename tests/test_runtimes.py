@@ -88,3 +88,16 @@ def test_old_claude_code_on_the_mac_is_not_used(tmp_path, monkeypatch):
     assert runtimes._on_this_computer("claude", runtimes._runs(runtimes._pins()["claude"])) is None
     old.write_text("#!/bin/sh\necho '2.1.301 (Claude Code)'\n")
     assert runtimes._on_this_computer("claude", "2.1.300") == str(old)
+
+
+def test_the_newest_copy_wins(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtimes, "PLACES", [])
+    folders = []
+    for i, v in enumerate(["2.1.300", "2.1.318", "2.0.28"]):
+        f = tmp_path / str(i)
+        f.mkdir()
+        (f / "claude").write_text(f"#!/bin/sh\necho '{v} (Claude Code)'\n")
+        (f / "claude").chmod(0o755)
+        folders.append(str(f))
+    monkeypatch.setenv("PATH", ":".join(folders))
+    assert runtimes._on_this_computer("claude", "2.1.300") == str(tmp_path / "1" / "claude")
