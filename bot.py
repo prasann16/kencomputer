@@ -1632,7 +1632,7 @@ def _coffee_pid() -> int | None:
     out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
     for line in out.splitlines():
         pid, ppid, command = (line.split(None, 2) + ["", ""])[:3]
-        if ppid == "1" and command.strip() == "caffeinate -dimsu":
+        if ppid == "1" and command.strip() in ("caffeinate -ims", "caffeinate -dimsu"):  # -dimsu: Kens before the screen could sleep
             return int(pid)
     return None
 
@@ -1650,14 +1650,16 @@ def coffee() -> str:
     if is_awake():
         return "☕ Already on it — this computer isn't going anywhere."
     _coffee = subprocess.Popen(
-        ["caffeinate", "-dimsu"],  # everything awake, display included, so screen and browser work keeps running
+        # The Mac, its disks and the network stay awake (plugged in), but the screen sleeps as usual:
+        # a lit screen all night heats the Mac and spins its fans, and Ken's work doesn't need it.
+        ["caffeinate", "-ims"],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     AWAKE_PID.write_text(str(_coffee.pid))
     ENGINE.broadcast("coffee", awake=True)  # so the app's cup and the menu bar follow right away
-    return "☕ Staying awake. Lock your screen anytime; a closed laptop lid still sleeps it."
+    return "☕ Staying awake. The screen can still turn off and you can lock it; a closed laptop lid still sleeps it."
 
 
 def decaf() -> str:
