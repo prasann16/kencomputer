@@ -42,6 +42,7 @@ import httpx
 from dotenv import load_dotenv
 
 import crash
+import runtimes
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
@@ -1565,6 +1566,8 @@ async def refresh_models_file(app=None, *, backend="claude") -> None:
     try:
         if backend == "codex":
             from codex_brain import codex_client
+            if runtimes.missing("codex"):
+                return
             async with codex_client() as client:
                 result = await client.models()
             models_file(backend).write_text("\n".join(m.model for m in result.data) + "\n")
@@ -2153,7 +2156,7 @@ async def run() -> None:
         pass
     web_app = await start_engine()
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
-                  asyncio.create_task(USAGE.watch_memory())]
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(runtimes.update())]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -2184,6 +2187,7 @@ def main() -> None:
         turn_off()
     lock = one_engine()  # noqa: F841
     ensure_home()
+    runtimes.setup()
     ensure_setup_file()
     ENGINE.other_skills = OTHER_SKILLS
     skills = prepare_skills(KEN_HOME, SOURCE / "skills", OTHER_SKILLS)
