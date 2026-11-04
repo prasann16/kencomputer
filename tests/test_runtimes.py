@@ -65,3 +65,26 @@ async def test_failed_download_shows_and_try_again_works(tmp_path, monkeypatch):
     monkeypatch.setattr(runtimes, "_download", lambda name, pin: str(claude))
     await runtimes.ensure("claude")  # Try again
     assert runtimes.status() == {} and not runtimes.missing("claude")
+
+
+def test_old_claude_code_on_the_mac_is_not_used(tmp_path, monkeypatch):
+    # v0.1.37 compared Claude Code 2.0.28 with the SDK's 0.2.167, used it, and got a retired model (404).
+    pins = tmp_path / "runtimes.json"
+    pins.write_text(json.dumps({"claude": {"version": "0.2.167", "runs": "2.1.300", "url": "", "sha256": ""}}))
+    monkeypatch.setattr(runtimes, "PINS", pins)
+    monkeypatch.setattr(runtimes, "_pip_has", lambda name: False)
+    monkeypatch.setattr(runtimes, "_chosen", {})
+    monkeypatch.setattr(runtimes, "PLACES", [])
+    monkeypatch.setenv("KEN_HOME", str(tmp_path))
+    old = tmp_path / "bin" / "claude"
+    old.parent.mkdir()
+    old.write_text("#!/bin/sh\necho '2.0.28 (Claude Code)'\n")
+    old.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{old.parent}:/usr/bin:/bin")
+    (tmp_path / "runtimes").mkdir()
+    (tmp_path / "runtimes" / "claude.path").write_text(f"{old}\n0.2.167")  # what v0.1.37 remembered
+    runtimes.setup()
+    assert runtimes.missing("claude")
+    assert runtimes._on_this_computer("claude", runtimes._runs(runtimes._pins()["claude"])) is None
+    old.write_text("#!/bin/sh\necho '2.1.301 (Claude Code)'\n")
+    assert runtimes._on_this_computer("claude", "2.1.300") == str(old)

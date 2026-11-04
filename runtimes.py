@@ -80,6 +80,11 @@ def _good_enough(name: str, found: tuple, pinned: tuple) -> bool:
     return found >= pinned if name == "claude" else found[:2] == pinned[:2]
 
 
+def _runs(pin: dict) -> str:
+    """The program's own version (Claude Code 2.1.300), not its pip package's (claude-agent-sdk 0.2.167)."""
+    return pin.get("runs") or pin["version"]
+
+
 def _on_this_computer(name: str, version: str) -> str | None:
     seen = set()
     for folder in os.environ.get("PATH", "").split(os.pathsep) + PLACES:
@@ -142,7 +147,7 @@ def setup() -> None:
             remembered, checked = ((_folder() / f"{name}.path").read_text().split("\n") + [""])[:2]
         except OSError:
             remembered, checked = "", ""
-        if checked != pin["version"]:
+        if checked != _runs(pin):
             remembered = ""
         for program in (remembered, str(downloaded)):
             if program and Path(program).is_file():
@@ -165,10 +170,10 @@ async def ensure(name: str) -> None:
             return
         _state[name] = {"progress": 0}
         try:
-            program = await asyncio.to_thread(_on_this_computer, name, pin["version"])
+            program = await asyncio.to_thread(_on_this_computer, name, _runs(pin))
             if program:
                 _folder().mkdir(parents=True, exist_ok=True)
-                (_folder() / f"{name}.path").write_text(f"{program}\n{pin['version']}")
+                (_folder() / f"{name}.path").write_text(f"{program}\n{_runs(pin)}")
             else:
                 program = await asyncio.to_thread(_download, name, pin)
         except Exception as exc:

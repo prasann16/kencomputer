@@ -19,7 +19,11 @@ def pin(package):
     with urllib.request.urlopen(f'https://pypi.org/pypi/{package}/{version}/json', timeout=60) as r:
         files = json.load(r)['urls']
     wheel = next(f for f in files if 'macosx' in f['filename'] and f['filename'].endswith(f"_{platform.machine()}.whl"))
-    return {'version': version, 'url': wheel['url'], 'sha256': wheel['digests']['sha256']}
+    pinned = {'version': version, 'url': wheel['url'], 'sha256': wheel['digests']['sha256']}
+    if package == 'claude-agent-sdk':  # a Claude Code on the Mac is compared with the CLI's version, not the SDK's
+        pinned['runs'] = subprocess.run([python, '-c', 'from claude_agent_sdk._cli_version import __cli_version__; print(__cli_version__)'],
+                                        check=True, capture_output=True, text=True).stdout.strip()
+    return pinned
 
 (root / 'build').mkdir(exist_ok=True)
 (root / 'build' / 'runtimes.json').write_text(json.dumps({'claude': pin('claude-agent-sdk'), 'codex': pin('openai-codex-cli-bin')}, indent=1))
