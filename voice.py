@@ -70,7 +70,8 @@ def _post_audio(path: Path, language: str | None) -> dict:
     import urllib.request
     url = cloud_url() + (f"?language={language}" if language else "")
     request = urllib.request.Request(url, data=path.read_bytes(), method="POST", headers={
-        "authorization": f"Bearer {cloud_token()}", "content-type": "audio/mpeg"})
+        # A named client: Cloudflare in front of the host refuses Python's default "Python-urllib" (403).
+        "authorization": f"Bearer {cloud_token()}", "content-type": "audio/mpeg", "user-agent": "Ken"})
     try:
         with urllib.request.urlopen(request, timeout=180) as response:
             return json.loads(response.read())
