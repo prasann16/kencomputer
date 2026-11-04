@@ -133,7 +133,7 @@ def test_included_ai_failures_never_blame_the_person(monkeypatch):
     for e in (AIUnavailable(401, "authentication_failed"), RuntimeError("Not logged in · Please run /login"),
               AIUnavailable(529, "overloaded"), AIUnavailable(None, "unknown"), NoAnswer()):
         assert explain_failure(e, "claude") == ("Ken couldn't reach its AI just now.", "retry")
-    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used this month's included AI.", "connect")
+    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used this month's Ken AI credits.", "connect")
     assert explain_failure(RuntimeError("API Error: 402 Out of included AI"), "claude")[1] == "connect"
 
 

@@ -102,8 +102,8 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
     ai = isinstance(e, (AIUnavailable, NoAnswer)) or bool(codes) or has(*AI_WORDS)
 
     if included:
-        if status == 402 or "402" in codes or has("included ai", "billing", "credit balance"):
-            return "You've used this month's included AI.", "connect"
+        if status == 402 or "402" in codes or has("ken ai credits", "included ai", "billing", "credit balance"):
+            return "You've used this month's Ken AI credits.", "connect"
         if ai:  # refused, down, unreachable or silent: none of it is theirs to fix
             return "Ken couldn't reach its AI just now.", "retry"
         return "Something went wrong on Ken's side.", "retry"
