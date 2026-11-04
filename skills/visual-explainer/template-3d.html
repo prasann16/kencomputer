@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Visual 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=block" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F6F4EF; --card: #FFFFFF; --ink: #15171C; --muted: #5C6370; --rule: #D8D4CB;
+    --accent: #1D5FD1; --accent-soft: #DCE6F8; --warm: #D9841F; --warm-soft: #F7E6CC;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--paper); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  canvas, #labels { position: absolute; inset: 0; width: 1080px; height: 1350px; }
+  #labels { overflow: visible; pointer-events: none; }
+  header { position: absolute; left: 72px; right: 72px; top: 72px; }
+  h1 { font-size: 64px; line-height: 1.05; font-weight: 600; letter-spacing: -0.02em; max-width: 900px; text-wrap: balance; }
+  .sub { margin-top: 16px; font-size: 30px; line-height: 1.35; color: var(--muted); max-width: 880px; text-wrap: pretty; }
+  footer { position: absolute; left: 72px; right: 72px; bottom: 64px; border-top: 2px solid var(--rule); padding-top: 24px;
+           font-size: 30px; line-height: 1.35; text-wrap: pretty; background: var(--paper); min-height: 107px; }
+  footer b { font-weight: 600; color: var(--accent); }
+  #labels text { font-family: var(--sans); fill: var(--ink); font-size: 30px; font-weight: 600;
+                 paint-order: stroke; stroke: var(--paper); stroke-width: 8px; stroke-linejoin: round; }
+  #labels text.note { font-size: 26px; font-weight: 400; fill: var(--muted); }
+  #labels text.accent { fill: var(--accent); }
+  #labels .lead { stroke: var(--ink); stroke-width: 2; fill: none; }
+  #labels .pin { fill: var(--ink); }
+  body.stepping [data-full] { display: none; }
+  body:not(.stepping) [data-only] { display: none; }
+  body.stepping [data-only].other { display: none; }
+</style>
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.170.0/build/three.module.min.js" } }</script>
+</head>
+<body>
+<canvas id="c" width="1080" height="1350"></canvas>
+<svg id="labels" viewBox="0 0 1080 1350"></svg>
+<header>
+  <h1>Title says the answer in a few words</h1>
+  <p class="sub">One plain sentence on how it works.</p>
+</header>
+<footer>
+  <p data-full><b>The takeaway</b> in one line.</p>
+  <p data-only="1"><b>1.</b> What happens first.</p>
+</footer>
+<script type="module">
+import * as THREE from "three";
+
+// STEP is 0 for the full picture, N for render.py --steps frame N (use it to move parts or the camera).
+const STEP = +(location.hash.match(/step=(\d+)/) || [0, 0])[1];
+if (STEP) {
+  document.body.classList.add("stepping");
+  document.querySelectorAll("[data-only]").forEach(el => el.classList.toggle("other", +el.dataset.only !== STEP));
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { paper: css("--paper"), ink: css("--ink"), card: "#ECEAE4", accent: css("--accent"), warm: css("--warm"), rule: css("--rule") };
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById("c"), antialias: true });
+renderer.setPixelRatio(1);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.paper);
+// The camera. Build the scene, then call fit(things) to frame them in the space between the title and the footer.
+const camera = new THREE.PerspectiveCamera(30, 1080 / 1350, 0.1, 500);
+// fit(objects, from): look from direction `from` (x right, y up, z toward you), then move in or out until the
+// objects just fill the open area (top..bottom px of the 1350 px frame, inside the 72 px side margins).
+function fit(objects, from = new THREE.Vector3(1, 0.5, 1.3), { top = 340, bottom = 1150, pad = 0.96 } = {}) {
+  const box = new THREE.Box3();
+  [].concat(objects).forEach(o => box.expandByObject(o));
+  const centre = box.getCenter(new THREE.Vector3()), dir = from.clone().normalize();
+  const corners = [0, 1, 2, 3, 4, 5, 6, 7].map(i => new THREE.Vector3(
+    i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
+  const extent = () => { // the corners' screen box, in px
+    camera.updateMatrixWorld(); camera.updateProjectionMatrix();
+    const px = corners.map(c => c.clone().project(camera)).map(p => [(p.x + 1) / 2 * 1080, (1 - p.y) / 2 * 1350]);
+    const xs = px.map(p => p[0]), ys = px.map(p => p[1]);
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  };
+  const place = d => { camera.position.copy(centre).addScaledVector(dir, d); camera.lookAt(centre); };
+  let near = 0.01, far = box.getSize(new THREE.Vector3()).length() * 20;
+  for (let i = 0; i < 40; i++) {  // the closest distance at which it still fits
+    const d = (near + far) / 2; place(d);
+    const e = extent();
+    const fits = e.x1 - e.x0 <= 936 * pad && e.y1 - e.y0 <= (bottom - top) * pad && camera.position.distanceTo(centre) > box.getSize(new THREE.Vector3()).length() / 2;
+    fits ? far = d : near = d;
+  }
+  place(far);
+  const e = extent(); // then slide the view so the object sits in the middle of the open area
+  camera.setViewOffset(1080, 1350, (e.x0 + e.x1) / 2 - 540, (e.y0 + e.y1) / 2 - (top + bottom) / 2, 1080, 1350);
+  camera.updateProjectionMatrix();
+}
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb9b4a8, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(4, 8, 5);
+scene.add(sun);
+
+// Technical illustration look: flat matte parts with an ink outline. part(geometry, colour) adds one.
+function part(geometry, color = C.card, { outline = true, opacity = 1 } = {}) {
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, transparent: opacity < 1, opacity }));
+  if (outline) mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25),
+                                               new THREE.LineBasicMaterial({ color: C.ink })));
+  scene.add(mesh);
+  return mesh;
+}
+// A solid arrow in 3D (forces, airflow, motion): arrow(from, direction, length). Thick enough to read on a phone.
+function arrow(from, dir, length, color = C.accent, width = 0.07) {
+  const g = new THREE.Group(), head = Math.min(length * 0.35, width * 6), m = new THREE.MeshLambertMaterial({ color });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(width, width, length - head, 16), m);
+  shaft.position.y = (length - head) / 2;
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(width * 2.6, head, 24), m);
+  tip.position.y = length - head / 2;
+  g.add(shaft, tip);
+  g.position.copy(from);
+  g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+  scene.add(g);
+  return g;
+}
+// A flat shadow under the object, cheap and soft (no real shadow maps: they're slow without a GPU).
+const shadow = new THREE.Mesh(new THREE.CircleGeometry(2, 48),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.07 }));
+shadow.rotation.x = -Math.PI / 2;
+scene.add(shadow);
+
+// Labels are crisp text drawn over the 3D, pinned to a point: label(new THREE.Vector3(x,y,z), "text", dx, dy, "accent").
+const labels = [];
+function label(at, text, dx = 80, dy = -60, cls = "") { labels.push({ at, text, dx, dy, cls }); }
+function drawLabels() {
+  const svg = document.getElementById("labels"), ns = "http://www.w3.org/2000/svg", placed = [];
+  const add = (tag, attrs, parent = svg) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.append(e); return e; };
+  for (const { at, text, dx, dy, cls } of labels) {
+    const p = at.clone().project(camera);
+    const x = (p.x + 1) / 2 * 1080, y = (1 - p.y) / 2 * 1350, tx = x + dx;
+    const t = add("text", { "text-anchor": dx >= 0 ? "start" : "end", class: cls });
+    text.split("\n").forEach((line, i) => { add("tspan", { x: tx + (dx >= 0 ? 10 : -10), dy: i ? 34 : 0 }, t).textContent = line; });
+    // move down until it clears every label already placed
+    let ty = y + dy;
+    for (let tries = 0; tries < 30; tries++) {
+      t.setAttribute("y", ty + 10);
+      const b = t.getBBox(), hit = placed.find(o => b.x < o.x + o.width + 12 && o.x < b.x + b.width + 12 && b.y < o.y + o.height + 8 && o.y < b.y + b.height + 8);
+      if (!hit) { placed.push(b); break; }
+      ty = hit.y + hit.height + 8 + (ty + 10 - b.y);
+    }
+    const lead = add("path", { class: "lead", d: `M${x},${y} L${tx},${ty}` });
+    const pin = add("circle", { class: "pin", cx: x, cy: y, r: 6 });
+    svg.insertBefore(lead, t); svg.insertBefore(pin, t);
+  }
+}
+
+// ---- the scene: replace from here ----
+const box = part(new THREE.BoxGeometry(2, 1, 1.4), C.card);
+box.position.y = 0.5;
+const up = arrow(new THREE.Vector3(0, 1.1, 0), new THREE.Vector3(0, 1, 0), 1.6);
+fit([box, up]);
+label(new THREE.Vector3(1, 1, 0.7), "A part", 120, -40);
+// ---- to here ----
+
+renderer.render(scene, camera);
+drawLabels();
+</script>
+</body>
+</html>
