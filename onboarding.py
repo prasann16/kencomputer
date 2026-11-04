@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import runtimes
+
 log = logging.getLogger("ken")
 
 CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
@@ -125,6 +127,7 @@ class Onboarding:
 
         self.stop()
         self.error = ""
+        await runtimes.ensure("claude")
         # The CLI opens the browser through this, so Ken learns the link it opened: that one finishes
         # the sign-in by itself, unlike the code-to-paste link the CLI prints for other computers.
         opener = self.env_file.parent / "signin-browser"
@@ -296,6 +299,9 @@ class CodexOnboarding(Onboarding):
     async def refresh(self):
         from codex_brain import codex_client
 
+        if runtimes.missing("codex"):  # the Mac app gets Codex when it's first connected
+            self._connected, self.error = False, ""
+            return
         try:
             async with codex_client() as client:
                 account = await client.account()
@@ -310,6 +316,7 @@ class CodexOnboarding(Onboarding):
         from codex_brain import codex_client
 
         self.stop()
+        await runtimes.ensure("codex")
         await self.refresh()
         if self._connected:
             await self.on_connected()

@@ -70,6 +70,8 @@ jobs:
           .venv/bin/python desktop/build_engine.py
       # Stop the release if the bundled engine can't load a native part or decode a voice note.
       - run: dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "exec(open('desktop/checks/parts.py').read())"
+      # Claude Code and Codex aren't in the app: download both the way a Mac without them would, and run them.
+      - run: env PATH=/usr/bin:/bin KEN_HOME="$RUNNER_TEMP/ken" dist/engine-${{ matrix.arch }}/ken-engine/ken-engine -c "exec(open('desktop/checks/runtimes.py').read())"
       - run: tar -czf engine-${{ matrix.arch }}.tgz -C dist engine-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
