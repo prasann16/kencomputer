@@ -9,6 +9,7 @@ runtimes.PLACES = []  # a runner may have its own copies; this checks the downlo
 
 assert set(runtimes._pins()) == {"claude", "codex"}, runtimes._pins()
 assert runtimes._pins()["claude"].get("runs", "").startswith("2."), "Claude Code is compared with the SDK version"
+assert runtimes._pins()["codex"].get("runs"), "Codex is compared with its package version"
 for name in ("claude", "codex"):
     assert runtimes.missing(name), f"{name} is still inside the app"
     asyncio.run(runtimes.ensure(name))
