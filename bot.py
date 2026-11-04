@@ -263,6 +263,12 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
     return True
 
 
+def download_where(path: Path) -> str:
+    """Where a file too big for Telegram can be had: Ken's own site for a Ken in the cloud, else this computer."""
+    site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
+    return f"Open Ken to download it: {site}" if site.startswith("https://") else f"It's on this computer at {path}"
+
+
 async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
@@ -277,16 +283,23 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
                     path.unlink(missing_ok=True)
                     continue
                 if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
+                    # The playable video may have been shrunk to fit; the original goes too, full quality, as a file
+                    # to post from. Too big for Telegram: say where to download it instead.
+                    if size <= TELEGRAM_FILE_LIMIT:
+                        with open(path, "rb") as fh:
+                            await bot.send_document(chat_id, fh, filename=path.name, caption="Full quality, to post",
+                                                    disable_notification=True, write_timeout=300, read_timeout=300)
+                    else:
+                        await bot.send_message(chat_id, f"📁 The full-quality {path.name} is too big for Telegram "
+                                               f"({size // (1024 * 1024)} MB). {download_where(path)}", disable_notification=True)
                     log_history("assistant", f"[sent video: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
                 if size > TELEGRAM_FILE_LIMIT:
                     # Telegram takes 50 MB from a bot. Where Ken has its own app (in the cloud, or the Mac app), the
                     # file is there to download; otherwise say where it is on this computer.
-                    site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")  # a Ken in the cloud
-                    where = f"Open Ken to download it: {site}" if site.startswith("https://") else f"It's on this computer at {path}"
                     await bot.send_message(
-                        chat_id, f"📁 {path.name} is too big for Telegram ({size // (1024 * 1024)} MB). {where}",
+                        chat_id, f"📁 {path.name} is too big for Telegram ({size // (1024 * 1024)} MB). {download_where(path)}",
                         disable_notification=quiet,
                     )
                     continue
