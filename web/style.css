@@ -210,7 +210,8 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .mono-area { min-height: 320px !important; font-family: var(--mono) !important; font-size: 13px !important; }
 .update-failed { background: var(--ask-soft); color: var(--ask-ink); padding: 10px 16px; font-size: 14px; }
 .update-failed a { color: inherit; font-weight: 600; }
-.update-ready { display: flex; align-items: center; justify-content: center; gap: 14px; background: var(--well); padding: 8px 16px; font-size: 13px; }
+.update-ready { display: flex; align-items: center; justify-content: center; gap: 14px; background: var(--well); padding: 8px 16px; font-size: 13px; -webkit-app-region: drag; }
+.update-ready .btn, .update-failed a { -webkit-app-region: no-drag; }
 .update-ready .btn { padding: 5px 12px; font-size: 12.5px; }
 /* Settings keeps one size whichever tab is open; a long tab scrolls inside it. */
 .modal-x { position: absolute; top: 18px; right: 18px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--faint); cursor: pointer; }
