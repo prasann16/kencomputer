@@ -138,7 +138,7 @@ def apps_mcp() -> dict:
 
 
 APPS_PROMPT = (
-    "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and 250+ more). When "
+    "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and 1,700+ more). When "
     "they ask for something in an app that isn't connected yet, use the apps tools to start the connection and "
     "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
     "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
@@ -147,7 +147,7 @@ APPS_PROMPT = (
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
 HOSTED_APPS_PROMPT = (
-    "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 250+ more). Never guess "
+    "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 1,700+ more). Never guess "
     f"what's connected: run `{KEN_CMD} --apps` to see. When they ask for something in an app, run `{KEN_CMD} --apps "
     "<app name>`: if it isn't connected, reply in one line with the Connect link it prints, exactly as printed (never "
     "an authorization link from the apps tools themselves), and stop there. You'll get a note when they've connected "

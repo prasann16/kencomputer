@@ -970,7 +970,7 @@ function HostedApps({ account }) {
   const load = () => { setError(''); api('/api/apps', { timeout: 20000 }).then(setApps).catch((e) => setError(e.message)); };
   useEffect(load, []);
   const page = apps?.apps_url || ((account || '/account').replace(/\/$/, '') + '/apps');
-  return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 250+ more apps. Ken asks before it sends or changes anything.</p>
+  return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 1,700+ more apps. Ken asks before it sends or changes anything.</p>
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${load}>Try again</button></p>` : !apps ? html`<p class="np-note">Loading…</p>`
       : apps.connected.length ? html`<div class="conn-list">${apps.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`
       : html`<p class="np-note">No apps connected yet.</p>`}

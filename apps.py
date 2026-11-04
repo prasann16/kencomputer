@@ -1,4 +1,4 @@
-"""Hosted Ken: the person's apps (Gmail, Slack, Notion and 250+ more), connected on their host's Apps page.
+"""Hosted Ken: the person's apps (Gmail, Slack, Notion and 1,700+ more), connected on their host's Apps page.
 
 The host knows which apps are connected and makes one-tap Connect links; this computer only asks it, with the
 same token it checks in with (KEN_KEEPALIVE_TOKEN), so no app or provider key is ever here. Ken runs
