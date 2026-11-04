@@ -1791,6 +1791,13 @@ COMMANDS = {
 }
 
 
+def signed_in() -> list[str]:
+    """The accounts connected on this computer, whose Claude Code or Codex Ken should have ready."""
+    from onboarding import codex_signed_in
+    return [name for name, yes in (("claude", bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token())),
+                                   ("codex", codex_signed_in())) if yes]
+
+
 def prepare_codex_home(codex_home: Path) -> None:
     """Ken's Codex has its own folder for the ChatGPT login made in Ken. Your own Codex settings,
     instructions and skills (~/.codex) stay yours and never change how Ken works."""
@@ -2156,7 +2163,7 @@ async def run() -> None:
         pass
     web_app = await start_engine()
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup_voice()),
-                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(runtimes.update())]
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(runtimes.update(signed_in()))]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
