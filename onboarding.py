@@ -46,6 +46,12 @@ def claude_cli() -> str:
     return shutil.which("claude") or "claude"
 
 
+def codex_signed_in() -> bool:
+    """Ken's own Codex login (or an API key) is there."""
+    home = os.environ.get("KEN_CODEX_HOME")
+    return bool(os.environ.get("OPENAI_API_KEY") or (home and (Path(home) / "auth.json").exists()))
+
+
 def save_env(env_file: Path, key: str, value: str) -> None:
     """Set KEY=value in the .env file (and this process), keeping other lines."""
     lines = env_file.read_text().splitlines() if env_file.exists() else []
@@ -299,8 +305,9 @@ class CodexOnboarding(Onboarding):
     async def refresh(self):
         from codex_brain import codex_client
 
-        if runtimes.missing("codex"):  # the Mac app gets Codex when it's first connected
-            self._connected, self.error = False, ""
+        if runtimes.missing("codex"):
+            # The Mac app gets Codex when it's first needed. Signed in before: it's coming (update()).
+            self._connected, self.error = codex_signed_in(), ""
             return
         try:
             async with codex_client() as client:
@@ -379,7 +386,8 @@ class BrainOnboarding:
         providers = {name: p.status() for name, p in self.providers.items()}
         return {"providers": providers, "backend": self.backend(),
                 "connected": any(p["connected"] for p in providers.values()),
-                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status()}
+                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status(),
+                "runtimes": runtimes.status()}
 
     def phone_step(self):
         return self.providers["claude"].phone_step()

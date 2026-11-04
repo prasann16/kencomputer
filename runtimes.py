@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -30,6 +31,7 @@ PLACES = ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.claude/loca
 
 _chosen: dict[str, str] = {}
 _locks: dict[str, asyncio.Lock] = {}
+_state: dict[str, dict] = {}  # while getting one: {"progress": 0.4}; after it failed: {"error": "…"}
 
 
 def _pins() -> dict:
@@ -105,9 +107,12 @@ def _download(name: str, pin: dict) -> str:
         except ImportError:
             context = None
         with urllib.request.urlopen(pin["url"], timeout=60, context=context) as r, open(wheel, "wb") as f:
+            size, got = int(r.headers.get("Content-Length") or 0), 0
             while chunk := r.read(1 << 20):
                 digest.update(chunk)
                 f.write(chunk)
+                got += len(chunk)
+                _state[name] = {"progress": round(min(0.99, got / size), 2) if size else None}
         if digest.hexdigest() != pin["sha256"]:
             raise RuntimeError("The download was damaged. Try again.")
         out = Path(tmp) / "out"
@@ -158,17 +163,38 @@ async def ensure(name: str) -> None:
     async with _locks.setdefault(name, asyncio.Lock()):
         if not missing(name):
             return
-        program = await asyncio.to_thread(_on_this_computer, name, pin["version"])
-        if program:
-            _folder().mkdir(parents=True, exist_ok=True)
-            (_folder() / f"{name}.path").write_text(f"{program}\n{pin['version']}")
-        else:
-            label = {"claude": "Claude Code", "codex": "Codex"}[name]
-            try:
+        _state[name] = {"progress": 0}
+        try:
+            program = await asyncio.to_thread(_on_this_computer, name, pin["version"])
+            if program:
+                _folder().mkdir(parents=True, exist_ok=True)
+                (_folder() / f"{name}.path").write_text(f"{program}\n{pin['version']}")
+            else:
                 program = await asyncio.to_thread(_download, name, pin)
-            except Exception as exc:
-                raise RuntimeError(f"Couldn’t download {label}. Check the internet and try again. ({exc})") from exc
+        except Exception as exc:
+            label = {"claude": "Claude", "codex": "Codex"}[name]
+            _state[name] = {"error": f"Couldn’t download {label}. Check the internet and try again."}
+            logging.getLogger(__name__).warning("getting %s failed: %s", name, exc)
+            raise RuntimeError(_state[name]["error"]) from exc
+        _state.pop(name, None)
         _use(name, program)
+
+
+def status() -> dict:
+    """The ones being downloaded ({"progress"}) or that failed ({"error"}), for the app."""
+    return {name: dict(s) for name, s in _state.items()}
+
+
+def get_ready(name: str) -> None:
+    """Start getting `name` in the background, for the app's Try again and for a start that needs it."""
+    if missing(name) and "progress" not in _state.get(name, {}):
+        task = asyncio.get_running_loop().create_task(ensure(name))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())  # the failure is in status()
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+
+
+_tasks: set = set()
 
 
 def missing(name: str) -> bool:
@@ -177,12 +203,13 @@ def missing(name: str) -> bool:
         and not (name == "codex" and os.environ.get("CODEX_BIN"))
 
 
-async def update() -> None:
-    """After Ken updates to a newer Claude Code or Codex, get it in the background before it's needed,
-    for the ones this computer already uses."""
+async def update(signed_in=()) -> None:
+    """At start, get what's needed in the background before the first message: the ones this computer
+    has used (after a Ken update to newer ones) and the accounts signed in (after the update that took
+    them out of the app)."""
     for name in _pins():
         used = any(_folder().glob(f"{name}-*")) or (_folder() / f"{name}.path").exists()
-        if used and missing(name):
+        if (used or name in signed_in) and missing(name):
             try:
                 await ensure(name)
             except Exception:

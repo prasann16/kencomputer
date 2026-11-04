@@ -41,3 +41,27 @@ def test_remembers_a_copy_only_for_the_same_version(tmp_path, monkeypatch):
     (tmp_path / "runtimes" / "codex.path").write_text(f"{codex}\n0.163.0")
     runtimes.setup()
     assert not runtimes.missing("codex") and runtimes.codex_bin() == str(codex)
+
+
+async def test_failed_download_shows_and_try_again_works(tmp_path, monkeypatch):
+    pins = tmp_path / "runtimes.json"
+    pins.write_text(json.dumps({"claude": {"version": "2.1.300", "url": "", "sha256": ""}}))
+    monkeypatch.setattr(runtimes, "PINS", pins)
+    monkeypatch.setattr(runtimes, "_pip_has", lambda name: False)
+    monkeypatch.setattr(runtimes, "_chosen", {})
+    monkeypatch.setattr(runtimes, "_state", {})
+    monkeypatch.setattr(runtimes, "_on_this_computer", lambda name, version: None)
+    monkeypatch.setenv("KEN_HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    def offline(name, pin):
+        raise OSError("no internet")
+    monkeypatch.setattr(runtimes, "_download", offline)
+    await runtimes.update(["claude"])  # signed in: get it at start, quietly
+    assert runtimes.status() == {"claude": {"error": "Couldn’t download Claude. Check the internet and try again."}}
+
+    claude = tmp_path / "claude"
+    claude.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(runtimes, "_download", lambda name, pin: str(claude))
+    await runtimes.ensure("claude")  # Try again
+    assert runtimes.status() == {} and not runtimes.missing("claude")

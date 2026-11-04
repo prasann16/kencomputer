@@ -694,6 +694,12 @@ function Connect({ onDone, backend = 'claude', start = false, onBack }) {
   const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   // In the Mac app the browser is on this computer, so the sign-in finishes by itself and a code is rarely needed.
   const [codeOpen, setCodeOpen] = useState(!window.kenDesktop);
+  const [pct, setPct] = useState(null);
+  useEffect(() => {  // the first connect may download Claude Code or Codex
+    if (!busy) { setPct(null); return; }
+    const t = setInterval(() => api('/api/setup').then((r) => setPct(r.runtimes?.[backend]?.progress ?? null)).catch(() => {}), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
   const go = async (body) => {
     setBusy(true); setError('');
     try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 600000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setValue(''); setStep('code'); if (isCodex) window.open(r.url, '_blank', 'noopener'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
@@ -709,7 +715,7 @@ function Connect({ onDone, backend = 'claude', start = false, onBack }) {
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
   return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect ${label}</h1>
     ${step === 'start' && html`<p>Sign in with your ${label} account. Ken uses your plan, so there’s nothing else to pay.</p>
-      <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? `Getting ${label} ready…` : `Connect ${label}`}</button>`}
+      <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? `Getting ${label} ready…${pct ? ` ${Math.round(pct * 100)}%` : ''}` : `Connect ${label}`}</button>`}
     ${step === 'code' && html`<p>Finish signing in in your browser. Ken connects by itself.</p>
       <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
       ${error ? html`<button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>Try again</button>`
@@ -885,16 +891,6 @@ function PhoneSteps({ toast, onPaired }) {
 
 // First run, step 2 of 2 (after Connect Claude): the two ways to reach Ken, and the phone set up
 // or skipped. Then the chat opens and Ken takes it from there.
-function PhoneSetup({ onDone, toast }) {
-  const [busy, setBusy] = useState(false);
-  const skip = async () => { setBusy(true); try { onDone(await api('/api/setup', { json: { action: 'skip-phone' } })); } catch (e) { toast(e.message); setBusy(false); } };
-  return html`<div class="connect phone-setup"><img src="/ken.svg" alt=""/><h1>Ken on your phone</h1>
-    <p>Text or voice-note Ken from anywhere with Telegram. Same Ken, same chat.</p>
-    <${PhoneSteps} toast=${toast} onPaired=${() => api('/api/setup').then(onDone).catch(() => {})}/>
-    <button class="text-action" disabled=${busy} onClick=${skip}>Skip for now (you can do it later in Settings)</button>
-  </div>`;
-}
-
 // Ken's jobs, the same in Settings and the Brain: what each does in a line, when, and on or off.
 // When a job runs, in words: "Every day", "Mon, Wed, Fri", or a one-time job's day ("Tomorrow", "Sat, Oct 31").
 const DAY_NAMES = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -1381,12 +1377,16 @@ function App() {
   // When you last read this chat, as of opening it: where the first unread reply starts.
   const opened = useRef({ pid: null, ts: 0 });
   if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
+  // Claude Code or Codex being downloaded (the Mac app gets them when first needed), or a failed download.
+  const getting = model && setup?.runtimes?.[model.backend], brainLabel = model?.backend === 'codex' ? 'ChatGPT' : 'Claude';
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
   // Until this chat's brain is known, go by the account overall, so the header doesn't blink off and back on.
   const brainConnected = !setup || (model ? (setup.providers?.[model.backend]?.connected ?? setup.connected) : setup.connected);
+  const waiting = Object.values(setup?.runtimes || {}).some((s) => s.progress !== undefined) || visibleChat?.busy;
+  useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main"><${ChatHeader} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${loadError && !restarting ? load : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}
-    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
+  return html`<div class="shell"><main class="main"><${ChatHeader} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${loadError && !restarting ? load : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}
+    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}}/>`}
   </main>
     ${docFile && html`<${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/>`}
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
