@@ -147,3 +147,4 @@ html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-
 .site-menu-button{display:grid;place-items:center;padding:4px;margin:-4px;border:0;border-radius:8px;background:none;cursor:pointer}.site-menu-button:hover,.site-menu-button[aria-expanded='true']{background:var(--well)}
 .site-menu-list{position:absolute;left:-4px;top:calc(100% + 8px);z-index:40;min-width:190px;padding:6px;border-radius:12px;background:var(--card);box-shadow:0 0 0 1px var(--line),0 12px 40px #00000018;display:flex;flex-direction:column}
 .site-menu-list a{padding:10px 12px;border-radius:8px;font-size:14px;color:var(--ink);text-decoration:none;white-space:nowrap}.site-menu-list a:hover,.site-menu-list a:focus-visible{background:var(--well);outline:none}
+.modal.big-file{position:relative}.big-file-pick{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;height:44px;cursor:pointer}

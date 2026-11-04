@@ -1147,6 +1147,31 @@ const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" unde
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
 const JOB_HELP = { 'morning-brief': 'What matters today, sent to you each morning.', 'nightly-review': 'Files the day into Ken’s memory and tells you what it saved.' };
 
+// Hosted Ken: a file too big for Telegram to pass on, sent here instead (the link Ken replied with in Telegram,
+// <site>/send/<token>, which opens #/send/<token>). Once it's here Ken carries on, and answers in Telegram.
+function SendBigFile({ token, onClose }) {
+  const [info, setInfo] = useState(null), [error, setError] = useState(''), [progress, setProgress] = useState(null), [done, setDone] = useState(false);
+  useEffect(() => { api(`/api/telegram-files/${token}`).then(setInfo).catch((e) => setError(e.message)); }, []);
+  const noun = /video/.test(info?.kind || '') ? 'video' : /recording|voice/.test(info?.kind || '') ? 'recording' : 'file';
+  const pick = async (file) => {
+    if (!file) return;
+    setError(''); setProgress(0);
+    try {
+      const [name] = await upload('home', [file], true, setProgress);
+      await api(`/api/telegram-files/${token}`, { json: { file: name } });
+      setDone(true);
+    } catch (e) { setError(e.message); setProgress(null); }
+  };
+  return html`<${Modal} title=${done ? 'Ken has it' : `Send the ${noun} here`} className="big-file" closeX onClose=${onClose}>
+    ${done ? html`<p class="np-help">Ken is on it, and will answer you in Telegram.</p><div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
+      : info ? html`<p class="np-help">Telegram can't pass on files this big${info.name ? ` (${info.name}, ${Math.round(info.size / 1048576)} MB)` : ''}. Choose it here and Ken carries on with what you asked${info.caption ? `: “${info.caption}”` : ''}.</p>
+        ${progress === null ? html`<label class="btn primary big-file-pick">Choose the ${noun}<input type="file" hidden onChange=${(e) => pick(e.target.files[0])}/></label>`
+          : html`<p class="np-note" role="status">Sending…${progress > 0 ? ` ${Math.round(progress * 100)}%` : ''} Keep this page open until it's done.</p>`}`
+      : !error && html`<p class="np-note">Loading…</p>`}
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+  <//>`;
+}
+
 function RenameProject({ project, onClose, onDone }) {
   const [name, setName] = useState(project.name), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const save = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'PATCH', json: { name: name.trim() } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
@@ -1319,7 +1344,7 @@ function App() {
   const [chats,setChats]=useState([]);
   const [newProject,setNewProject]=useState(false);
   const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
-  const [connections,setConnections]=useState(false);
+  const [connections,setConnections]=useState(false), [bigFile, setBigFile] = useState('');
   const [projectMeta,setProjectMeta]=useState(null);
   const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/agents/${id}`).then((v)=>setProjectMeta(v.agent)).catch(()=>setProjectMeta(null)); };
   const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
@@ -1418,7 +1443,12 @@ function App() {
   }).catch((e) => toast(e.message));
   useEffect(() => {
     // #/settings/ai (the button in Ken's emails about AI credits): Settings, on AI accounts.
-    const settingsLink = () => { if (location.hash === '#/settings/ai') { history.replaceState(null, '', '#/'); setConnections(true); } };
+    const settingsLink = () => {
+      if (location.hash === '#/settings/ai') { history.replaceState(null, '', '#/'); setConnections(true); }
+      // #/send/<token>: a file too big for Telegram, sent here instead (SendBigFile).
+      const big = location.hash.match(/^#\/send\/([0-9a-f]{24})$/);
+      if (big) { history.replaceState(null, '', '#/'); setBigFile(big[1]); }
+    };
     const onHash = () => { settingsLink(); setRoute(parseHash()); }; addEventListener('hashchange', onHash); settingsLink();
     if (window.kenDesktop) document.documentElement.dataset.desktop = window.kenDesktop.platform;
     loadMeta(); loadModel(); loadModelCatalog(); loadAwake();
@@ -1584,6 +1614,7 @@ function App() {
     ${docFile && html`<${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/>`}
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
+    ${bigFile && html`<${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/>`}
     ${connections && html`<${Settings} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${()=>setConnections(false)} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
     ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}

@@ -345,6 +345,22 @@ class WebApp:
             return _json({"error": "invalid"}, 400)
         return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
 
+    async def big_file(self, request):
+        """Hosted Ken: a file too big for Telegram, sent here instead (bot.py's too_big link). GET: what the link is
+        waiting for. POST {"file": <name uploaded into Home's files>}: it's here; Ken carries on in Telegram."""
+        expired = _json({"error": "This link has expired or was already used. Send the file to Ken in Telegram again for a new one."}, 404)
+        token = request.match_info["token"]
+        if not self.phone:
+            return expired
+        if request.method == "GET":
+            info = self.phone.waiting_file(token)
+            return _json(info) if info else expired
+        name = str((await self._body(request)).get("file", ""))
+        path = self.engine.files_dir(HOME) / name
+        if not name or "/" in name or name.startswith(".") or not path.is_file():
+            return _json({"error": "That file didn't arrive. Try sending it again."}, 400)
+        return _json({"ok": True}) if await self.phone.file_arrived(token, path) else expired
+
     async def apps_list(self, request):
         """Hosted Ken's Settings: the apps connected on the host's Apps page."""
         import apps
@@ -953,6 +969,8 @@ class WebApp:
         r.add_delete("/api/phone", self.phone_change)
         r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/apps/connected", self.app_connected)
+        r.add_get("/api/telegram-files/{token}", self.big_file)
+        r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
