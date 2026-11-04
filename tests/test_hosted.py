@@ -124,6 +124,7 @@ async def test_meta_says_hosted_and_passes_plan_usage(engine, aiohttp_client, ho
              "manage_url": "javascript:alert(1)"}
     meta = await (await client.get("/api/meta", headers={"X-Ken-Usage": json.dumps(usage)})).json()
     assert meta["hosted"] is True and meta["account_url"] == "/account" and meta["voice"] is False
+    assert meta["logout_url"] == "/auth/logout"  # Settings' Sign out: the host's, beside its account page
     assert meta["usage"]["plan"] == "Basic" and len(meta["usage"]["lines"]) == 2
     assert meta["usage"]["lines"][1] == {"label": "AI", "left": "$0.50", "of": "", "low": True}
     assert meta["usage"]["manage_url"] == ""  # only a web or relative link
@@ -136,7 +137,16 @@ async def test_meta_on_a_personal_computer_is_unchanged(engine, aiohttp_client, 
     monkeypatch.delenv("KEN_PLATFORM", raising=False)
     app, client = await signed_in(engine, aiohttp_client)
     meta = await (await client.get("/api/meta")).json()
-    assert meta["hosted"] is False and meta["browser"] is False
+    assert meta["hosted"] is False and meta["browser"] is False and meta["logout_url"] == ""
+
+
+def test_sign_out_link_follows_the_account_page(monkeypatch):
+    from web import logout_url
+    monkeypatch.setenv("KEN_PLATFORM", "agent37")
+    monkeypatch.setenv("KEN_ACCOUNT_URL", "https://app.example.dev/account")
+    assert logout_url() == "https://app.example.dev/auth/logout"
+    monkeypatch.delenv("KEN_ACCOUNT_URL")
+    assert logout_url() == ""
 
 
 async def test_locked_page_points_to_the_website(engine, aiohttp_client, hosted):

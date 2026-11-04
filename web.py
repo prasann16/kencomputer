@@ -17,6 +17,7 @@ import os
 import secrets
 import re
 import tempfile
+import urllib.parse
 from pathlib import Path
 from typing import Callable
 
@@ -56,6 +57,12 @@ def load_token(home: Path) -> str:
 def hosted_web() -> bool:
     """Ken on a computer in the cloud that people use in their browser (KEN_PLATFORM names the host)."""
     return bool(os.environ.get("KEN_PLATFORM"))
+
+
+def logout_url() -> str:
+    """Hosted Ken: the host's sign-out, beside the account page KEN_ACCOUNT_URL names ("/account" → "/auth/logout")."""
+    account = os.environ.get("KEN_ACCOUNT_URL", "")
+    return urllib.parse.urljoin(account, "/auth/logout") if hosted_web() and account else ""
 
 
 def trusted_origins(request: web.Request) -> set[str]:
@@ -205,7 +212,8 @@ class WebApp:
                       # In the cloud: no Mac features, and the plan's usage when the hosting service passes it.
                       "hosted": hosted_web(), "usage": plan_usage(request),
                       "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
-                      "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", "")})
+                      "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
+                      "logout_url": logout_url()})
 
     async def setup_status(self, request):
         return _json(self.setup.status() if self.setup else {

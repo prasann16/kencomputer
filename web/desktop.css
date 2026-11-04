@@ -140,3 +140,5 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 .plan-usage .text-action{align-self:flex-start;font-size:13px}
 /* After a reply that failed: try again, or use another AI. */
 .msg-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:-12px}
+/* Hosted Ken, in a browser: Geist, the same as its website. */
+html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}

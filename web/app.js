@@ -1075,7 +1075,7 @@ function Settings({ onClose, toast, onAddTool, setup, onConnected, meta = {} }) 
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
     <p class="np-note privacy-more"><a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a></p></div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-    ${tab !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
+    ${tab !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${meta.logout_url && html`<a class="btn sm settings-signout" href=${meta.logout_url}>Sign out</a>`}${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
       : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
   <//>`;
@@ -1356,6 +1356,7 @@ function App() {
   }, []);
   const loadMeta = () => api('/api/meta').then((m) => {
     HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; setMeta(m);
+    if (HOSTED) document.documentElement.dataset.hosted = '';  // Geist, like its website (desktop.css)
     // In the cloud Ken's clock starts on UTC: use this browser's time zone until they say otherwise.
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (m.hosted && !m.timezone && zone) api('/api/command', { json: { text: '/timezone ' + zone } }).catch(() => {});

@@ -310,3 +310,4 @@ h2.sec { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-item
 .msg.from-job{flex-direction:column;gap:6px}
 .phone-lead-wait{height:190px}
 .msg-media{margin-top:10px}.msg-media video,.msg-media img{display:block;max-width:min(100%,360px);max-height:480px;border-radius:12px;background:#000}.msg-media img{cursor:zoom-in}
+.settings-signout { display: inline-flex; align-items: center; color: var(--ink); text-decoration: none; }
