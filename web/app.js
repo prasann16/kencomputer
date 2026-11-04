@@ -1417,7 +1417,9 @@ function App() {
     if (m.hosted && !m.timezone && zone) api('/api/command', { json: { text: '/timezone ' + zone } }).catch(() => {});
   }).catch((e) => toast(e.message));
   useEffect(() => {
-    const onHash = () => setRoute(parseHash()); addEventListener('hashchange', onHash);
+    // #/settings/ai (the button in Ken's emails about AI credits): Settings, on AI accounts.
+    const settingsLink = () => { if (location.hash === '#/settings/ai') { history.replaceState(null, '', '#/'); setConnections(true); } };
+    const onHash = () => { settingsLink(); setRoute(parseHash()); }; addEventListener('hashchange', onHash); settingsLink();
     if (window.kenDesktop) document.documentElement.dataset.desktop = window.kenDesktop.platform;
     loadMeta(); loadModel(); loadModelCatalog(); loadAwake();
     // In the cloud, Ken's computer stays awake while anything talks to it, and awake time counts against the plan:
