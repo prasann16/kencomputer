@@ -483,7 +483,9 @@ class Engine:
 
     async def first_contact(self) -> None:
         """A brand-new install's Home chat was opened: Ken speaks first, exactly as it does on Telegram."""
-        if not self.new_install() or HOME in self._greeting or self.chat_busy(HOME) or self.db.execute(
+        # Not put off by a busy chat: right after connecting, the app warms the session (which holds the chat for a
+        # moment), and giving up then meant Ken never spoke first. send_message waits its turn instead.
+        if not self.new_install() or HOME in self._greeting or self.db.execute(
                 "SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (HOME,)).fetchone():
             return
         self._greeting.add(HOME)
