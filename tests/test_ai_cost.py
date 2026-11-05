@@ -100,6 +100,10 @@ async def test_engine_records_usage_numbers_only_and_keeps_totals_for_resume(tmp
                                   "model": "m", "cost_usd": 0.3, "input_tokens": 1, "output_tokens": 2,
                                   "cache_read_tokens": 3, "cache_write_tokens": 4})]
     assert json.loads(e.kv_get("spent:sess-9")) == Done.spent
+    # On Ken AI credits: marked, for the cost of the credits per person (Round 27).
+    e.credits_model = lambda backend: "claude-sonnet-5-5"
+    e.record_usage(Done(), HOME, "chat")
+    assert sent[-1][1]["credits"] is True and sent[-1][1]["kind"] == "chat"
 
 
 def test_recording_usage_never_breaks_anything(tmp_path):

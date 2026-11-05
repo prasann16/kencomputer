@@ -1297,8 +1297,10 @@ class Engine:
                     f.write(json.dumps({"ts": round(time.time()), "kind": kind, "brain": brain, **extra, **r}) + "\n")
         except OSError:
             pass
+        # On Ken AI credits (the host pays): marked, so the cost of the credits per person can be summed.
+        paid_by_host = {"credits": True} if self.credits_model and self.credits_model(self.backend(pid)) else {}
         for r in rows:
-            crash.track("ai_usage", kind=kind, brain=brain, agent=pid != HOME, **extra, **r)
+            crash.track("ai_usage", kind=kind, brain=brain, agent=pid != HOME, **extra, **paid_by_host, **r)
 
     def chat_busy(self, pid: str) -> bool:
         lock = self.chat_locks.get(pid)
