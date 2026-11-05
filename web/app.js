@@ -1566,7 +1566,7 @@ function App() {
   // Whether an AI account is connected decides the first screen (Connect, or the chat), so nothing else shows until
   // it's known. If the check fails, the chat shows anyway and says what's wrong itself: never a stuck blank screen.
   const [setupFailed, setSetupFailed] = useState(false);
-  const loadSetup=()=>api('/api/setup').then((r)=>{setSetup(r);setSetupFailed(false);}).catch(()=>setSetupFailed(true));
+  const loadSetup=()=>api('/api/setup').then((r)=>{setSetup(r);setSetupFailed(false);}).catch(()=>{setSetupFailed(true);setTimeout(loadSetup,3000);});
   useEffect(()=>{loadSetup();},[]);
   // Poll while something is still getting ready (sign-in elsewhere, the voice model download).
   useEffect(()=>{if(!setup || (setup.connected && setup.voice.state!=='downloading'))return;const t=setInterval(loadSetup,2000);return()=>clearInterval(t);},[setup?.connected,setup?.voice?.state]);
@@ -1633,7 +1633,7 @@ function App() {
     // In the cloud Ken's clock starts on UTC: use this browser's time zone until they say otherwise.
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (m.hosted && !m.timezone && zone) api('/api/command', { json: { text: '/timezone ' + zone } }).catch(() => {});
-  }).catch((e) => toast(e.message));
+  }).catch(() => setTimeout(loadMeta, 3000));  // Ken waking or restarting: ask again until it answers (Settings waits on this)
   useEffect(() => {
     // #/settings/ai (the button in Ken's emails about AI credits), #/settings/apps, #/settings/phone: Settings, on that tab.
     const settingsLink = () => {
