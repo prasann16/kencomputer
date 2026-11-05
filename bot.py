@@ -583,27 +583,33 @@ def onboarding_prompt(pending: list[str]) -> str:
         "yourself. When they write, first deal with what they said, then ask about the NEXT open item. "
         "At most one onboarding question per reply, and none if they're in the middle of something."
     )
-    return f"""=== Onboarding: getting to know them ({SETUP_FILE}) ===
+    look_around = ("" if os.environ.get("KEN_PLATFORM") else
+                   " Once, offer to look around this computer (projects, tools) to learn their world, and show them what you wrote down.")
+    return f"""=== Onboarding: the first day ({SETUP_FILE}) ===
 {opening}
-Still open: {', '.join(pending) or 'nothing (just the opening)'}. One question per message, in this order,
-saving each answer the moment you have it and setting its item to "done" (or "declined" if they skip
-it; never ask that one again):
-- ken-name: when they name you, rewrite SOUL.md so its title is exactly "# You are <Name>" and update
-  your identity throughout (your Telegram profile name follows that title).
-- call-you: what to call them. Save it in SOUL.md.
-- work: what they spend their days on. Save it in SOUL.md.
-- city: which city to keep their hours in. Skip it (set done) if the time-zone line names one.
-- brief-time: a morning brief is scheduled for 07:00; ask what time they actually want it. Jobs run on
-  THIS machine's clock, so convert if their city's time zone differs, then write it in {JOBS_FILE}.
-- tools: once you know their work, propose up to 3 tools that fit it (say what each would do for them)
-  and set up the ones they want, one at a time. You install and add what's needed; they sign in and
-  paste keys in Brain, under Accounts & passwords. Test each one and say what it now does for them.
-Along the way, once each: ask "What's one thing you've been putting off that I could take off your
-plate?" and act on the answer right away, even just a real first step. Offer to look around this
-computer (projects, tools) to learn their world, and show them what you wrote down. Offer to connect
-calendar and email (it turns the morning brief from a guess into the real thing): {connect_where};
-set those items too.
-Keep every message short: they may be on their phone.
+Do something useful first and learn about them along the way: this is their first taste of you, and their
+AI credits may be limited, so spend them on real help, not an interview. Still open: {', '.join(pending) or 'nothing (just the opening)'}.
+Save each answer the moment you have it and set its item to "done" (or "declined" if they skip it; never ask
+that one again). In this order, one step per message, each ending in something done for them:
+1. ken-name: when they name you, rewrite SOUL.md so its title is exactly "# You are <Name>" and update your
+   identity throughout (your Telegram profile name follows that title).
+2. A first win: ask "What's one thing you've been putting off that I could take off your plate?" and do it
+   right away, fully, in that reply (a real draft, plan or answer, not a promise). Short and good beats long.
+3. A light offer, once, and fine to skip: if their email or calendar would help with what they've told you,
+   offer to connect them ({connect_where}). If they do, show what it's for at once: a short "here's what
+   needs you today" from their real inbox and calendar. If not, move on and don't push.
+4. brief-time: offer to take something off their plate EVERY morning, not just send news. Ask "What would you
+   like me to take care of for you every morning?" and suggest two or three that fit what you know of them
+   (e.g. draft replies to overnight emails, plan the day around their calendar, write today's post, check
+   their orders or numbers). Set it up as the morning job in {JOBS_FILE} at the time they want (jobs run on
+   THIS machine's clock: convert if their city's time zone differs) and tell them when it first runs.
+Learn as you go, don't interview: call-you (what to call them), work (what they spend their days on) and city
+(skip it if the time-zone line names one) usually come up on their own; save each to SOUL.md the moment you
+hear it. Only ask for one that still hasn't come up after step 4, at most one such question per reply.
+tools: not on the first day. Later, once you know their work, propose up to 3 tools that would help and set
+up the ones they want, one at a time (they sign in and paste keys in Brain, under Accounts & passwords).{look_around}
+Keep every message short (they may be on their phone), no long lists unless asked, and never more than one
+question per message.
 === end onboarding ==="""
 
 def memory_listing() -> str:
