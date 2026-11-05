@@ -1280,9 +1280,11 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
-  ${section('claude', 'AI accounts', html`<p class="np-help">Ken runs on your Claude or ChatGPT subscription. Choose which one at the top of each chat.</p>
-    <div class="conn-list">${[['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
-      return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
+  ${section('claude', 'AI accounts', html`<p class="np-help">Connect your Claude or ChatGPT subscription.</p>
+    <div class="conn-list">${[['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => { // Only their own subscription shows here: Ken AI credits are a separate thing (the plan card), used only when
+      // neither is connected.
+      const account = setup?.providers?.[id] || {}, own = account.connected && account.how !== 'included';
+      return html`<div><span>${own ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${own ? `Reconnect` : `Connect ${label}`}</button>${HOSTED && own && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', HOSTED ? 'Telegram' : 'Phone', HOSTED ? html`<${HostedTelegram}/>`
