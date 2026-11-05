@@ -1,6 +1,6 @@
-"""A brand-new Ken in the cloud asks first how it should think: their Claude, their ChatGPT, or Ken AI credits.
-Asked once (setup.json "ai"), never on the Mac, and nothing runs on the credits until they choose: not Ken's first
-words in the app, not Telegram, not the scheduled jobs."""
+"""A brand-new Ken in the cloud no longer asks how it should think: it starts on Ken AI credits (the free taste, or
+the plan's), noted once in setup.json "ai". Never on the Mac; not when their own Claude or ChatGPT is already in.
+Ken speaks first right away, in the app and on Telegram."""
 import json
 import os
 import sys
@@ -46,27 +46,25 @@ def accounts(home, fresh=True, codex=False):
     return BrainOnboarding({"claude": claude, "codex": Codex(codex)}, lambda: "claude", fresh=lambda: fresh)
 
 
-def test_asked_once_on_a_brand_new_ken_in_the_cloud_only(tmp_path, credits, monkeypatch):
+def test_a_new_ken_in_the_cloud_starts_on_credits_without_asking(tmp_path, credits, monkeypatch):
     setup = accounts(tmp_path)
-    assert setup.ask_ai() and setup.status()["ask_ai"] is True
-    setup.choose_ai("credits")
-    assert not setup.ask_ai()
+    assert not setup.ask_ai() and setup.status()["ask_ai"] is False
     assert json.loads((tmp_path / "setup.json").read_text())["ai"] == "credits"
     with pytest.raises(ValueError):
         setup.choose_ai("gemini")
-    # Not asked: a Ken that has spoken already, their own account already in, or no credits on offer.
-    assert not accounts(tmp_path / "a", fresh=False).ask_ai()
-    assert not accounts(tmp_path / "b", codex=True).ask_ai()
+    # Not chosen for them: a Ken that has spoken already, their own account already in, or no credits on offer.
+    for home, kw in ((tmp_path / "a", {"fresh": False}), (tmp_path / "b", {"codex": True})):
+        assert not accounts(home, **kw).ask_ai() and not (home / "setup.json").exists()
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-" + "x" * 40)
-    assert not accounts(tmp_path / "c").ask_ai()
+    assert not accounts(tmp_path / "c").ask_ai() and not (tmp_path / "c" / "setup.json").exists()
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
     monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
-    assert not accounts(tmp_path / "d").ask_ai()
+    assert not accounts(tmp_path / "d").ask_ai() and not (tmp_path / "d" / "setup.json").exists()
 
 
 def test_never_on_the_mac(tmp_path, credits, monkeypatch):
     monkeypatch.delenv("KEN_PLATFORM")
-    assert not accounts(tmp_path).ask_ai()
+    assert not accounts(tmp_path).ask_ai() and not (tmp_path / "setup.json").exists()
 
 
 def test_connecting_their_own_account_on_that_screen_is_the_choice(tmp_path, credits, monkeypatch):
@@ -80,25 +78,13 @@ def test_connecting_their_own_account_on_that_screen_is_the_choice(tmp_path, cre
     assert other.providers["claude"].ai_choice() == "codex"
 
 
-async def test_the_app_waits_for_the_choice_then_ken_speaks_first(engine, aiohttp_client, tmp_path, credits, monkeypatch):  # noqa: F811
-    greeted = []
-
-    async def first_contact():
-        greeted.append(True)
-
-    monkeypatch.setattr(engine, "first_contact", first_contact)
+async def test_ken_speaks_first_right_away_on_credits(engine, aiohttp_client, tmp_path, credits, monkeypatch):  # noqa: F811
     monkeypatch.setattr(engine, "new_install", lambda: True)
     monkeypatch.setattr(engine, "backend", lambda pid: "claude")
     setup = accounts(tmp_path)
     app, client = await signed_in(engine, aiohttp_client, setup=setup)
-    assert (await (await client.get("/api/setup")).json())["ask_ai"] is True
-    view = await (await client.get(f"/api/chats/{HOME}")).json()
-    assert not greeted and not view.get("busy")  # no first words, no credits spent
-    await client.post(f"/api/chats/{HOME}/open")
-    await client.post(f"/api/chats/{HOME}/warm")
-    assert (await client.post("/api/setup", json={"action": "ai", "ai": "nope"})).status == 400
-    r = await (await client.post("/api/setup", json={"action": "ai", "ai": "credits"})).json()
-    assert r["ask_ai"] is False and setup.providers["claude"].ai_choice() == "credits"
+    assert (await (await client.get("/api/setup")).json())["ask_ai"] is False
+    assert setup.providers["claude"].ai_choice() == "credits"
     view = await (await client.get(f"/api/chats/{HOME}")).json()
     assert view["busy"] is True  # Ken's first words are on the way
 
@@ -155,26 +141,10 @@ def new_bot(tmp_path, credits, monkeypatch):
     return bot, sent
 
 
-async def test_telegram_first_contact_asks_in_one_line(new_bot):
-    bot, sent = new_bot
-    for words in ("hi Ken", bot.first_contact_prompt("pressed Start on their phone")):
-        update = telegram_update()
-        await bot.handle_prompt(update, words)
-        assert update.effective_message.replies == [
-            "Before I start: how should I think? Connect your Claude or ChatGPT subscription in Settings "
-            "(https://site.example/ken#/settings/claude), or reply \"free\" to try me free on Ken AI credits."]
-    assert sent == [] and bot.ACCOUNTS.ask_ai()
-    assert bot.asking_ai()
-
-
-async def test_telegram_free_starts_ken_on_credits(new_bot):
+async def test_telegram_first_contact_goes_straight_to_ken(new_bot):
     bot, sent = new_bot
     update = telegram_update()
     with pytest.raises(SystemExit):
-        await bot.handle_prompt(update, "Free!")
-    assert bot.ACCOUNTS.providers["claude"].ai_choice() == "credits" and not bot.asking_ai()
-    assert sent == [bot.first_contact_prompt("chose to try Ken free, on their phone")]
-    assert update.effective_message.replies == []
-    for words in ("try it free", "try me free", "FREE"):
-        assert bot.FREE_REPLY.fullmatch(words)
-    assert not bot.FREE_REPLY.fullmatch("free up my calendar")
+        await bot.handle_prompt(update, "hi Ken")
+    assert update.effective_message.replies == [] and len(sent) == 1
+    assert not bot.asking_ai() and bot.ACCOUNTS.providers["claude"].ai_choice() == "credits"

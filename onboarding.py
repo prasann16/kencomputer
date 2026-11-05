@@ -541,11 +541,13 @@ class BrainOnboarding:
         return own_claude or bool(codex and codex.status().get("connected"))
 
     def ask_ai(self) -> bool:
-        """A brand-new Ken in the cloud that could start on Ken AI credits asks first how it should think (their
-        Claude, their ChatGPT, or the credits), so someone with a subscription doesn't spend the credits by accident.
-        Until they choose, Ken doesn't speak first. Asked once; never on the Mac (no credits there)."""
-        return (bool(os.environ.get("KEN_PLATFORM")) and bool(included_ai_key()) and self.fresh()
-                and not self.providers["claude"].ai_choice() and not self.own_connected())
+        """Never asked any more: a brand-new Ken in the cloud just starts on Ken AI credits (the free taste, or the
+        plan's), so someone new is chatting at once. The choice is noted as "credits"; their own Claude or ChatGPT
+        is in Settings → AI, and offered when the credits run out. Never on the Mac (no credits there)."""
+        if (bool(os.environ.get("KEN_PLATFORM")) and bool(included_ai_key()) and self.fresh()
+                and not self.providers["claude"].ai_choice() and not self.own_connected()):
+            self.providers["claude"].choose_ai("credits")
+        return False
 
     def choose_ai(self, ai: str) -> dict:
         if ai not in AI_CHOICES:
