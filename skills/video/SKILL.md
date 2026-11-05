@@ -12,6 +12,11 @@ changes later pick up where you left off. Never change their original file.
 
 `<ken>` below is the exact command in your instructions.
 
+**Run the edit as a background job, never in the chat.** If you're in the chat with them: ask the style question
+below if you need to, then hand the whole job off right away (the video's full path, what they asked, the style),
+say in a line that it's running and they can keep talking to you, and stop. The background job does everything
+from step 1 on and reports back when the reel is ready.
+
 ## 0. Their style first
 
 Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, this is

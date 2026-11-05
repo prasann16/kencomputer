@@ -741,8 +741,9 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         background = "" if pid != HOME else (
-            "BACKGROUND JOBS: when something will take more than a few minutes (editing a video, long research, "
-            "building something), don't do it here, where it would keep them waiting. Hand it to a background job: write "
+            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than a minute or two (editing a video, "
+            "long research, building something) goes to a background job right away, before you start on it, never here "
+            "where it would keep them waiting. Hand it to a background job: write "
             f'{{"type": "run", "title": "a few words, maybe an emoji", "prompt": "the brief"}} into {self.requests_dir}/, '
             "then tell them in a line that it's running and they can keep talking to you. The job starts fresh and sees only "
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
