@@ -240,6 +240,12 @@ class WebApp:
                 return _json(await self.setup.start(backend=b.get("backend")))
             if b.get("action") == "skip-phone":
                 return _json(self.setup.skip_phone())
+            if b.get("action") == "ai":  # the first screen: how Ken should think ("credits", "claude", "codex")
+                ai = str(b.get("ai", ""))
+                result = self.setup.choose_ai(ai)
+                if ai == "credits" and self.engine.backend(HOME) != "claude":
+                    await self.engine.set_runtime(HOME, backend="claude")  # Ken AI credits run on Claude
+                return _json(self.setup.status() if ai == "credits" else result)
             if b.get("action") == "token":  # a Claude token made with `claude setup-token` on another computer
                 return _json(await self.setup.save_token(str(b.get("token", ""))))
             if b.get("action") == "api-key":
@@ -532,7 +538,7 @@ class WebApp:
         # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
         # greets on Start), here when the phone step was skipped. Quiet during setup.
         phone_skipped = not self.setup or self.setup.phone_step() == "declined"
-        greeting = pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid)
+        greeting = pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid) and not self._asking_ai()
         if greeting:
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         view = self.engine.chat_view(pid)
@@ -542,16 +548,20 @@ class WebApp:
 
     async def open_chat(self, request):
         pid = self._pid(request)
-        if self._brain_connected(pid):
+        if self._brain_connected(pid) and not self._asking_ai():
             self._spawn(self.engine.on_open(pid))
         return _json({"ok": True})
 
     async def warm_chat(self, request):
         # Start the existing CLI session without generating a greeting or a turn.
         pid = self._pid(request)
-        if self._brain_connected(pid):
+        if self._brain_connected(pid) and not self._asking_ai():
             self._spawn(self.engine.warm(pid))
         return _json({"ok": True})
+
+    def _asking_ai(self) -> bool:
+        """The first screen is asking how Ken should think: nothing starts (and no credits are used) until they choose."""
+        return bool(self.setup and getattr(self.setup, "ask_ai", None) and self.setup.ask_ai())
 
     def _brain_connected(self, pid):
         if not self.setup:

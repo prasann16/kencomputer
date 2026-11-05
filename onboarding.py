@@ -168,6 +168,17 @@ class Onboarding:
             return "declined"  # Ken in the cloud is used in the browser; no phone step
         return self._setup().get("phone", "unset")
 
+    # A brand-new Ken in the cloud asks first how it should think (BrainOnboarding.ask_ai): "credits", "claude" or
+    # "codex", kept here so it's asked once. Switching later is Settings → AI.
+    def ai_choice(self) -> str:
+        return str(self._setup().get("ai") or "")
+
+    def choose_ai(self, ai: str) -> None:
+        data = self._setup()
+        data["ai"] = ai
+        self.setup_file.parent.mkdir(parents=True, exist_ok=True)
+        self.setup_file.write_text(json.dumps(data, indent=1) + "\n")
+
     def skip_phone(self) -> dict:
         data = self._setup()
         data["phone"] = "declined"  # Settings, Phone still works any time
@@ -513,11 +524,40 @@ class CodexOnboarding(Onboarding):
         self.watch = None
 
 
+AI_CHOICES = ("credits", "claude", "codex")
+
+
 class BrainOnboarding:
     """Both accounts stay connected; each chat chooses its own runtime."""
 
-    def __init__(self, providers, backend):
+    def __init__(self, providers, backend, fresh=lambda: False):
         self.providers, self.backend = providers, backend
+        self.fresh = fresh  # a brand-new Ken: it hasn't said its first words yet
+
+    def own_connected(self) -> bool:
+        """Their own Claude or ChatGPT is in (Ken AI credits don't count)."""
+        own_claude = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+        codex = self.providers.get("codex")
+        return own_claude or bool(codex and codex.status().get("connected"))
+
+    def ask_ai(self) -> bool:
+        """A brand-new Ken in the cloud that could start on Ken AI credits asks first how it should think (their
+        Claude, their ChatGPT, or the credits), so someone with a subscription doesn't spend the credits by accident.
+        Until they choose, Ken doesn't speak first. Asked once; never on the Mac (no credits there)."""
+        return (bool(os.environ.get("KEN_PLATFORM")) and bool(included_ai_key()) and self.fresh()
+                and not self.providers["claude"].ai_choice() and not self.own_connected())
+
+    def choose_ai(self, ai: str) -> dict:
+        if ai not in AI_CHOICES:
+            raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
+        self.providers["claude"].choose_ai(ai)
+        return self.status()
+
+    def _chose(self, backend) -> None:
+        """Connecting their own account on the first screen is the choice too."""
+        name, claude = self.backend() if backend is None else backend, self.providers["claude"]
+        if hasattr(claude, "ai_choice") and not claude.ai_choice() and self.provider(name).status().get("connected") and self.own_connected():
+            claude.choose_ai(name)
 
     def provider(self, backend):
         try:
@@ -532,7 +572,7 @@ class BrainOnboarding:
     def status(self):
         providers = {name: p.status() for name, p in self.providers.items()}
         return {"providers": providers, "backend": self.backend(),
-                "connected": any(p["connected"] for p in providers.values()),
+                "connected": any(p["connected"] for p in providers.values()), "ask_ai": self.ask_ai(),
                 "phone": self.phone_step(), "voice": self.providers["claude"].voice_status()}
 
     def phone_step(self):
@@ -548,14 +588,17 @@ class BrainOnboarding:
 
     async def submit(self, code, backend=None):
         await self.provider(backend).submit(code)
+        self._chose(backend)
         return self.status()
 
     async def save_token(self, token):
         await self.providers["claude"].save_token(token)
+        self._chose("claude")
         return self.status()
 
     async def save_api_key(self, key, backend=None):
         await self.provider(backend).save_api_key(key)
+        self._chose(backend)
         return self.status()
 
     async def disconnect(self, backend=None):

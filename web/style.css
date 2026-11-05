@@ -211,6 +211,17 @@
 .connect p { max-width: 380px; margin: 0; color: var(--muted); font-size: var(--text-body); line-height: 1.55; }
 .connect .btn { min-width: 260px; }
 .first-connect .btn + .btn { margin-top: -6px; }
+/* How should Ken think? (a brand-new Ken in the cloud): three choices, each a name and a line on what it means. */
+.think-options { display: flex; flex-direction: column; gap: var(--s2); width: min(380px, 100%); }
+.think-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 14px var(--s5); border: 0; border-radius: var(--r-card);
+  background: var(--well); color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: opacity .15s; }
+.think-option b { font-size: var(--text-body); font-weight: 600; }
+.think-option span { font-size: var(--text-ui); color: var(--muted); }
+.think-option.primary { background: var(--primary); color: var(--primary-ink); }
+.think-option.primary span { color: var(--primary-ink); opacity: .75; }
+.think-option:hover:not(:disabled) { opacity: .85; }
+.think-option:active:not(:disabled) { transform: scale(.99); }
+.think-option:disabled { opacity: .5; cursor: default; }
 .connect .first-connect-note, .connect .connect-code-note { font-size: var(--text-sm); color: var(--faint); }
 .connect .text-action { font-size: var(--text-ui); color: var(--muted); }
 .connect-input { width: min(320px, 100%); text-align: center; }

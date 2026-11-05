@@ -821,10 +821,39 @@ async def keep_typing(update: Update, stop: asyncio.Event) -> None:
             pass
 
 
+def asking_ai() -> bool:
+    """A brand-new Ken in the cloud hasn't been told yet how to think (onboarding.BrainOnboarding.ask_ai)."""
+    return ACCOUNTS is not None and ACCOUNTS.ask_ai()
+
+
+def ai_settings_url() -> str:
+    """Ken's Settings → AI on the host's site, for a link in Telegram."""
+    base = os.environ.get("KEN_KEEPALIVE_URL", "").rsplit("/box/", 1)[0]
+    return f"{base}/ken#/settings/claude" if base.startswith("https://") else ""
+
+
+def ai_question() -> str:
+    where = ai_settings_url()
+    return ("Before I start: how should I think? Connect your Claude or ChatGPT subscription in Settings"
+            + (f" ({where})" if where else "") + ", or reply \"free\" to try me free on Ken AI credits.")
+
+
+FREE_REPLY = re.compile(r"\W*(try( it| me)?\s+)?free\W*", re.I)
+
+
 async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
                         files: list[str] | None = None) -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows).
     A photo or file shows in the app as their message (`said`, the caption, with `files`)."""
+    if asking_ai():
+        # First contact on a brand-new Ken in the cloud: how it should think comes first (the app asks the same).
+        if not FREE_REPLY.fullmatch((said if said is not None else prompt).strip()):
+            await update.effective_message.reply_text(ai_question(), disable_web_page_preview=True)
+            return
+        ACCOUNTS.choose_ai("credits")
+        if ENGINE.backend(HOME) != "claude":
+            await ENGINE.set_runtime(HOME, backend="claude")  # Ken AI credits run on Claude
+        prompt, context, said, files = first_contact_prompt("chose to try Ken free, on their phone"), "", None, None
     shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
@@ -1557,6 +1586,8 @@ async def scheduler() -> None:
                     remove_job(job)  # its day passed while Ken was off
                     continue
                 if _job_due(job, now, state):
+                    if asking_ai():
+                        continue  # a brand-new Ken still waiting to be told how to think: nothing runs (or spends) yet
                     if job.get("date"):
                         remove_job(job)  # one-time: it runs now and is gone
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
@@ -1690,7 +1721,7 @@ async def start_engine() -> WebApp | None:
         "claude": Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token() or included_ai_key()),
                              lambda: brain_connected("claude"), voice_ready),
         "codex": codex_setup,
-    }, lambda: ENGINE.backend(HOME))
+    }, lambda: ENGINE.backend(HOME), fresh=lambda: not BORN_FLAG.exists())
     global ACCOUNTS
     ACCOUNTS = setup
     use_signed_in_account()
