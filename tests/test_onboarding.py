@@ -11,7 +11,7 @@ from onboarding import Onboarding
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the sign-in helper is for the Mac app")
 
 URL = "https://claude.com/cai/oauth/authorize?code=true&client_id=x"
-TOKEN = "sk-ant-oat01-abc_DEF-123"
+TOKEN = "sk-ant-oat01-" + "abc_DEF-123" * 5  # the real shape: sk-ant-oat, two digits, 40+ characters
 
 
 def fake_cli(tmp_path, monkeypatch, script: str):
@@ -56,6 +56,22 @@ async def test_pasted_code_still_works(tmp_path, monkeypatch):
     await setup.start()
     assert (await setup.submit("the-code"))["claude"]
     assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in (tmp_path / ".env").read_text()
+    assert calls == [1]
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+
+async def test_a_token_missing_its_o_is_saved_whole(tmp_path, monkeypatch):
+    # The CLI's terminal codes can eat the "o" of "oat"; what's saved is the real token.
+    eaten = TOKEN.replace("sk-ant-oat", "sk-ant-at")
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 0.3\necho "Your token: {eaten}"\n')
+    setup, calls = make(tmp_path)
+    await setup.start()
+    for _ in range(50):
+        if setup.status()["claude"]:
+            break
+        await asyncio.sleep(0.1)
+    env = (tmp_path / ".env").read_text()
+    assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in env and f"={eaten}" not in env
     assert calls == [1]
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
 
