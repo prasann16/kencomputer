@@ -1276,13 +1276,17 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // One calm page, every section in view, the same in the Mac app and the browser; the parts that only make sense on
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
-  useEffect(() => { if (tab && tab !== 'start') document.getElementById('set-' + (tab.startsWith('connect-') ? 'claude' : tab))?.scrollIntoView({ block: 'start' }); }, []);
-  const section = (id, title, body) => html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
+  // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', HOSTED ? 'Telegram' : 'Phone'], ['tools', 'Tools'], ['appearance', 'Appearance'], ['privacy', 'Privacy']];
+  const wanted = tab && tab.startsWith('connect-') ? 'claude' : tab;
+  const current = wanted === 'feedback' || tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
+  const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
   if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
-  ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
+  <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
+  ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
   ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
     <div class="conn-list ai-uses">${(() => {
       // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).

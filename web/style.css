@@ -467,3 +467,10 @@ ol.conn-steps li { margin: 2px 0; }
   .connect .btn { min-width: 0; width: 100%; max-width: 320px; }
   .drawer header, .drawer .log { padding-left: var(--s4); padding-right: var(--s4); }
 }
+
+/* Settings tabs: one section at a time. */
+.sp-tabs { display: flex; gap: 4px; width: max-content; max-width: 100%; margin: 0 0 var(--s7, 28px); padding: 4px; border-radius: var(--r-pill); background: var(--well); overflow-x: auto; scrollbar-width: none; }
+.sp-tabs button { flex-shrink: 0; padding: 8px 16px; border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font: 500 var(--text-ui)/1 var(--sans); cursor: pointer; white-space: nowrap; }
+.sp-tabs button.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.sp-tabs button:hover:not(.on) { color: var(--ink); }
+.settings-page .sp-section h2 { display: none; } /* the tab already names the section */
