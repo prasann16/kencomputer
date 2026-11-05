@@ -696,6 +696,15 @@ AGENT_PROMPT = (
 ) + WORK_RULES
 
 
+# The app's controls as the Mac describes them (coffee keeps the Mac awake), and what a Ken in the cloud says instead.
+_c = SYSTEM_PROMPT.index("Controls: in the app the stop ")
+MAC_CONTROLS = SYSTEM_PROMPT[_c:SYSTEM_PROMPT.index("usually sleeps. ", _c) + len("usually sleeps. ")]
+CLOUD_CONTROLS = ("Controls: in the app the stop button and the model menu; in Telegram /stop (stop the current reply), /new "
+                  "(fresh thread) and /model (switch models). Never suggest Esc or Ctrl+C. This computer wakes by itself for "
+                  "their messages and your scheduled jobs, so there's nothing for them to keep awake: never mention coffee "
+                  "or keeping a Mac awake. ")
+
+
 def build_system() -> str:
     """System prompt = harness rules + the soul file's current contents.
 
@@ -726,6 +735,8 @@ def build_system() -> str:
     if connected:
         system += "\n\n" + connected
     if os.environ.get("KEN_PLATFORM"):
+        # In the cloud there's no Mac to keep awake: the coffee controls would contradict the cloud line below.
+        system = system.replace(MAC_CONTROLS, CLOUD_CONTROLS)
         system += "\n\n" + HOSTED_WEB_PROMPT
     elif os.environ.get("KEN_HOSTED"):
         system += "\n\n" + HOSTED_PROMPT

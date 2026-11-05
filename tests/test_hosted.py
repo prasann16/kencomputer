@@ -643,3 +643,12 @@ async def test_the_runtime_says_credits_and_only_usable_brains(engine):
     assert not (engine.home / "model").exists()
     with pytest.raises(ValueError):
         await engine.set_runtime(HOME, model="claude-opus-5-5")
+
+
+def test_a_cloud_ken_is_never_told_to_keep_a_mac_awake(monkeypatch):
+    import bot
+    monkeypatch.setenv("KEN_PLATFORM", "agent37")
+    cloud = bot.build_system()
+    assert "COFFEE" not in cloud and "keeps this Mac awake" not in cloud and "wakes by itself" in cloud
+    monkeypatch.delenv("KEN_PLATFORM")
+    assert "COFFEE keeps this" in bot.build_system()  # the Mac still has its coffee cup
