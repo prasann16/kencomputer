@@ -173,3 +173,15 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 .apps-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line);font-size:14px;font-weight:500}.apps-row img{width:24px;height:24px;border-radius:6px;flex-shrink:0}.apps-row span:first-of-type{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apps-row .btn.sm{flex-shrink:0}.apps-row .conn-on{font-size:12px;font-weight:400}
 .tg-connect{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}.tg-qr{width:200px;height:200px;padding:8px;border-radius:12px;background:#fff;box-shadow:0 0 0 1px var(--line)}.tg-qr svg{width:100%;height:100%;display:block}
 @media (hover:none) and (pointer:coarse){.tg-qr,.tg-scan{display:none}}
+/* Settings: one calm page, every section in view (like the account page). */
+.settings-page{position:fixed;inset:0;z-index:30;background:var(--bg);overflow-y:auto}
+.sp-wrap{max-width:640px;margin:0 auto;padding:24px 24px 64px}html[data-desktop='darwin'] .sp-wrap{padding-top:46px}
+.sp-head h1{margin:10px 0 22px;font:500 26px/1.2 var(--sans);letter-spacing:-.5px}.sp-back{font-size:13px;color:var(--muted)}
+.sp-section{padding:22px 0;border-top:1px solid var(--line)}.sp-section h2{margin:0 0 6px;font:600 15px/1.3 var(--sans)}.sp-section .np-help{margin:0 0 12px;color:var(--muted)}
+.sp-section .appearance,.sp-section .segmented{border:0;padding:0}
+.settings-page .plan-usage{margin:0 0 8px;padding:16px 18px;border-radius:14px;background:var(--well);border:0;display:flex;flex-direction:column;gap:2px}
+.plan-usage .meter{padding:8px 0 2px}.plan-usage .meter-top{display:flex;justify-content:space-between;gap:12px;font-size:13px}.plan-usage .meter-top span:last-child{color:var(--muted)}
+.plan-usage .bar{height:4px;margin-top:6px;border-radius:4px;background:var(--line-strong);overflow:hidden}.plan-usage .bar i{display:block;height:100%;border-radius:4px;background:var(--ink-2)}.plan-usage .low .bar i{background:var(--danger)}.plan-usage .low .meter-top span:last-child{color:var(--danger)}
+.plan-usage>.text-action{margin-top:10px;align-self:flex-start}
+.sp-foot{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding-top:22px;border-top:1px solid var(--line);font-size:13px}.sp-foot .settings-version{margin-left:auto}
+@media(max-width:600px){.sp-wrap{padding:16px 16px 48px}.apps-grid{grid-template-columns:1fr}}

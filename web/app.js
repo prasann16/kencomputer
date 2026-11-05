@@ -1250,6 +1250,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   }); }, []);
 
   const setTab = onTab;
+  useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
@@ -1258,56 +1259,52 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
   const icon = (d) => html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${d}/></svg>`;
-  // One Settings for every Ken: each section says where it shows (both, web = hosted Ken, mac = the Mac app).
-  const sections = SETTINGS_SECTIONS.filter((x) => x.on === 'both' || (x.on === 'web') === HOSTED);
-  const current = tab === 'feedback' || sections.some((x) => x.id === tab) ? tab : sections[0].id;
-  return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
-    <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
-    ${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}
-    ${!meta.usage && meta.account_url && html`<p class="np-note"><a class="text-action" href=${meta.account_url}>Your plan and billing</a></p>`}
-    <div class="set-tabs" role="tablist">${sections.map((x) => html`<button role="tab" aria-selected=${current === x.id} class=${current === x.id ? 'on' : ''} onClick=${() => { setTab(x.id); setError(''); }}>${HOSTED && x.web ? x.web : x.label}</button>`)}</div>
-    ${current === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
-      <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
-        return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
-      ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
-    ${current === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
-    ${current === 'apps' && html`<div class="set-body"><${HostedApps}/></div>`}
-    ${current === 'phone' && (HOSTED ? html`<div class="set-body"><${HostedTelegram}/></div>`
-      : html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
-    ${current === 'feedback' && html`<div class="set-body feedback">${sent
-      ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p><button class="text-action" onClick=${() => { setSent(false); setTab('claude'); }}>Back to Settings</button>`
-      : html`<p class="np-help">A bug, an idea, something you'd love Ken to do: it goes straight to the people who make Ken.</p>
-        <textarea class="np-input feedback-text" placeholder="What's on your mind?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
-        <input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('claude')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
-        ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`}</div>`}
-    ${current === 'privacy' && privacy && html`<div class="set-body"><p class="np-help">${HOSTED ? 'Everything Ken knows and does stays on its own computer, which only you use.' : 'Everything Ken knows and does stays on this computer.'}</p>
+  // One calm page, every section in view, the same in the Mac app and the browser; the parts that only make sense on
+  // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
+  // #/settings/<section> scrolls to that section.
+  useEffect(() => { if (tab && tab !== 'start') document.getElementById('set-' + tab)?.scrollIntoView({ block: 'start' }); }, []);
+  const section = (id, title, body) => html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
+  return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
+  <header class="sp-head"><button class="text-action sp-back" onClick=${onClose}>← Back to chat</button><h1>Settings</h1></header>
+  ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
+  ${section('claude', 'AI accounts', html`<p class="np-help">Ken runs on your Claude or ChatGPT subscription. Choose which one at the top of each chat.</p>
+    <div class="conn-list">${[['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
+      return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
+    ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
+  ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
+  ${section('phone', HOSTED ? 'Telegram' : 'Phone', HOSTED ? html`<${HostedTelegram}/>`
+    : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
+  ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
+  ${section('appearance', 'Appearance', html`<div class="segmented" role="radiogroup" aria-label="Appearance">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div>`)}
+  ${privacy && section('privacy', 'Privacy', html`<p class="np-help">${HOSTED ? 'Everything Ken knows and does stays on its own computer, which only you use.' : 'Everything Ken knows and does stays on this computer.'}</p>
     ${row(icon('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'), 'Share anonymous crash reports and usage',
       'Helps fix bugs and shows which features get used: counts like “a job ran” and how much AI each one used. Never what you say, your files or your logins.',
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
-    <p class="np-note privacy-more"><a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a></p></div>`}
-    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-    ${current !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${meta.logout_url && html`<a class="btn sm settings-signout" href=${meta.logout_url}>Sign out</a>`}${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
+    <p class="np-note privacy-more"><a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a></p>`)}
+  ${tab === 'feedback' && section('feedback', 'Send feedback', sent
+    ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p>`
+    : html`<p class="np-help">A bug, an idea, something you'd love Ken to do: it goes straight to the people who make Ken.</p>
+      <textarea class="np-input feedback-text" placeholder="What's on your mind?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
+      <input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>
+      <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('claude')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
+      ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`)}
+  ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+  <footer class="sp-foot">${tab !== 'feedback' && html`<button class="text-action" onClick=${() => { setTab('feedback'); setError(''); setSent(false); setTimeout(() => document.getElementById('set-feedback')?.scrollIntoView({ behavior: 'smooth' }), 50); }}>Send feedback</button>`}
+    ${meta.logout_url && html`<a class="text-action" href=${meta.logout_url}>Sign out</a>`}${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
-      : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
-  <//>`;
+      : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</footer>
+  </div></div>`;
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
   // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
   const manage = HOSTED ? '/account/card?back=ken' : usage.manage_url || accountUrl;
+  const share = (l) => { const n = (t) => parseFloat(String(t).replace(/[^0-9.]/g, '')); const v = n(l.left) / n(l.of); return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null; };
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
-    <div class="plan-lines">${usage.lines.map((l) => html`<div class=${l.low ? 'low' : ''}><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>`)}</div>
+    ${usage.lines.map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     ${manage && html`<a class="text-action" href=${manage}>Change plan or billing</a>`}</div>`;
 }
-const SETTINGS_SECTIONS = [
-  { id: 'claude', label: 'AI accounts', on: 'both' },
-  { id: 'tools', label: 'Tools', on: 'both' },
-  { id: 'phone', label: 'Phone', web: 'Telegram', on: 'both' },
-  { id: 'apps', label: 'Apps', on: 'web' },
-  { id: 'privacy', label: 'Privacy', on: 'both' },
-];
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
 const JOB_HELP = { 'morning-brief': 'What matters today, sent to you each morning.', 'nightly-review': 'Files the day into Ken’s memory and tells you what it saved.' };
@@ -1797,7 +1794,7 @@ function App() {
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${bigFile && html`<${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/>`}
     ${talking && html`<${VoiceMode} onClose=${() => { setTalking(false); checkTalk(); }}/>`}
-    ${connections && html`<${Settings} tab=${connections === 'start' ? 'claude' : connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
+    ${connections && html`<${Settings} tab=${connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
     ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
