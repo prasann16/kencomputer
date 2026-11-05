@@ -1311,14 +1311,15 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
   // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
-  const manage = HOSTED ? '/account/card?back=ken' : usage.manage_url || accountUrl;
+  // Hosted Ken: Plan & billing is its own small page on the site (plans, added credits, card and invoices), one tap back.
+  const manage = HOSTED ? '/account/plans' : usage.manage_url || accountUrl;
   const share = (l) => { const n = (t) => parseFloat(String(t).replace(/[^0-9.]/g, '')); const v = n(l.left) / n(l.of); return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null; };
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
-    <div class="plan-actions">${usage.topup_url && html`<a class="text-action" href=${usage.topup_url}>Add $5 of Ken AI credits</a>`}
-    ${manage && html`<a class="text-action" href=${manage}>Change plan or billing</a>`}</div></div>`;
+    <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add $5 of Ken AI credits</a>`}
+    ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;
 }
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
