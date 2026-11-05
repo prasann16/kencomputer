@@ -651,13 +651,15 @@ function PreviewModal({ file, onClose, toast }) {
   <//>`;
 }
 
-// Ken AI credits running low or out: the ways on. Their own Claude or ChatGPT (Settings opens on its Connect), and
-// on the free trial a plan with more credits; on a paid plan, adding credits or a bigger plan (the host's pages).
+// Ken AI credits out: one clear way on, and one quiet link for people who already pay for Claude or ChatGPT.
+// Free trial: a plan (they come with credits). Paid plan: add credits (a bigger plan lives in Plan & billing).
 function CreditChoices({ onConnect, usage }) {
-  return html`<div class="msg-actions credit-choices"><button class="btn sm" onClick=${() => onConnect('claude')}>Connect Claude</button>
-    <button class="btn sm" onClick=${() => onConnect('codex')}>Connect ChatGPT</button>
-    ${usage?.topup_url ? html`<a class="btn sm" href=${usage.topup_url}>Add credits</a><a class="btn sm" href=${usage.upgrade_url || '/account/plans'}>Upgrade</a>`
-      : html`<a class="btn sm" href="/account/plans">Pick a plan</a>`}</div>`;
+  const paid = !!usage?.topup_url;
+  return html`<div class="credit-choices">
+    ${!paid && html`<p class="credit-why">Plans start at $5 a month and include AI credits.</p>`}
+    <div class="msg-actions">${paid ? html`<a class="btn primary sm" href=${usage.topup_url}>Add credits</a>` : html`<a class="btn primary sm" href="/account/plans">Pick a plan</a>`}</div>
+    <button class="text-action credit-own" onClick=${() => onConnect('claude')}>Already pay for Claude or ChatGPT? Use that instead.</button>
+  </div>`;
 }
 
 function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup, loadError, onReload, onAIAccounts, onConnect, onTalk, usage }) {
