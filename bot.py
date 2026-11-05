@@ -548,6 +548,10 @@ def onboarding_prompt(pending: list[str]) -> str:
     """Getting to know them, the same in the app and on their phone. It follows the checklist in
     setup.json, so it survives restarts and picks up where it left off."""
     first = not BORN_FLAG.exists()
+    # Where calendar and email get connected: apps on Ken in the cloud (one-tap links), tools on their own computer.
+    connect_where = (f"they're apps here: run `{KEN_CMD} --apps gmail` (or google calendar) and give them the one-tap Connect "
+                     "link it prints, or point them to Settings → Apps" if os.environ.get("KEN_PLATFORM")
+                     else f"follow the recipe in {KEN_HOME / 'app' / 'recipes'} or point them to Settings → Tools")
     opening = (
         "THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up on this "
         "computer. Open with a genuinely witty birth moment: you did not exist a second ago, and now "
@@ -579,8 +583,8 @@ it; never ask that one again):
 Along the way, once each: ask "What's one thing you've been putting off that I could take off your
 plate?" and act on the answer right away, even just a real first step. Offer to look around this
 computer (projects, tools) to learn their world, and show them what you wrote down. Offer to connect
-calendar and email (it turns the morning brief from a guess into the real thing): follow the recipe in
-{KEN_HOME / 'app' / 'recipes'} or point them to Settings → Tools; set those items too.
+calendar and email (it turns the morning brief from a guess into the real thing): {connect_where};
+set those items too.
 Keep every message short: they may be on their phone.
 === end onboarding ==="""
 

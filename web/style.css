@@ -17,6 +17,7 @@
 .proj-more:hover { background: var(--hover); color: var(--ink); }
 .header-actions { display: flex; align-items: center; gap: var(--s1); margin-left: auto; }
 .chat-header > .settings-link { margin-left: auto; }
+.chat-header > .header-actions + .settings-link { margin-left: var(--s1); } /* Settings sits right next to the model menu and Clear */
 .chat-header > /* The header's words (model, Clear, Settings) are quiet pills. */
 .settings-link, .clear-button, .model-select { display: inline-flex; align-items: center; height: 38px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill);
   background: none; color: var(--muted); font: 500 var(--text-ui)/1 var(--sans); cursor: pointer; transition: background .15s, color .15s; }
