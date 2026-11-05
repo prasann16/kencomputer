@@ -1624,13 +1624,15 @@ function App() {
   }, []);
   useEffect(() => { setModel(null); loadModel(); load(); loadProjectMeta(pid); }, [pid]);
   useEffect(() => {
-    let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer;
+    let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer, heard = Date.now();
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
-      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events');
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
       ws.onopen = () => { setOnline(true); retry = 0; refresh(); };
       ws.onmessage = (e) => {
+        heard = Date.now();
         const ev = JSON.parse(e.data), project = ev.project;
+        if (ev.type === 'ping') return;
         if (ev.type === 'hello') { if (rev === null) rev = ev.rev; else if (ev.rev !== rev) location.reload(); return; }
         if (ev.type === 'coffee') { setAwake(ev.awake); window.kenDesktop?.coffeeChanged?.(); return; }
         if (ev.type === 'chat.runtime') { if(project===pidRef.current)loadModel(); return; }
@@ -1656,6 +1658,8 @@ function App() {
       ws.onclose = () => { setOnline(false); if (!closed && !resting) timer = setTimeout(connect, Math.min(8000, 500 * 2 ** retry++)); };
     };
     connect();
+    // Ken pings every 20 seconds: a line that's gone quiet for 50 was cut on the way without a close, so start again.
+    const watchdog = setInterval(() => { if (!closed && !resting && ws && ws.readyState === WebSocket.OPEN && Date.now() - heard > 50000) { const dead = ws; dead.onclose = null; dead.close(); setOnline(false); connect(); } }, 10000);
     // Ken in the cloud: hang up after 3 minutes in the background so its computer can sleep; pick up again on return.
     const visibility = () => {
       if (!HOSTED) return;
@@ -1664,7 +1668,7 @@ function App() {
       else if (resting) { resting = false; retry = 0; connect(); loadMeta(); }
     };
     document.addEventListener('visibilitychange', visibility);
-    return () => { closed = true; clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility); if (ws) ws.close(); };
+    return () => { closed = true; clearInterval(watchdog); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility); if (ws) ws.close(); };
   }, []);
   const send = async (text, files, retryId, target = pid) => {
     if (!retryId && !files.length && await command(text)) return;

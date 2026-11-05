@@ -938,7 +938,12 @@ class WebApp:
 
         async def pump():
             while True:
-                event = await q.get()
+                # A quiet minute still says "ping" every 20 seconds, so the app can tell a live line from one cut
+                # silently on the way (a proxy that never passes on the close), and reconnect.
+                try:
+                    event = await asyncio.wait_for(q.get(), 20)
+                except asyncio.TimeoutError:
+                    event = {"type": "ping"}
                 await ws.send_str(json.dumps(event, default=str))
 
         pumping = asyncio.create_task(pump())
