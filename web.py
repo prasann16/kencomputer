@@ -347,6 +347,18 @@ class WebApp:
             return _json({"error": "invalid"}, 400)
         return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
 
+    async def credits_low(self, request):
+        """Hosted Ken: its host says most of the Ken AI credits are used (once per threshold): a note in the chat."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            used = int((await request.json()).get("used_pct", 80))
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        self.engine.credits_low(max(1, min(used, 100)))
+        return _json({"ok": True})
+
     async def big_file(self, request):
         """Hosted Ken: a file too big for Telegram, sent here instead (bot.py's too_big link). GET: what the link is
         waiting for. POST {"file": <name uploaded into Home's files>}: it's here; Ken carries on in Telegram."""
@@ -1048,6 +1060,7 @@ class WebApp:
         r.add_delete("/api/phone", self.phone_change)
         r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/apps/connected", self.app_connected)
+        r.add_post("/api/credits/low", self.credits_low)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)

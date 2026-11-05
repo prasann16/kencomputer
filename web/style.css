@@ -123,6 +123,7 @@
 .file-arrow { margin-left: auto; padding-left: var(--s5); color: var(--faint); }
 /* After a reply that failed: Try again, or connect an AI. */
 .msg-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: calc(-1 * var(--s3)); }
+.msg + .credit-choices { margin-top: var(--s3); }  /* under a note, not pulled up into it */
 .delivery { margin-top: 6px; font-size: var(--text-xs); color: var(--muted); text-align: right; }
 .delivery .text-action { font-size: var(--text-xs); }
 /* Ken is thinking: a dot and a word, kept in view at the bottom. Its row is kept when idle, so nothing shifts. */

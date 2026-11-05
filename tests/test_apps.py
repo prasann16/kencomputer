@@ -111,3 +111,18 @@ async def test_settings_lists_connected_apps(engine, aiohttp_client, monkeypatch
     monkeypatch.setattr(apps, "fetch", broken)
     r = await client.get("/api/apps")
     assert r.status == 502 and (await r.json())["error"] == "Couldn't check your apps just now."
+
+
+async def test_credits_running_low_is_one_note_with_the_three_ways_on(engine, aiohttp_client, on_host):  # noqa: F811
+    app, client = await signed_in(engine, aiohttp_client)
+    assert (await client.post("/api/credits/low", json={"used_pct": 80})).status == 200
+    note = engine.messages(HOME, limit=5)[-1]
+    assert note["role"] == "ken" and note["action"] == "credits" and note["note"] is True and not note.get("error")
+    assert note["text"].startswith("You've used 80% of your Ken AI credits.")
+    assert (await client.post("/api/credits/low", data="x")).status == 400
+
+
+async def test_credits_note_is_only_for_ken_in_the_cloud(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
+    app, client = await signed_in(engine, aiohttp_client)
+    monkeypatch.delenv("KEN_KEEPALIVE_URL")
+    assert (await client.post("/api/credits/low", json={"used_pct": 80})).status == 404

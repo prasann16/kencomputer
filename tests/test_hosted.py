@@ -381,7 +381,7 @@ def test_included_ai_running_out_is_said_plainly(monkeypatch, clean_ai):
     included(monkeypatch)
     onboarding.use_included_ai()
     msg = friendly_error(Exception('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Out of included AI"}}'), "claude")
-    assert msg == "You've used this month's Ken AI credits."
+    assert msg == "You've used your Ken AI credits."
     monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
     assert "included" not in friendly_error(Exception("API Error: 402 Out of included AI"), "claude")
 

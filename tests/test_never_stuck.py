@@ -133,8 +133,8 @@ def test_included_ai_failures_never_blame_the_person(monkeypatch):
     for e in (AIUnavailable(401, "authentication_failed"), RuntimeError("Not logged in · Please run /login"),
               AIUnavailable(529, "overloaded"), AIUnavailable(None, "unknown"), NoAnswer()):
         assert explain_failure(e, "claude") == ("Ken couldn't reach its AI just now.", "retry")
-    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used this month's Ken AI credits.", "connect")
-    assert explain_failure(RuntimeError("API Error: 402 Out of included AI"), "claude")[1] == "connect"
+    assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used your Ken AI credits.", "credits")
+    assert explain_failure(RuntimeError("API Error: 402 Out of included AI"), "claude")[1] == "credits"
 
 
 # What Claude Code, the SDKs and the services really say when things fail: none of it may reach a person.
@@ -172,7 +172,7 @@ def test_no_raw_error_wording_ever(monkeypatch, hosted, brain):
     for e in errors:
         text, action = explain_failure(e, brain)
         assert clean(text), (str(e), text)
-        assert action in ("retry", "connect", "reconnect")
+        assert action in ("retry", "credits", "connect", "reconnect")
 
 
 class SilentSession(Session):
@@ -328,7 +328,7 @@ async def test_what_reaches_the_chat_screen_is_always_plain(monkeypatch, tmp_pat
     assert len(shown) == len(RAW)
     for m in shown:
         assert clean(m["text"]), m["text"]
-        assert m["action"] in ("retry", "connect", "reconnect")
+        assert m["action"] in ("retry", "credits", "connect", "reconnect")
 
 
 async def test_ken_speaking_first_that_fails_leaves_no_error_without_a_question(flaky):

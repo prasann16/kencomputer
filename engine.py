@@ -83,8 +83,9 @@ AI_WORDS = ("api", "login", "auth", "unauthorized", "forbidden", "overloaded", "
 
 
 def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
-    """A failed reply in one plain sentence, and the one thing to do about it: "retry" (Try again), "connect"
-    (connect their own Claude or ChatGPT) or "reconnect" (their own account stopped working). Never the raw error:
+    """A failed reply in one plain sentence, and the one thing to do about it: "retry" (Try again), "credits" (Ken AI
+    credits ran out: connect their own Claude or ChatGPT, or pick a plan), "connect" (connect their own Claude or
+    ChatGPT) or "reconnect" (their own account stopped working). Never the raw error:
     no Claude Code or SDK wording, status codes or model ids. The real error goes to the log."""
     from onboarding import included_ai_in_use
 
@@ -104,7 +105,7 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
 
     if included:
         if status == 402 or "402" in codes or has("ken ai credits", "included ai", "billing", "credit balance"):
-            return "You've used this month's Ken AI credits.", "connect"
+            return "You've used your Ken AI credits.", "credits"
         if ai:  # refused, down, unreachable or silent: none of it is theirs to fix
             return "Ken couldn't reach its AI just now.", "retry"
         return "Something went wrong on Ken's side.", "retry"
@@ -461,6 +462,13 @@ class Engine:
         if asked is None:
             return None
         return self.send_message(pid, asked.get("text", ""), asked.get("files") or [], log_user=False, via="app")
+
+    def credits_low(self, used_pct: int) -> dict:
+        """Hosted Ken: its host says most of the Ken AI credits are used. One note in Home's chat, with the three ways on
+        (the web app shows them as buttons): their own Claude, their own ChatGPT, or a plan with more credits."""
+        text = (f"You've used {used_pct}% of your Ken AI credits. To keep going without a break, connect your own Claude "
+                "or ChatGPT, or pick a plan with more Ken AI credits.")
+        return self.log_message(HOME, "ken", text, action="credits", note=True)
 
     async def app_connected(self, slug: str, name: str) -> str | None:
         """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
