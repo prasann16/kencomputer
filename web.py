@@ -450,7 +450,24 @@ class WebApp:
             data = await asyncio.to_thread(apps.fetch)
         except Exception:
             return _json({"error": "Couldn't check your apps just now."}, 502)
-        return _json({"connected": data.get("connected", []), "apps_url": data.get("apps_url", "")})
+        # Each app's accounts, named (apps.with_accounts): the apps tools are asked here, never in the browser.
+        connected = await asyncio.to_thread(apps.with_accounts, data.get("connected", []))
+        return _json({"connected": connected, "apps_url": data.get("apps_url", "")})
+
+    async def apps_disconnect(self, request):
+        """Hosted Ken's Settings → Apps: disconnect one account ({"app", "account"}: the apps tools' id from /api/apps)."""
+        import apps
+        if not apps.hosted() or not apps.mcp_ready():
+            return _json({"error": "not found"}, 404)
+        b = await self._body(request)
+        slug, account = str(b.get("app", "")), str(b.get("account", ""))
+        if not re.fullmatch(r"[a-z0-9_-]{1,60}", slug) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", account):
+            return _json({"error": "invalid"}, 400)
+        try:
+            await asyncio.to_thread(apps.disconnect, slug, account)
+        except Exception:
+            return _json({"error": "Couldn't disconnect that account just now. Try again in a minute."}, 502)
+        return _json({"ok": True})
 
     async def phone_handoff(self, request):
         """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
@@ -1067,6 +1084,7 @@ class WebApp:
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)
+        r.add_post("/api/apps/disconnect", self.apps_disconnect)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

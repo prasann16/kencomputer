@@ -138,12 +138,19 @@ def apps_mcp() -> dict:
     return {"apps": {"type": "http", "url": url, "headers": {"Authorization": f"Bearer {token}"}}}
 
 
+# Two Gmails and the like: the apps tools take `account` on each COMPOSIO_MULTI_EXECUTE_TOOL item (apps.py).
+MULTI_ACCOUNT = (
+    "When an app has more than one account connected, always pass `account` on every apps call for it (the id "
+    "listed for that account), never leave it to a default: pick the one they mean (\"my work Gmail\", an address, a "
+    "name), and if it isn't clear which, ask them once, naming the accounts, then remember the answer for the chat."
+)
+
 APPS_PROMPT = (
     "APPS: the `apps` tools reach their own apps (Gmail, Google Calendar, Drive, Slack, Notion and 1,700+ more). When "
     "they ask for something in an app that isn't connected yet, use the apps tools to start the connection and "
     "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
     "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
-    "toward their plan's monthly app actions, so don't loop over hundreds of items without asking."
+    "toward their plan's monthly app actions, so don't loop over hundreds of items without asking. " + MULTI_ACCOUNT
 )
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
@@ -154,7 +161,8 @@ HOSTED_APPS_PROMPT = (
     "an authorization link from the apps tools themselves), and stop there. You'll get a note when they've connected "
     "it; then carry on with what they asked. Before you send, post, delete or change anything in an app, show them "
     "exactly what you'll do and wait for a yes. Each app action counts toward their plan's monthly app actions, so "
-    "don't loop over hundreds of items without asking."
+    f"don't loop over hundreds of items without asking. `{KEN_CMD} --apps` lists each app's accounts by name with "
+    "the id to pass as `account`. " + MULTI_ACCOUNT
 )
 
 

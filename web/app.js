@@ -1172,10 +1172,14 @@ function PhoneSteps({ toast, onPaired }) {
 // /account/*.json answers on this same address. Connect goes to the app's own sign-in, which comes back here.
 function HostedApps() {
   const [data, setData] = useState(null), [error, setError] = useState(''), [q, setQ] = useState(''), [busy, setBusy] = useState('');
+  // Each connected app's accounts, named by Ken's computer (it asks the apps themselves: /api/apps); the site's own
+  // list (no names, its own ids) stands in when Ken can't be asked.
+  const [mine, setMine] = useState(null), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
   const say = new URLSearchParams(location.search);
   const load = (query = q) => { setError(''); fetch('/account/apps.json' + (query ? '?q=' + encodeURIComponent(query) : ''), { credentials: 'same-origin' })
     .then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load your apps just now.")); };
-  useEffect(() => { load(''); }, []);
+  const loadMine = () => api('/api/apps', { timeout: 60000 }).then((r) => setMine(r.connected)).catch(() => setMine(false));
+  useEffect(() => { load(''); loadMine(); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
     setBusy(slug); setError('');
@@ -1186,10 +1190,33 @@ function HostedApps() {
       location.href = body.url;  // the app's own sign-in; it comes back to Settings → Apps
     } catch (e) { setError(e.message); setBusy(''); }
   };
+  const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
+    .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
+  const connected = mine ? mine.filter((a) => a.accounts?.length) : mine === false ? fromSite : [];
+  const disconnect = async (app, account) => {
+    setBusy(`off:${account.id}`); setProblem('');
+    try {
+      if (account.via === 'apps') await api('/api/apps/disconnect', { json: { app: app.slug, account: account.id } });
+      else {
+        const r = await fetch('/account/apps/disconnect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ id: account.id }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't disconnect that account just now.");
+      }
+      setAsking(''); await loadMine(); load();
+    } catch (e) { setProblem(e.message); }
+    finally { setBusy(''); }
+  };
   return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 1,700+ more apps. Ken asks before it sends or changes anything.</p>
     ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
     ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
-    ${data?.connected?.length > 0 && html`<div class="conn-list">${data.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`}
+    ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
+    ${connected.length > 0 && html`<div class="app-accounts">${connected.map((a) => html`<div class="app-group">
+      <div class="app-head"><img src=${'/app-logos/' + a.slug} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
+      ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i><span class="app-account-name">${x.label}</span></span>${asking === x.id
+        ? html`<span class="app-confirm"><button class="btn sm" disabled=${!!busy} onClick=${() => disconnect(a, x)}>${busy === 'off:' + x.id ? 'Disconnecting…' : 'Disconnect'}</button><button class="text-action" disabled=${!!busy} onClick=${() => setAsking('')}>Keep</button></span>`
+        : html`<button class="text-action" disabled=${!!busy} aria-label=${`Disconnect ${a.name}: ${x.label}`} onClick=${() => setAsking(x.id)}>Disconnect</button>`}</div>`)}
+      <button class="app-add" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
+    </div>`)}</div>`}
+    ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
       : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected

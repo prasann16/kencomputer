@@ -476,3 +476,21 @@ ol.conn-steps li { margin: 2px 0; }
 .sp-tabs button.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .sp-tabs button:hover:not(.on) { color: var(--ink); }
 .settings-page .sp-section h2 { display: none; } /* the tab already names the section */
+
+/* Hosted Settings → Apps: each connected app with its accounts, Disconnect on each, and Add another account. */
+.app-accounts { display: flex; flex-direction: column; gap: var(--s3); margin-bottom: var(--s4); }
+.app-group { display: flex; flex-direction: column; padding: var(--s2) var(--s5); border-radius: var(--r-card); background: var(--well); }
+.app-head { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 0 var(--s2); font-size: var(--text-md); font-weight: 600; }
+.app-head img { border-radius: 6px; }
+.app-head small { margin-left: auto; font-size: var(--text-sm); font-weight: 400; color: var(--muted); }
+.app-account { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); min-height: 48px; padding: var(--s2) 0; border-top: 1px solid var(--line-strong); font-size: var(--text-md); }
+.app-account > .conn-on { flex: 1; min-width: 0; }
+.app-account-name { min-width: 0; overflow-wrap: anywhere; }
+.app-account .text-action { min-height: var(--control-sm); padding: 0 14px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1.5px var(--ink); color: var(--ink); text-decoration: none; }
+.app-confirm { display: inline-flex; align-items: center; gap: var(--s2); }
+.app-confirm .btn { background: var(--danger); color: var(--bg); box-shadow: none; }
+.app-confirm .text-action { box-shadow: none; }
+.app-add { display: inline-flex; align-items: center; gap: var(--s2); align-self: flex-start; min-height: 44px; padding: 0; border: 0; border-top: 1px solid var(--line-strong); width: 100%; background: none; color: var(--ink-2); font: inherit; font-size: var(--text-md); cursor: pointer; }
+.app-add:hover { color: var(--ink); }
+.app-add:disabled { opacity: .5; cursor: default; }
+@media (max-width: 600px) { .app-account:has(.app-confirm) > .conn-on { flex-basis: 100%; } .app-confirm { margin-left: auto; } }
