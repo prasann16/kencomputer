@@ -335,6 +335,9 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .plan-usage .low .bar i { background: var(--danger); }
 .plan-usage .low .meter-top span:last-child { color: var(--danger); }
 .plan-usage > .text-action { align-self: flex-start; margin-top: var(--s4); }
+.plan-added { margin: var(--s2) 0 0; font-size: var(--text-md); color: var(--muted); }
+.plan-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
+.plan-actions .text-action { min-height: var(--control-sm); padding: 0 14px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1.5px var(--ink); font-size: var(--text-ui); font-weight: 500; text-decoration: none; }
 /* Tools: a grey card each (Browser, Email, Calendar…), its icon, what it does, Connect. */
 .tool-list { display: flex; flex-direction: column; gap: 10px; }
 .conn { padding: var(--s4) var(--s5); border-radius: var(--r-card); background: var(--well); }
