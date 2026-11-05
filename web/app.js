@@ -948,8 +948,7 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
 // Ken on the phone, from the chat header: a quiet phone that opens Settings → Telegram (Phone on the Mac); filled once
 // it's linked. linked: true / false, or null while unknown (then it isn't shown).
 function PhoneButton({ linked, onOpen }) {
-  const what = HOSTED ? 'Telegram' : 'your phone';
-  const label = linked ? (HOSTED ? 'Telegram connected' : 'Phone connected') : `Connect ${what}`;
+  const label = linked ? 'Phone connected' : 'Connect your phone';
   return html`<button class=${'phone-link' + (linked ? ' on' : '')} aria-label=${label} title=${linked ? `${label}. Talk to Ken there too.` : `Talk to Ken from ${what}`} onClick=${onOpen}>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
 }
@@ -1351,7 +1350,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', HOSTED ? 'Telegram' : 'Phone'], ['tools', 'Tools'], ['appearance', 'Appearance'], ['privacy', 'Privacy']];
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['appearance', 'Appearance'], ['privacy', 'Privacy']];
   const wanted = tab && tab.startsWith('connect-') ? 'claude' : tab;
   const current = wanted === 'feedback' || tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
@@ -1377,7 +1376,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
-  ${section('phone', HOSTED ? 'Telegram' : 'Phone', HOSTED ? html`<${HostedTelegram}/>`
+  ${section('phone', 'Phone', HOSTED ? html`<${HostedTelegram}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
   ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
   ${section('appearance', 'Appearance', html`<div class="segmented" role="radiogroup" aria-label="Appearance">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div>`)}
