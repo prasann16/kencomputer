@@ -923,6 +923,9 @@ function VoiceMode({ onClose }) {
 const modelName = (id) => { if (!id.startsWith('claude-')) return id; const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
 
 function ModelPicker({ model, catalog, disabled, onChange }) {
+  // On Ken AI credits Ken runs on one model only (Sonnet): the menu says so, with nothing else to pick.
+  if (model.credits) return html`<select class="model-select" aria-label="Brain and model" title="Ken AI credits run on Sonnet. Connect your own Claude or ChatGPT in Settings for other models." disabled=${disabled}>
+    <option>Ken AI credits · ${modelName(model.current || 'claude-sonnet').split(' ')[0]}</option></select>`;
   return html`<select class="model-select" aria-label="Brain and model" title="Choose a brain and model for this chat" disabled=${disabled} value=${JSON.stringify([model.backend, model.current || ''])} onChange=${(e) => { const [backend, model] = JSON.parse(e.target.value); onChange({backend, model}); }}>
     ${model.providers.map((backend) => {
       const label = backend === 'codex' ? 'Codex' : 'Claude';

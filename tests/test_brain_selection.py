@@ -103,7 +103,7 @@ async def test_runtime_api_persists_choices_and_rejects_invalid_requests(engine,
     await client.get(f"/login?token={app.token}", allow_redirects=False)
     r = await client.put(url, json={"backend": "codex", "model": "gpt-test"})
     assert r.status == 200
-    assert await r.json() == {"backend": "codex", "current": "gpt-test", "choices": ["gpt-test"], "providers": ["claude", "codex"]}
+    assert await r.json() == {"backend": "codex", "current": "gpt-test", "choices": ["gpt-test"], "providers": ["claude", "codex"], "credits": False}
     r = await client.get("/api/models")
     assert r.status == 200
     assert await r.json() == {"claude": ["claude-test"], "codex": ["gpt-test"]}

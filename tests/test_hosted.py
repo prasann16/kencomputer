@@ -559,3 +559,67 @@ def test_update_gets_through_a_code_folder_that_changed_here(tmp_path):
     assert git("rev-parse", "HEAD", cwd=app) == git("rev-parse", "HEAD", cwd=origin)
     assert "reset it to origin/hosted-agent37" in r.stdout
     assert (tmp_path / "home" / ".ken" / "memory" / "people.md").read_text() == "theirs\n"  # their data untouched
+
+
+# ------------------------------------------------------------------ the model menu follows what Ken runs on
+
+class _Accounts:
+    def __init__(self, claude=False, codex=False, included=False):
+        self.p = {"claude": {"connected": claude or included, "how": "included" if included else "account" if claude else ""},
+                  "codex": {"connected": codex}}
+
+    def status(self):
+        return {"providers": self.p}
+
+
+async def test_on_ken_ai_credits_the_menu_is_sonnet_only(monkeypatch, clean_ai, tmp_path):
+    import bot
+    included(monkeypatch)
+    monkeypatch.setenv("KEN_INCLUDED_AI_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setattr(bot, "ACCOUNTS", _Accounts(included=True))
+    monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    (tmp_path / "model").write_text("claude-opus-5-5\n")  # chosen before, on their own Claude
+    assert onboarding.use_included_ai()
+    assert await bot.model_choices("claude") == ["claude-sonnet-5-5"]
+    assert await bot.model_choices("codex") == []  # ChatGPT isn't connected: none of its models
+    assert bot.usable_brains() == ["claude"]
+    assert bot.active_model("claude") == "claude-sonnet-5-5"  # the saved Opus quietly gives way
+    reply = await bot.model("opus")
+    assert reply["reply"].startswith("Ken AI credits run on Sonnet.") and reply["choices"] == ["claude-sonnet-5-5"]
+    assert (tmp_path / "model").read_text() == "claude-opus-5-5\n"  # kept for when their own Claude is back
+
+
+async def test_their_own_accounts_list_their_own_models(monkeypatch, clean_ai, tmp_path):
+    import bot
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "own")
+    monkeypatch.setattr(bot, "ACCOUNTS", _Accounts(claude=True))
+    monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    monkeypatch.setattr(bot, "models_file", lambda backend: tmp_path / f"models-{backend}")
+    (tmp_path / "models-claude").write_text("claude-opus-5-5\nclaude-sonnet-5-5\n")
+
+    async def refresh(backend=None):
+        pass
+    monkeypatch.setattr(bot, "refresh_models_file", refresh)
+    assert bot.credits_model("claude") == ""
+    assert await bot.model_choices("claude") == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    assert await bot.model_choices("codex") == []
+    monkeypatch.setattr(bot, "ACCOUNTS", _Accounts(claude=True, codex=True))
+    (tmp_path / "models-codex").write_text("gpt-luna\n")
+    assert await bot.model_choices("codex") == ["gpt-luna"]
+    assert bot.usable_brains() == ["claude", "codex"]
+
+
+async def test_the_runtime_says_credits_and_only_usable_brains(engine):
+    from engine import HOME
+    first = next(iter(engine.brains.values()))
+    engine.brains.update({"claude": first, "codex": first})
+    engine.kv_set(f"backend:{HOME}", "claude")
+    engine.usable_brains = lambda: ["claude"]
+    engine.credits_model = lambda backend: "claude-sonnet-5-5" if backend == "claude" else ""
+
+    async def choices(backend):
+        return ["claude-sonnet-5-5"] if backend == "claude" else []
+    engine.model_choices = choices
+    r = await engine.runtime(HOME)
+    assert r == {"backend": "claude", "current": "claude-sonnet-5-5", "choices": ["claude-sonnet-5-5"], "providers": ["claude"], "credits": True}
+    assert engine.model_for(HOME) == "claude-sonnet-5-5"

@@ -296,6 +296,8 @@ class Engine:
         self.brain = brain
         self.brains = brains or {brain.name: brain}
         self.model_choices = None  # async backend -> available model IDs
+        self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
+        self.credits_model = None  # backend -> the model Ken AI credits run on ("" when that backend isn't on them)
         self.agents_dir = self.home / "agents"
         self.requests_dir = self.home / "requests"
         self.db = sqlite3.connect(self.home / "app.db", isolation_level=None, check_same_thread=False)
@@ -1195,14 +1197,21 @@ class Engine:
             return ""
 
     def model_for(self, pid: str) -> str:
+        # On Ken AI credits only their model runs: a model chosen before (say Opus) quietly gives way to it.
+        if self.credits_model and (credits := self.credits_model(self.backend(pid))):
+            return credits
         return self.model_choice(pid) or getattr(self.brain_for(pid), "model_fn", lambda: "")()
 
     async def runtime(self, pid: str) -> dict:
+        """The chat's brain and model, and what the model menu may offer: only the AI Ken can run on now (never models
+        from an account that isn't connected), and on Ken AI credits only their model ("credits": true)."""
         backend = self.backend(pid)
-        current = self.model_choice(pid)
+        credits = self.credits_model(backend) if self.credits_model else ""
+        current = credits or self.model_choice(pid)
         choices = await self.model_choices(backend) if self.model_choices else []
+        usable = self.usable_brains() if self.usable_brains else list(self.brains)
         return {"backend": backend, "current": current, "choices": choices,
-                "providers": list(self.brains)}
+                "providers": [b for b in self.brains if b in usable] or [backend], "credits": bool(credits)}
 
     async def set_runtime(self, pid: str, *, backend=None, model=None) -> None:
         if pid != HOME:

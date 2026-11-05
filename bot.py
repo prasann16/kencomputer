@@ -1651,6 +1651,8 @@ async def start_engine() -> WebApp | None:
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
                                           **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
+    ENGINE.usable_brains = usable_brains
+    ENGINE.credits_model = credits_model
     ENGINE.tools_prompt = lambda only: "\n\n".join(
         x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
     def on_home_message(role: str, text: str) -> None:
@@ -1920,11 +1922,29 @@ def set_model(name: str, backend=None) -> None:
     crash.track("model_changed", model=name)
 
 
+# What Ken AI credits run on: Sonnet (the host's model; Opus costs ~5x, and ChatGPT models can't run on credits).
+CREDITS_MODEL = "claude-sonnet-5-5"
+
+
+def credits_model(backend=None) -> str:
+    """The model Ken AI credits run on, when this backend is on them now; "" otherwise."""
+    backend = backend or ENGINE.backend(HOME)
+    return (included_ai_model() or CREDITS_MODEL) if backend == "claude" and included_ai_in_use() else ""
+
+
+def usable_brains() -> list[str]:
+    """The AI Ken can run on now: their own Claude or ChatGPT when connected, or Claude on Ken AI credits."""
+    if ACCOUNTS is None:
+        return list(BRAINS)
+    providers = ACCOUNTS.status().get("providers", {})
+    return [b for b in BRAINS if providers.get(b, {}).get("connected")]
+
+
 def active_model(backend=None) -> str:
     """The chosen model, else the newest Opus the account offers (the list is newest first)."""
     backend = backend or ENGINE.backend(HOME)
-    if backend == "claude" and included_ai_in_use() and included_ai_model():
-        return included_ai_model()  # the plan's included AI runs on the model the plan comes with
+    if credits := credits_model(backend):
+        return credits  # on Ken AI credits only their model runs; a model saved before quietly gives way
     try:
         chosen = (KEN_HOME / ("model-codex" if backend == "codex" else "model")).read_text().strip()
     except OSError:
@@ -1941,6 +1961,11 @@ def available_models(backend=None) -> list[str]:
 
 
 async def model_choices(backend):
+    # On Ken AI credits: their one model. An account that isn't connected: nothing (never its models).
+    if credits := credits_model(backend):
+        return [credits]
+    if ACCOUNTS is not None and backend not in usable_brains():
+        return []
     # The list comes from the account's own /v1/models; refresh it daily as models change.
     path = models_file(backend)
     stale = not path.exists() or time.time() - path.stat().st_mtime > 86400
@@ -1954,6 +1979,9 @@ async def model(arg: str = "") -> dict:
     backend = ENGINE.backend(HOME)
     models = await model_choices(backend)
     want = arg.strip().lower()
+    if credits_model(backend):
+        return {"reply": "Ken AI credits run on Sonnet. For other models, connect your own Claude or ChatGPT in Settings.",
+                "choices": models, "current": active_model(backend)}
     if not want:
         return {"reply": f"Model — current: {active_model(backend) or 'default'}", "choices": models, "current": active_model(backend)}
     match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
