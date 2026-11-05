@@ -1,12 +1,12 @@
-// The standard graphics. Each takes its own props from graphics[].props in props.json.
-// Sheet and full graphics sit on paper (ink text, serif headlines, hand-drawn marks); "over" ones float on the video.
-// In any text prop, *starred words* are set in the accent (style.accentFont, the serif italic by default).
-import { Circle, Highlight, StrikeThrough, Underline } from "@remotion/rough-notation";
+// EXAMPLES of graphics built from the toolbox, not a set to drop in: each takes every visual choice (fonts, colours,
+// marks, panel or not) from the reel's design, and shows one way to lay its idea out. Write the reel's own instead
+// when its design calls for something else. Each takes its props from graphics[].props in props.json.
+// In any text prop, *starred words* are set in the accent (style.accentFont and accent).
 import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { pop, rise, useEnter } from "../anim";
 import { SAFE, softShadow, useTheme } from "../theme";
-import { accentType, Area, Heading, Kicker, paperStyle, Rich, useArea } from "./layout";
+import { accentType, Area, Heading, Kicker, paperStyle, Rich, ThemedMark, useArea } from "./layout";
 
 // 0 → 1 over `frames`, starting `delay` frames in: how far a hand-drawn mark has been drawn.
 const useDraw = (delay: number, frames = 14) => {
@@ -43,9 +43,9 @@ export const Stat = ({ value, prefix = "", suffix = "", label, note }: { value: 
         {suffix}
       </div>
       <div style={{ ...rise(useEnter(6)), fontSize: area.kind === "sheet" ? 54 : 60, fontWeight: 600, lineHeight: 1.15, alignSelf: "flex-start" }}>
-        <Underline progress={useDraw(14)} color={theme.accent} strokeWidth={4}>
+        <ThemedMark kind="underline" progress={useDraw(14)} strokeWidth={4}>
           <Rich text={label} />
-        </Underline>
+        </ThemedMark>
       </div>
       {note && <div style={{ ...rise(useEnter(12)), fontSize: 32, opacity: 0.6 }}>{note}</div>}
     </Area>
@@ -84,9 +84,9 @@ const ListRow = ({ delay, size, accent, mark, children }: { delay: number; size:
   return (
     <div style={{ ...rise(enter, 24), display: "flex", gap: 26, alignItems: "baseline" }}>
       <div style={{ flex: "none", width: size * 1.1, textAlign: "center", ...accentType(theme, true), fontSize: size * 1.25, color: accent }}>
-        <Circle progress={useDraw(delay + 4, 12)} color={accent} strokeWidth={3} padding={{ top: 2, bottom: 2, left: 8, right: 8 }}>
+        <ThemedMark kind="circle" progress={useDraw(delay + 4, 12)} color={accent} strokeWidth={3}>
           {mark}
-        </Circle>
+        </ThemedMark>
       </div>
       <div style={{ fontSize: size, fontWeight: 600, lineHeight: 1.15 }}>
         <Rich text={children} />
@@ -102,17 +102,17 @@ export const Compare = ({ title, left, right }: { title?: string; left: { label:
   const size = area.kind === "sheet" ? 46 : 54;
   const column = (side: { label: string; items: string[] }, isNew: boolean, delay: number) => (
     <div style={{ ...rise(useEnter(delay)), flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ ...accentType(theme, isNew), fontSize: size * 1.6, color: isNew ? theme.accent : theme.ink, opacity: isNew ? 1 : 0.55 }}>{side.label}</div>
+      <div style={{ ...accentType(theme, isNew), fontSize: size * 1.6, color: isNew ? theme.accent : "inherit", opacity: isNew ? 1 : 0.55 }}>{side.label}</div>
       {side.items.map((item, i) => (
         <div key={i} style={{ fontSize: size, fontWeight: 600, lineHeight: 1.2, opacity: isNew ? 1 : 0.55 }}>
           {isNew ? (
-            <Highlight progress={useDraw(delay + 10 + i * 6)} color={`${theme.accent}55`} padding={{ top: 0, bottom: 0, left: 6, right: 6 }}>
+            <ThemedMark kind="marker" progress={useDraw(delay + 10 + i * 6)} color={`${theme.accent}55`}>
               {item}
-            </Highlight>
+            </ThemedMark>
           ) : (
-            <StrikeThrough progress={useDraw(delay + 8 + i * 6)} color={theme.ink} strokeWidth={3}>
+            <ThemedMark kind="strike" meaning progress={useDraw(delay + 8 + i * 6)} color={area.kind === "over" ? theme.text : theme.ink} strokeWidth={3}>
               {item}
-            </StrikeThrough>
+            </ThemedMark>
           )}
         </div>
       ))}
@@ -156,13 +156,14 @@ export const Bars = ({ title, unit = "", bars }: { title?: string; unit?: string
             <div key={i}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: size, fontWeight: 600, marginBottom: 6 }}>
                 <span>{bar.label}</span>
-                <span style={{ ...accentType(theme), fontSize: size * 1.3, color: top ? theme.accent : theme.ink }}>
+                <span style={{ ...accentType(theme), fontSize: size * 1.3, color: top ? theme.accent : "inherit" }}>
                   {Math.round(bar.value * grow).toLocaleString("en-US")}
                   {unit}
                 </span>
               </div>
-              <div style={{ height: size * 0.8, borderRadius: 4, background: `${theme.ink}14` }}>
-                <div style={{ height: "100%", width: `${(bar.value / max) * 100 * grow}%`, borderRadius: 4, background: top ? theme.accent : theme.ink }} />
+              <div style={{ position: "relative", height: size * 0.8 }}>
+                <div style={{ position: "absolute", inset: 0, background: "currentColor", opacity: 0.14 }} />
+                <div style={{ position: "relative", height: "100%", width: `${(bar.value / max) * 100 * grow}%`, background: top ? theme.accent : "currentColor" }} />
               </div>
             </div>
           );
@@ -188,7 +189,7 @@ export const Quote = ({ text, by }: { text: string; by?: string }) => {
   );
 };
 
-// A phone with a chat appearing message by message. Best full screen. { title?, name?, messages: [{from: "me" | "them", text}] }
+// A phone with a chat appearing message by message. Best as a full panel. { title?, name?, messages: [{from: "me" | "them", text}] }
 export const Chat = ({ title, name = "Chat", messages }: { title?: string; name?: string; messages: { from: "me" | "them"; text: string }[] }) => {
   const theme = useTheme();
   const { fps } = useVideoConfig();
@@ -200,8 +201,8 @@ export const Chat = ({ title, name = "Chat", messages }: { title?: string; name?
           <Rich text={title} />
         </Heading>
       )}
-      <div style={{ ...pop(useEnter(2), 0.94), width: 720, borderRadius: 60, background: theme.ink, padding: 16, boxShadow: "0 30px 60px rgba(40,30,10,0.25)", transform: `${pop(useEnter(2), 0.94).transform} rotate(-1.5deg)` }}>
-        <div style={{ borderRadius: 46, background: "#FBFAF7", overflow: "hidden", minHeight: 760, display: "flex", flexDirection: "column" }}>
+      <div style={{ ...pop(useEnter(2), 0.94), width: 720, borderRadius: 60, background: theme.ink, padding: 16, boxShadow: "0 30px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ borderRadius: 46, background: theme.paper, overflow: "hidden", minHeight: 760, display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "30px 30px 20px", textAlign: "center", fontWeight: 600, fontSize: 32, color: theme.ink, borderBottom: `1px solid ${theme.ink}22` }}>{name}</div>
           <div style={{ padding: 26, display: "flex", flexDirection: "column", gap: 16 }}>
             {messages.map((m, i) => (
@@ -230,8 +231,8 @@ const Bubble = ({ delay, mine, children }: { delay: number; mine: boolean; child
         borderRadius: 28,
         fontSize: 32,
         lineHeight: 1.3,
-        background: mine ? theme.accent : "#ECE7DC",
-        color: mine ? "#fff" : theme.ink,
+        background: mine ? theme.accent : `${theme.ink}18`,
+        color: mine ? theme.paper : theme.ink,
       }}
     >
       {children}
@@ -239,7 +240,7 @@ const Bubble = ({ delay, mine, children }: { delay: number; mine: boolean; child
   );
 };
 
-// A picture they sent (a file in the work folder), taped onto the paper, with a slow push-in. { src, caption? }
+// A picture they sent (a file in the work folder), with a slow push-in. { src, caption? }
 export const Picture = ({ src, caption }: { src: string; caption?: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -247,11 +248,8 @@ export const Picture = ({ src, caption }: { src: string; caption?: string }) => 
   const enter = useEnter(0);
   return (
     <Area style={{ alignItems: "center", gap: 34 }}>
-      <div style={{ ...pop(enter, 0.92), position: "relative", width: "100%", background: "#fff", padding: 18, boxShadow: "0 24px 50px rgba(40,30,10,0.22)", transform: `${pop(enter, 0.92).transform} rotate(1.2deg)` }}>
-        <div style={{ overflow: "hidden" }}>
-          <Img src={staticFile(src)} style={{ width: "100%", display: "block", transform: `scale(${zoom})` }} />
-        </div>
-        <div style={{ position: "absolute", top: -22, left: "50%", width: 180, height: 46, marginLeft: -90, background: "rgba(255,240,200,0.75)", transform: "rotate(-3deg)" }} />
+      <div style={{ ...pop(enter, 0.92), position: "relative", width: "100%", boxShadow: "0 24px 50px rgba(0,0,0,0.3)", overflow: "hidden" }}>
+        <Img src={staticFile(src)} style={{ width: "100%", display: "block", transform: `scale(${zoom})` }} />
       </div>
       {caption && (
         <Heading size={64} style={{ ...rise(useEnter(8)), textAlign: "center" }}>
@@ -264,13 +262,13 @@ export const Picture = ({ src, caption }: { src: string; caption?: string }) => 
 
 // --- Over the video (the speaker stays in full view) ---
 
-// Who they are: a small printed label. { name, role? }
+// Who they are: a label on the reel's panel colours. { name, role? }
 export const NameTag = ({ name, role }: { name: string; role?: string }) => {
   const theme = useTheme();
   const enter = useEnter(0);
   return (
     <div style={{ position: "absolute", left: SAFE.side, top: 1000, ...rise(enter, 24) }}>
-      <div style={{ ...paperStyle(theme.paper, theme.paperTexture), color: theme.ink, padding: "18px 28px 20px", transform: "rotate(-2deg)", boxShadow: "0 12px 30px rgba(0,0,0,0.3)" }}>
+      <div style={{ ...paperStyle(theme.paper, theme.paperTexture), color: theme.ink, padding: "18px 28px 20px", boxShadow: "0 12px 30px rgba(0,0,0,0.3)" }}>
         <div style={{ ...accentType(theme), fontSize: 68, lineHeight: 1 }}>{name}</div>
         {role && <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: 3, textTransform: "uppercase", marginTop: 8, color: theme.accent }}>{role}</div>}
       </div>
@@ -278,7 +276,7 @@ export const NameTag = ({ name, role }: { name: string; role?: string }) => {
   );
 };
 
-// A quick aside: a note stuck up in the open space above their head. { text, emoji? }
+// A quick aside in the open space above their head, on the reel's panel colours. { text, emoji? }
 export const Callout = ({ text, emoji }: { text: string; emoji?: string }) => {
   const theme = useTheme();
   const enter = useEnter(0, 12);
@@ -288,7 +286,7 @@ export const Callout = ({ text, emoji }: { text: string; emoji?: string }) => {
         style={{
           ...paperStyle(theme.paper, theme.paperTexture),
           opacity: enter,
-          transform: `scale(${interpolate(enter, [0, 1], [0.85, 1])}) rotate(${interpolate(enter, [0, 1], [-6, 1.5])}deg)`,
+          transform: `scale(${interpolate(enter, [0, 1], [0.9, 1])})`,
           color: theme.ink,
           display: "flex",
           gap: 18,
@@ -307,16 +305,16 @@ export const Callout = ({ text, emoji }: { text: string; emoji?: string }) => {
   );
 };
 
-// A few big words in the open space above their head, underlined by hand. { text } (two to five words)
+// A few big words in the open space above their head. { text } (two to five words)
 export const Punch = ({ text }: { text: string }) => {
   const theme = useTheme();
   const enter = useEnter(0, 10);
   return (
     <div style={{ position: "absolute", top: SAFE.top + 60, left: SAFE.side, right: SAFE.side }}>
-      <div style={{ ...rise(enter, 30), ...accentType(theme), fontSize: 132, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow }}>
-        <Underline progress={useDraw(8)} color={theme.accent} strokeWidth={6}>
+      <div style={{ ...rise(enter, 30), ...accentType(theme), fontSize: 132, lineHeight: 0.98, letterSpacing: -2, color: theme.text, textShadow: softShadow }}>
+        <ThemedMark kind="underline" progress={useDraw(8)} strokeWidth={6}>
           <Rich text={text} />
-        </Underline>
+        </ThemedMark>
       </div>
     </div>
   );

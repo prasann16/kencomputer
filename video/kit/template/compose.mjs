@@ -39,7 +39,7 @@ const code = codeHash();
 
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
 const PLACEMENTS = placements();
-const graphics = (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? PLACEMENTS[g.type] ?? "sheet" }));
+const graphics = (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? PLACEMENTS[g.type] ?? "over" }));
 
 // ---- Captions: what they look like at every frame, exactly as Reel.tsx's Captions draws them.
 const words = props.words ?? [];
@@ -279,7 +279,7 @@ if (!existsSync(vignette)) {
 }
 inputs.push("-loop", "1", "-i", vignette);
 const vig = 2 + clips.length + sfx.length;
-vf.push(style.grain !== false ? `[c][${vig}:v]overlay=shortest=1:format=auto,noise=c0s=4:c0f=t+u,format=yuv420p[v]` : `[c]format=yuv420p[v]`);
+vf.push(style.grain === true ? `[c][${vig}:v]overlay=shortest=1:format=auto,noise=c0s=4:c0f=t+u,format=yuv420p[v]` : `[c]format=yuv420p[v]`);
 const sfx0 = 2 + clips.length;
 const af = sfx.length
   ? [sfx.map((s, i) => `[${sfx0 + i}:a]adelay=${Math.round(s.at * 1000)}:all=1[s${i}]`).join(";") + `;[0:a]${sfx.map((_, i) => `[s${i}]`).join("")}amix=inputs=${sfx.length + 1}:normalize=0:duration=first[a]`]

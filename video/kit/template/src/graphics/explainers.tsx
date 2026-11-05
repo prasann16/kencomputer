@@ -1,11 +1,10 @@
-// Graphics that explain an idea by moving, for the one or two moments in a reel that carry it.
-// Same paper look as basics.tsx; each one does a single thing.
-import { Circle, CrossedOff } from "@remotion/rough-notation";
+// EXAMPLES of graphics that explain an idea by moving, for the one or two moments in a reel that carry it. Like
+// basics.tsx, they take every visual choice from the reel's design; each one does a single thing.
 import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { pop, rise, useEnter } from "../anim";
 import { SAFE, useTheme } from "../theme";
-import { accentType, Area, Heading, paperStyle, Rich } from "./layout";
+import { accentType, Area, Heading, paperStyle, Rich, ThemedMark } from "./layout";
 
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
@@ -51,9 +50,9 @@ export const Eaten = ({ title, eaters, apps }: { title?: string; eaters: string[
                 width: tile,
                 height: tile,
                 borderRadius: tile * 0.24,
-                background: "#FFFFFF",
+                background: theme.paper,
                 border: `2px solid ${theme.ink}22`,
-                boxShadow: "0 6px 16px rgba(40,30,10,0.12)",
+                boxShadow: "0 6px 16px rgba(0,0,0,0.12)",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
@@ -80,7 +79,7 @@ export const Eaten = ({ title, eaters, apps }: { title?: string; eaters: string[
           const scale = enter * (0.8 + eaten * 0.16 + gulp);
           return (
             <div key={j} style={{ position: "absolute", left: j * (blob + blobGap), top: blobTop, width: blob, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <div style={{ width: blob, height: blob, borderRadius: "50%", background: j === 0 ? theme.accent : theme.ink, transform: `scale(${scale})`, boxShadow: "0 10px 30px rgba(40,30,10,0.25)" }} />
+              <div style={{ width: blob, height: blob, borderRadius: "50%", background: j === 0 ? theme.accent : theme.ink, transform: `scale(${scale})`, boxShadow: "0 10px 30px rgba(0,0,0,0.25)" }} />
               <div style={{ marginTop: 18, fontSize: 34, fontWeight: 650, color: theme.ink, opacity: enter, whiteSpace: "nowrap" }}>{name}</div>
             </div>
           );
@@ -108,10 +107,10 @@ export const Obsolete = ({ title, items }: { title?: string; items: string[] }) 
           const enter = ease((frame - 3 - i * 3) / 8);
           const strike = interpolate(frame, [10 + i * step, 10 + i * step + 9], [0, 1], clamp);
           return (
-            <div key={i} style={{ ...pop(enter, 0.9), background: "#FFFFFF", border: `2px solid ${theme.ink}1f`, borderRadius: 22, padding: "26px 28px", fontSize: 44, fontWeight: 650, color: theme.ink, opacity: enter * (1 - strike * 0.45) }}>
-              <CrossedOff progress={strike} color={theme.accent} strokeWidth={5}>
+            <div key={i} style={{ ...pop(enter, 0.9), background: theme.paper, border: `2px solid ${theme.ink}1f`, borderRadius: 22, padding: "26px 28px", fontSize: 44, fontWeight: 650, color: theme.ink, opacity: enter * (1 - strike * 0.45) }}>
+              <ThemedMark kind="strike" meaning progress={strike} strokeWidth={5}>
                 {item}
-              </CrossedOff>
+              </ThemedMark>
             </div>
           );
         })}
@@ -155,9 +154,9 @@ export const Focus = ({ big, small, label }: { big: string; small: string; label
       </div>
       <div style={{ ...accentType(theme), fontSize: 64, color: `${theme.ink}66`, opacity: smallEnter }}>vs</div>
       <div style={{ ...pop(smallEnter, 0.6), display: "flex", flexDirection: "column", alignItems: "center", gap: 22, width: 330 }}>
-        <Circle progress={ring} color={theme.accent} strokeWidth={4} padding={{ top: 18, bottom: 18, left: 18, right: 18 }}>
-          <div style={{ width: 110, height: 110, background: theme.accent, transform: "rotate(45deg)", borderRadius: 14, boxShadow: "0 10px 26px rgba(40,30,10,0.25)" }} />
-        </Circle>
+        <ThemedMark kind="circle" progress={ring}>
+          <div style={{ width: 110, height: 110, background: theme.accent, transform: "rotate(45deg)", borderRadius: 14, boxShadow: "0 10px 26px rgba(0,0,0,0.25)" }} />
+        </ThemedMark>
         <div style={{ ...accentType(theme), fontSize: 64, lineHeight: 1, color: theme.ink }}>{small}</div>
         <div style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.2, textAlign: "center", color: theme.ink }}>
           <Rich text={label} />
@@ -177,13 +176,13 @@ export const Browser = ({ url }: { url: string }) => {
   const done = ease((frame - 10 - url.length * 1.6) / 6);
   return (
     <div style={{ position: "absolute", top: SAFE.top + 40, left: SAFE.side, right: SAFE.side, display: "flex", justifyContent: "center" }}>
-      <div style={{ ...rise(enter, 30), ...paperStyle("#FFFFFF", theme.paperTexture), width: 860, borderRadius: 28, boxShadow: "0 20px 50px rgba(0,0,0,0.35)", overflow: "hidden" }}>
+      <div style={{ ...rise(enter, 30), ...paperStyle(theme.paper, theme.paperTexture), width: 860, borderRadius: 28, boxShadow: "0 20px 50px rgba(0,0,0,0.35)", overflow: "hidden" }}>
         <div style={{ display: "flex", gap: 12, padding: "20px 26px 0" }}>
           {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
             <div key={c} style={{ width: 20, height: 20, borderRadius: 10, background: c }} />
           ))}
         </div>
-        <div style={{ margin: "18px 22px 24px", padding: "18px 26px", borderRadius: 18, background: "#F1EEE7", display: "flex", alignItems: "center", gap: 16, transform: `scale(${1 + Math.sin(done * Math.PI) * 0.03})` }}>
+        <div style={{ margin: "18px 22px 24px", padding: "18px 26px", borderRadius: 18, background: `${theme.ink}10`, display: "flex", alignItems: "center", gap: 16, transform: `scale(${1 + Math.sin(done * Math.PI) * 0.03})` }}>
           <span style={{ fontSize: 34, opacity: 0.45 }}>⌕</span>
           <span style={{ fontSize: 48, fontWeight: 600, color: theme.ink, letterSpacing: -0.5 }}>
             {url.slice(0, typed)}
@@ -208,7 +207,7 @@ export const Flow = ({ title, input, worker, output, time }: { title?: string; i
   const outEnter = ease((frame - fps * 2.4) / 10);
   const timerEnter = ease((frame - fps * 1.4) / 8);
   const box = 230;
-  const card = { background: "#FFFFFF", border: `2px solid ${theme.ink}1f`, borderRadius: 24, boxShadow: "0 8px 20px rgba(40,30,10,0.12)" } as const;
+  const card = { background: theme.paper, border: `2px solid ${theme.ink}1f`, borderRadius: 24, boxShadow: "0 8px 20px rgba(0,0,0,0.12)" } as const;
   const label = { marginTop: 18, fontSize: 36, fontWeight: 650, color: theme.ink, textAlign: "center" as const, whiteSpace: "nowrap" as const };
   const arrow = (k: number) => (
     <svg width={80} height={40} style={{ opacity: k, flexShrink: 0 }}>
@@ -235,11 +234,11 @@ export const Flow = ({ title, input, worker, output, time }: { title?: string; i
         </div>
         {arrow(ease((frame - fps * 0.6) / 8))}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", opacity: ease((frame - 8) / 10) }}>
-          <div style={{ width: box, height: box, borderRadius: "50%", background: theme.accent, display: "grid", placeItems: "center", boxShadow: "0 12px 30px rgba(40,30,10,0.25)", transform: `scale(${1 + Math.sin(work * Math.PI) * 0.08})`, position: "relative" }}>
+          <div style={{ width: box, height: box, borderRadius: "50%", background: theme.accent, display: "grid", placeItems: "center", boxShadow: "0 12px 30px rgba(0,0,0,0.25)", transform: `scale(${1 + Math.sin(work * Math.PI) * 0.08})`, position: "relative" }}>
             <svg width={box} height={box} style={{ position: "absolute", inset: 0, transform: `rotate(${work * 540}deg)`, opacity: work > 0 && work < 1 ? 1 : 0 }}>
-              <circle cx={box / 2} cy={box / 2} r={box / 2 - 12} fill="none" stroke="#FFFFFF" strokeWidth={6} strokeDasharray="60 500" strokeLinecap="round" />
+              <circle cx={box / 2} cy={box / 2} r={box / 2 - 12} fill="none" stroke={theme.paper} strokeWidth={6} strokeDasharray="60 500" strokeLinecap="round" />
             </svg>
-            <div style={{ ...accentType(theme), fontSize: 76, color: "#FFFFFF" }}>{worker}</div>
+            <div style={{ ...accentType(theme), fontSize: 76, color: theme.paper }}>{worker}</div>
           </div>
           <div style={{ ...label, opacity: timerEnter, color: theme.accent }}>{time ?? ""}</div>
         </div>
@@ -247,9 +246,9 @@ export const Flow = ({ title, input, worker, output, time }: { title?: string; i
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", ...pop(outEnter, 0.6) }}>
           {/* A finished vertical reel */}
           <div style={{ ...card, width: box * 0.62, height: box, borderRadius: 26, background: theme.ink, overflow: "hidden", position: "relative" }}>
-            <div style={{ position: "absolute", left: 16, right: 16, bottom: 26, height: 14, borderRadius: 7, background: "#FFFFFF" }} />
+            <div style={{ position: "absolute", left: 16, right: 16, bottom: 26, height: 14, borderRadius: 7, background: theme.paper }} />
             <div style={{ position: "absolute", left: 30, right: 30, bottom: 50, height: 14, borderRadius: 7, background: theme.accent }} />
-            <div style={{ position: "absolute", top: "34%", left: "50%", transform: "translate(-40%, -50%)", width: 0, height: 0, borderTop: "22px solid transparent", borderBottom: "22px solid transparent", borderLeft: "36px solid #FFFFFF" }} />
+            <div style={{ position: "absolute", top: "34%", left: "50%", transform: "translate(-40%, -50%)", width: 0, height: 0, borderTop: "22px solid transparent", borderBottom: "22px solid transparent", borderLeft: `36px solid ${theme.paper}` }} />
           </div>
           <div style={label}>{output}</div>
         </div>
@@ -268,10 +267,10 @@ export const Timeline = ({ title, label }: { title?: string; label?: string }) =
   const strike = interpolate(frame, [fps * 1.3, fps * 1.3 + 12], [0, 1], clamp);
   const head = interpolate(frame, [6, fps * 1.4], [40, 700], clamp);
   const tracks = [
-    { color: "#7C9CF0", clips: [[0, 180], [195, 420], [440, 600], [610, 820]] },
-    { color: "#F0B35A", clips: [[60, 260], [300, 380], [520, 760]] },
-    { color: "#8CCB8E", clips: [[0, 120], [140, 500], [540, 840]] },
-    { color: "#E58FB4", clips: [[90, 160], [250, 330], [400, 470], [690, 760]] },
+    { color: theme.accent, clips: [[0, 180], [195, 420], [440, 600], [610, 820]] },
+    { color: `${theme.accent}cc`, clips: [[60, 260], [300, 380], [520, 760]] },
+    { color: `${theme.accent}99`, clips: [[0, 120], [140, 500], [540, 840]] },
+    { color: `${theme.accent}77`, clips: [[90, 160], [250, 330], [400, 470], [690, 760]] },
   ];
   return (
     <Area>
@@ -280,22 +279,22 @@ export const Timeline = ({ title, label }: { title?: string; label?: string }) =
           <Rich text={title} />
         </Heading>
       )}
-      <CrossedOff progress={strike} color={theme.accent} strokeWidth={7}>
-        <div style={{ ...pop(enter, 0.92), position: "relative", width: 900, boxSizing: "border-box", background: "#2A2724", borderRadius: 22, padding: "26px 24px", boxShadow: "0 14px 34px rgba(40,30,10,0.3)", opacity: enter * (1 - strike * 0.35) }}>
+      <ThemedMark kind="strike" meaning progress={strike} strokeWidth={7}>
+        <div style={{ ...pop(enter, 0.92), position: "relative", width: 900, boxSizing: "border-box", background: theme.ink, borderRadius: 22, padding: "26px 24px", boxShadow: "0 14px 34px rgba(0,0,0,0.3)", opacity: enter * (1 - strike * 0.35) }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {tracks.map((t, i) => (
-              <div key={i} style={{ position: "relative", height: 54, background: "#3A3632", borderRadius: 8 }}>
+              <div key={i} style={{ position: "relative", height: 54, background: `${theme.paper}1a`, borderRadius: 8 }}>
                 {t.clips.map(([a, b], j) => (
                   <div key={j} style={{ position: "absolute", left: a, width: b - a - 6, top: 6, bottom: 6, borderRadius: 6, background: t.color, opacity: 0.9 }}>
-                    {j % 2 === 0 && <div style={{ position: "absolute", left: 14, top: 14, width: 12, height: 12, background: "#FFFFFF", transform: "rotate(45deg)" }} />}
+                    {j % 2 === 0 && <div style={{ position: "absolute", left: 14, top: 14, width: 12, height: 12, background: theme.paper, transform: "rotate(45deg)" }} />}
                   </div>
                 ))}
               </div>
             ))}
           </div>
-          <div style={{ position: "absolute", top: 12, bottom: 12, left: 24 + head, width: 4, background: "#FF4D4D", borderRadius: 2 }} />
+          <div style={{ position: "absolute", top: 12, bottom: 12, left: 24 + head, width: 4, background: theme.accent, borderRadius: 2 }} />
         </div>
-      </CrossedOff>
+      </ThemedMark>
       {label && (
         <div style={{ marginTop: 26, fontSize: 44, fontWeight: 650, color: theme.ink, textAlign: "center", opacity: ease((frame - fps * 1.6) / 8) }}>
           <Rich text={label} />

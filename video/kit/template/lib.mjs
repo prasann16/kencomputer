@@ -15,7 +15,7 @@ export const codeHash = () => hash(codeFiles("src").sort().map((f) => [f, readFi
 
 // Where each graphic goes, as registered in the reel's own src/graphics/index.ts (so a graphic Ken wrote is placed
 // here the way Reel.tsx places it), over the standard ones in case that file can't be read.
-const STANDARD = { title: "full", chat: "full", picture: "full", nameTag: "over", callout: "over", punch: "over", browser: "over" };
+const STANDARD = {}; // every graphic floats over the video unless props.json or its registration says otherwise
 export const placements = () => {
   let registered = {};
   try {

@@ -120,4 +120,58 @@ def test_the_look_takes_its_colours_from_the_footage(tmp_path):
     found = v.colors(tmp_path, say=lambda _: None)
     hue = found["colors"][0]["hue"]
     assert 120 <= hue <= 170
-    assert set(found["suggested"]) == {"accent", "paper", "ink"}
+    assert found["colors"][0]["bright"].startswith("#")
+    assert set(found["room"]) == {"light", "dark"} and "suggested" not in found  # raw material, not a palette
+
+
+# ------------------------------------------------------------------ no house look (Round 23)
+
+KIT = v.SOURCE / "template"
+
+
+def test_the_kit_has_no_house_look():
+    """Unset, a reel is plain: no serif, no cream paper or orange, no grain, no paper texture, no hand-drawn marks."""
+    theme = (KIT / "src" / "theme.ts").read_text()
+    for house in ("#FF7A3D", "#F3EEE4", "#1A1814", '?? "Serif"', 'paperTexture !== false'):
+        assert house not in theme, house
+    assert 'grain === true' in (KIT / "src" / "Reel.tsx").read_text()
+    assert 'style.grain === true' in (KIT / "compose.mjs").read_text()
+    assert 'marks: style.marks ?? "none"' in theme
+    # The example graphics take colours from the reel's design, never built-in paper colours.
+    for name in ("basics.tsx", "explainers.tsx"):
+        code = (KIT / "src" / "graphics" / name).read_text()
+        for house in ("#FBFAF7", "#ECE7DC", "#F1EEE7", "rgba(255,240,200", "rgba(40,30,10", "@remotion/rough-notation"):
+            assert house not in code, (name, house)
+
+
+def test_graphics_float_over_the_video_unless_asked():
+    import re
+    index = (KIT / "src" / "graphics" / "index.ts").read_text()
+    placements = re.findall(r'placement: "(\w+)"', index)
+    assert placements and set(placements) == {"over"}
+    assert '"design"' in index or "design:" in index
+    assert '?? "over"' in (KIT / "compose.mjs").read_text() and '?? "over"' in (KIT / "render.mjs").read_text()
+
+
+def test_any_google_font_by_name():
+    fonts = (KIT / "src" / "typefaces.ts").read_text()
+    assert "fonts.googleapis.com/css2?family=" in fonts
+    theme = (KIT / "src" / "theme.ts").read_text()
+    assert 'Serif: "Instrument Serif"' in theme  # older saved styles still get the face they meant
+
+
+def test_the_skill_asks_for_a_design_brief_and_no_house_look():
+    import re
+    skill = re.sub(r"\s+", " ", (v.SOURCE.parent.parent / "skills" / "video" / "SKILL.md").read_text())
+    assert "design.md" in skill and "There is no house look" in skill
+    assert "**examples**" in skill and "Prefer graphics that sit on the video" in skill
+
+
+def test_stills_and_render_nudge_for_a_design_brief(tmp_path):
+    said = []
+    v._design_note(tmp_path, said.append)
+    assert said and "design.md" in said[0]
+    (tmp_path / "design.md").write_text("Mood: calm")
+    said.clear()
+    v._design_note(tmp_path, said.append)
+    assert said == []
