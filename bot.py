@@ -1453,15 +1453,24 @@ def refresh_default_jobs() -> None:
     try:
         jobs = json.loads(JOBS_FILE.read_text())
         for j in jobs:
-            if j.get("name") == "nightly-review" and str(j.get("prompt", "")).endswith(OLD_NIGHTLY_TAIL):
-                j["prompt"] = j["prompt"][: -len(OLD_NIGHTLY_TAIL)] + NEW_NIGHTLY_TAIL
-                JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+            if j.get("name") != "nightly-review":
+                continue
+            for old in OLD_NIGHTLY_TAILS:
+                if str(j.get("prompt", "")).endswith(old):
+                    j["prompt"] = j["prompt"][: -len(old)] + NEW_NIGHTLY_TAIL
+                    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+                    break
     except Exception as e:
         log.warning("couldn't refresh %s: %s", JOBS_FILE, e)
 
 
-OLD_NIGHTLY_TAIL = "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance."
-NEW_NIGHTLY_TAIL = "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\""
+# Earlier endings of the shipped nightly review, newest last. A prompt that still ends with one was never edited by
+# them, so it gets the current ending (which now also checks disk space and asks before clearing anything).
+OLD_NIGHTLY_TAILS = (
+    "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance.",
+    "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\"",
+)
+NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
 
 
 def migrate_jobs() -> None:
