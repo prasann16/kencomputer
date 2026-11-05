@@ -928,21 +928,24 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
       : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${jobs.length > 0 && html`<button class="ken-status jobs-pill" title=${jobs.map((r) => r.title).join(', ')} onClick=${onJobs}><i></i>${jobs.length === 1 ? (jobs[0].status === 'running' && jobs[0].activity ? `${jobs[0].title} · ${jobs[0].activity}` : `${jobs[0].title} · in the background`) : jobs.length + ' jobs in the background'}</button>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${connected && awake !== null && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. You can still lock your screen (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
-// First run: the selected backend owns its sign-in flow.
+// Connect Claude or ChatGPT with their own subscription: the same screen in the Mac app and in the browser.
 function Connect(props) {
-  return HOSTED ? html`<${RemoteConnect} ...${props}/>` : html`<${LocalConnect} ...${props}/>`;
+  return html`<${LocalConnect} ...${props}/>`;
 }
 
 function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
   const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
-  const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [device, setDevice] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   // In the Mac app the browser is on this computer, so the sign-in finishes by itself and a code is rarely needed.
   const [codeOpen, setCodeOpen] = useState(!window.kenDesktop);
-  const go = async (body) => {
+  // In a browser (Ken in the cloud) the sign-in page opens in a tab made straight from the click, the only way a
+  // browser allows; the Mac app's own browser opens by itself.
+  const go = async (body, tab = null) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setValue(''); setStep('code'); if (isCodex) window.open(r.url, '_blank', 'noopener'); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
-    catch (e) { setError(e.message); } finally { setBusy(false); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setDevice(r.code || ''); setValue(''); setStep('code'); if (tab) tab.location.href = r.url; else if (isCodex) window.open(r.url, '_blank', 'noopener'); } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
+    catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
   };
+  const begin = () => go({ action: 'start' }, window.kenDesktop ? null : window.open('', '_blank'));
   useEffect(() => { if (start) go({ action: 'start' }); }, []);
   // Approving in the browser usually connects Ken by itself, with no code to paste.
   useEffect(() => {
@@ -955,14 +958,15 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
   const field = (placeholder) => html`<input class="connect-input" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && go({ code: value })}/>`;
   return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect ${label}</h1>
     ${step === 'start' && html`<p>Sign in with your ${label} account. Ken uses your plan, so there’s nothing else to pay.</p>
-      <button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>${busy ? `Opening ${label}…` : `Connect ${label}`}</button>`}
+      <button class="btn primary" disabled=${busy} onClick=${begin}>${busy ? `Opening ${label}…` : `Connect ${label}`}</button>`}
     ${step === 'code' && html`<p>Finish signing in in your browser. Ken connects by itself.</p>
-      <a class="text-action" href=${url} target="_blank" rel="noopener">Browser didn’t open? Open the sign-in page</a>
-      ${error ? html`<button class="btn primary" disabled=${busy} onClick=${() => go({ action: 'start' })}>Try again</button>`
+      ${device && html`<p>Type this code on that page:</p><p class="connect-device-code">${device}</p>`}
+      <a class="text-action" href=${url} target="_blank" rel="noopener">Page didn’t open? Open the sign-in page</a>
+      ${error ? html`<button class="btn primary" disabled=${busy} onClick=${begin}>Try again</button>`
         : !isCodex && (codeOpen ? html`<p class="connect-code-note">If Claude shows you a code instead, paste it here.</p>${field('Paste the code')}
       <button class="btn primary" disabled=${busy || !value.trim()} onClick=${() => go({ code: value })}>${busy ? 'Connecting…' : 'Connect'}</button>`
         : html`<button class="text-action" onClick=${() => setCodeOpen(true)}>Claude gave you a code?</button>`)}
-      ${!onBack && !error && html`<button class="text-action" disabled=${busy} onClick=${() => go({ action: 'start' })}>Start over</button>`}`}
+      ${!onBack && !error && html`<button class="text-action" disabled=${busy} onClick=${begin}>Start over</button>`}`}
     ${onBack && html`<button class="text-action" disabled=${busy} onClick=${onBack}>Back</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   </div>`;
@@ -971,46 +975,6 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
 // Ken on a computer in the cloud: there's no browser on that computer, so every way in works from wherever you are.
 // Claude: sign in and paste the code Claude shows, paste a token from `claude setup-token`, or an API key.
 // ChatGPT: open a page, type the code shown here; or an API key.
-function RemoteConnect({ onDone, backend = 'claude', onBack }) {
-  const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
-  const [how, setHow] = useState(''), [url, setUrl] = useState(''), [code, setCode] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  // tab: a tab opened straight from the click (a browser only allows that), pointed at the sign-in page once Ken has it.
-  const go = async (body, tab = null) => {
-    setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setCode(r.code || ''); setValue(''); if (tab) tab.location.href = r.url; } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
-    catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
-  };
-  // Signing in happens on another page: watch for it to finish.
-  useEffect(() => {
-    if (!url) return;
-    const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) { clearInterval(timer); onDone(r); } } catch {} }, 2000);
-    // A sign-in left open stops being watched after 15 minutes, and says so.
-    const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
-    return () => { clearInterval(timer); clearTimeout(limit); };
-  }, [url]);
-  const pick = (h) => { setHow(h); setError(''); setValue(''); setUrl(''); setCode(''); if (h === 'signin') go({ action: 'start' }, window.open('', '_blank')); };
-  const field = (placeholder, submit) => html`<input class="connect-input" type=${how === 'signin' ? 'text' : 'password'} autocomplete="off" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && submit()}/>`;
-  const button = (text, submit) => html`<button class="btn primary" disabled=${busy || !value.trim()} onClick=${submit}>${busy ? 'Connecting…' : text}</button>`;
-  const back = html`<button class="text-action" disabled=${busy} onClick=${() => how ? pick('') : onBack?.()}>Back</button>`;
-  return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>Connect ${label}</h1>
-    ${!how && html`<p>Ken thinks with your own ${label} account or key.</p>
-      <button class="btn primary" onClick=${() => pick('signin')}>Sign in with ${label}</button>
-      ${!isCodex && html`<button class="btn" onClick=${() => pick('token')}>Paste a Claude token</button>`}
-      <button class="btn" onClick=${() => pick('key')}>Use an API key</button>
-      ${onBack && back}`}
-    ${how === 'signin' && (busy && !url ? html`<p>Opening ${label} sign-in…</p>` : isCodex ? (url && html`<p>1. Open <a class="text-action" href=${url} target="_blank" rel="noopener">this ChatGPT page</a> and sign in.</p>
-        <p>2. Type this code there:</p><p class="connect-device-code">${code}</p><p class="np-note">Ken connects by itself once you're done. The code works for 15 minutes.</p>`)
-      : url && html`<p>1. Open <a class="text-action" href=${url} target="_blank" rel="noopener">the Claude sign-in page</a> and approve.</p>
-        <p>2. Claude shows a code. Copy it and paste it here:</p>
-        ${field('Paste the code', () => go({ code: value }))}${button('Connect', () => go({ code: value }))}`)}
-    ${how === 'token' && html`<p>On a computer with Claude Code, run <code>claude setup-token</code>. It opens a sign-in and then shows a token that starts with <code>sk-ant-oat</code>. Paste it here. It works for a year.</p>
-      ${field('sk-ant-oat…', () => go({ action: 'token', token: value }))}${button('Connect', () => go({ action: 'token', token: value }))}`}
-    ${how === 'key' && html`<p>${isCodex ? html`Make a key at <a class="text-action" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>.` : html`Make a key at <a class="text-action" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.`} ${isCodex ? 'OpenAI' : 'Anthropic'} bills you for what Ken uses. It's kept only on Ken's computer.</p>
-      ${field(isCodex ? 'sk-…' : 'sk-ant-api…', () => go({ action: 'api-key', key: value }))}${button('Connect', () => go({ action: 'api-key', key: value }))}`}
-    ${how && back}
-    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-  </div>`;
-}
 
 // First run, nothing connected yet: Ken runs on a Claude or a ChatGPT account. The other can be added later in Settings.
 function FirstConnect({ onPick, onDone }) {
