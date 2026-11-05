@@ -974,10 +974,11 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
 function RemoteConnect({ onDone, backend = 'claude', onBack }) {
   const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
   const [how, setHow] = useState(''), [url, setUrl] = useState(''), [code, setCode] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const go = async (body) => {
+  // tab: a tab opened straight from the click (a browser only allows that), pointed at the sign-in page once Ken has it.
+  const go = async (body, tab = null) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setCode(r.code || ''); setValue(''); } const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
-    catch (e) { setError(e.message); } finally { setBusy(false); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl(r.url); setCode(r.code || ''); setValue(''); if (tab) tab.location.href = r.url; } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
+    catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
   };
   // Signing in happens on another page: watch for it to finish.
   useEffect(() => {
@@ -987,7 +988,7 @@ function RemoteConnect({ onDone, backend = 'claude', onBack }) {
     const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
     return () => { clearInterval(timer); clearTimeout(limit); };
   }, [url]);
-  const pick = (h) => { setHow(h); setError(''); setValue(''); setUrl(''); setCode(''); if (h === 'signin') go({ action: 'start' }); };
+  const pick = (h) => { setHow(h); setError(''); setValue(''); setUrl(''); setCode(''); if (h === 'signin') go({ action: 'start' }, window.open('', '_blank')); };
   const field = (placeholder, submit) => html`<input class="connect-input" type=${how === 'signin' ? 'text' : 'password'} autocomplete="off" autofocus placeholder=${placeholder} value=${value} onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && value.trim() && !busy && submit()}/>`;
   const button = (text, submit) => html`<button class="btn primary" disabled=${busy || !value.trim()} onClick=${submit}>${busy ? 'Connecting…' : text}</button>`;
   const back = html`<button class="text-action" disabled=${busy} onClick=${() => how ? pick('') : onBack?.()}>Back</button>`;
