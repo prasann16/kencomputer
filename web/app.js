@@ -1167,10 +1167,10 @@ function HostedApps() {
     ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
     ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
     ${data?.connected?.length > 0 && html`<div class="conn-list">${data.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`}
-    <input class="np-input apps-search" type="search" placeholder="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
+    <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
       : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
-          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="text-action" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`
+          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`
       : html`<p class="np-note">No app called "${q}".</p>`}`;
 }
 
