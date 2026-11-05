@@ -1271,8 +1271,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <header class="sp-head"><button class="text-action sp-back" onClick=${onClose}>← Back to chat</button><h1>Settings</h1></header>
   <div class="sp-body"><nav class="sp-nav">${sections.map((x) => html`<button class=${current === x.id ? 'on' : ''} aria-current=${current === x.id ? 'page' : null} onClick=${() => { setTab(x.id); setError(''); }}>${HOSTED && x.web ? x.web : x.label}</button>`)}</nav>
   <section class="sp-main">
-    ${current === 'plan' && html`<div class="set-body">${meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : html`<p class="np-note">Loading your plan…</p>`}
-      ${meta.account_url && html`<p class="np-help">Your plan, card and invoices are on your Ken account, the same for every way you use Ken.</p><a class="btn primary sp-out" href=${meta.account_url} target="_blank" rel="noopener">Plan & billing ↗</a>`}</div>`}
+    ${current === 'plan' && html`<div class="set-body">${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}<${Plans}/></div>`}
     ${current === 'appearance' && html`<div class="set-body"><div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div></div>`}
     ${current === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
@@ -1299,6 +1298,22 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
       : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
   </section></div></div>`;
+}
+// Hosted Ken: the plans, right here in Settings. The site serves Ken, so its account routes are this same address:
+// switching posts to it and comes straight back here; card and invoices are Stripe's page, which also comes back.
+function Plans() {
+  const [data, setData] = useState(null), [error, setError] = useState('');
+  const load = () => { setError(''); fetch('/account/plans.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load the plans just now.")); };
+  useEffect(load, []);
+  if (error) return html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${load}>Try again</button></p>`;
+  if (!data) return html`<p class="np-note">Loading…</p>`;
+  return html`<div class="plan-cards">${data.plans.map((p) => html`<div class=${'plan-card' + (p.id === data.current ? ' on' : '')}>
+      <div class="plan-top"><b>${p.name}</b><span>$${p.price}<small> / month</small></span></div>
+      <ul>${p.points.map((x) => html`<li>${x}</li>`)}</ul>
+      ${p.id === data.current ? html`<span class="plan-yours">Your plan</span>` : data.canSwitch && html`<form method="post" action="/account/plan"><input type="hidden" name="plan" value=${p.id}/><input type="hidden" name="back" value="ken"/><button class=${'btn ' + (p.up ? 'primary' : 'ghost')}>${p.up ? 'Upgrade' : 'Switch'} to ${p.name}</button></form>`}
+    </div>`)}</div>
+    <p class="np-note">An upgrade is charged now for the rest of the month; a smaller plan leaves credit on your next bill. Ken keeps its memory and files either way.</p>
+    <a class="btn ghost" href="/account/card?back=ken">Card, invoices and cancelling</a>`;
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
