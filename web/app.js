@@ -42,7 +42,9 @@ async function api(path, opts = {}) {
   }
   if (r.status === 401) { location.reload(); throw new Error('signed out'); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || (r.status >= 500 ? 'Ken couldn’t do that just now. Try again in a moment.' : r.statusText));
+  // A code from the host (e.g. "container_unreachable" while Ken's computer wakes) is never shown as is.
+  const said = typeof data.error === 'string' && !/^[a-z0-9_.-]+$/.test(data.error) ? data.error : '';
+  if (!r.ok) throw new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText));
   return data;
 }
 
@@ -951,7 +953,7 @@ function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, o
   // browser allows; the Mac app's own browser opens by itself.
   const go = async (body, tab = null) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setDevice(r.code || ''); setValue(''); setStep('code'); if (tab) tab.location.href = r.url; else if (isCodex) window.open(r.url, '_blank', 'noopener'); } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) onDone(r); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setDevice(r.code || ''); setValue(''); setStep('code'); if (tab) tab.location.href = r.url; else if (isCodex) window.open(r.url, '_blank', 'noopener'); } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected && account.how !== 'included') onDone(r); }
     catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
   };
   const begin = () => go({ action: 'start' }, window.kenDesktop ? null : window.open('', '_blank'));
@@ -959,7 +961,7 @@ function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, o
   // Approving in the browser usually connects Ken by itself, with no code to paste.
   useEffect(() => {
     if (step !== 'code') return;
-    const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected) { clearInterval(timer); onDone(r); } } catch {} }, 2000);
+    const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected && account.how !== 'included') { clearInterval(timer); onDone(r); } } catch {} }, 2000);
     // A sign-in left open stops being watched after 15 minutes, and says so.
     const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
     return () => { clearInterval(timer); clearTimeout(limit); };
