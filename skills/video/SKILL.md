@@ -13,8 +13,10 @@ changes later pick up where you left off. Never change their original file.
 `<ken>` below is the exact command in your instructions.
 
 **Run the edit as a background job, never in the chat.** If you're in the chat with them: ask the style question
-below if you need to, then hand the whole job off right away (the video's full path, what they asked, the style),
-say in a line that it's running and they can keep talking to you, and stop. The background job does everything
+below if you need to, take a quick look (how long it is, what they talk about: the first lines of the transcript are
+enough), and tell them the plan in a few short lines: what the reel will keep, the graphics you have in mind, the
+length, and roughly how long it'll take. Then hand the whole job off right away (the video's full path, what they
+asked, the style, your plan), say it's running and they can keep talking to you, and stop. The background job does everything
 from step 1 on and reports back when the reel is ready.
 
 ## 0. Their style first
