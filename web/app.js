@@ -1265,9 +1265,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   useEffect(() => { if (tab && tab !== 'start') document.getElementById('set-' + tab)?.scrollIntoView({ block: 'start' }); }, []);
   const section = (id, title, body) => html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
-  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-head"><button class="text-action sp-back" onClick=${onClose}>← Back to chat</button><h1>Settings</h1></header><p class="np-note" role="status">Loading…</p></div></div>`;
+  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="sp-pill dark" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><p class="np-note" role="status">Loading…</p></div></div>`;
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
-  <header class="sp-head"><button class="text-action sp-back" onClick=${onClose}>← Back to chat</button><h1>Settings</h1></header>
+  <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="sp-pill dark" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
   ${section('claude', 'AI accounts', html`<p class="np-help">Ken runs on your Claude or ChatGPT subscription. Choose which one at the top of each chat.</p>
     <div class="conn-list">${[['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
