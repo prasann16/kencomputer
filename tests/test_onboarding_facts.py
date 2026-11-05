@@ -45,6 +45,20 @@ def test_soul_and_memory(engine):
     assert c["ken_name"] == "Juno" and "design studio" in c["about_you"]
 
 
+async def test_an_open_chat_picks_it_up_and_the_next_reply_is_told(engine):
+    fresh_soul(engine)
+    await engine.send_message(HOME, "hi")
+    before = engine.chats[HOME]
+    engine.apply_onboarding(FACTS)
+    await engine.send_message(HOME, "who are you?")
+    assert engine.chats[HOME] is not before  # reopened (resuming the same conversation), so it starts with the new soul
+    assert engine.chats[HOME].session_id == "sess-1"
+    ask = engine.brain.asks[-1]
+    assert "they told the site" in ask["prompt"] and "call them: Sam" in ask["prompt"] and "your name: Juno" in ask["prompt"]
+    await engine.send_message(HOME, "thanks")
+    assert "they told the site" not in engine.brain.asks[-1]["prompt"]  # once
+
+
 def test_only_what_they_said_and_nothing_unfit(engine):
     fresh_soul(engine)
     before = engine.context_file(HOME).read_text()

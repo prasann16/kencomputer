@@ -1141,6 +1141,11 @@ class Engine:
         if said:
             self.kv_set(f"jobs:said:{pid}", "[]")
             parts.append("since your last turn your scheduled jobs sent them: " + " | ".join(said))
+        told = self.kv_get(f"onboarding:said:{pid}")
+        if told:
+            self.kv_set(f"onboarding:said:{pid}", "")
+            parts.append("while your computer was being set up they told the site (already in SOUL.md and memory/about-them.md; "
+                         "use it, don't ask again): " + told)
         call = self.kv_get(f"voice:said:{pid}")
         if call:
             self.kv_set(f"voice:said:{pid}", "")
@@ -1895,6 +1900,16 @@ class Engine:
             head = "" if m.exists() else "About them: work, what's on their plate, the apps they use\n\n"
             with m.open("a") as out:
                 out.write(head + f"From setting Ken up ({time.strftime('%b %-d')}):\n" + "\n".join(n for n in notes if n) + "\n\n")
+        # A Home chat already open keeps the soul it started with: reopen it (it resumes the same conversation) so
+        # the next reply uses the new one, and tell that reply what changed.
+        said = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
+                         ("this week", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
+        if said:
+            self.kv_set(f"onboarding:said:{HOME}", said)
+        s = self.chats.get(HOME)
+        if s is not None and not s.busy:
+            self.chats.pop(HOME)
+            self._bg.append(asyncio.create_task(s.close()))
         self.emit("project.updated", project=HOME)
         return covered
 
