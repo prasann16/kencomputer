@@ -953,7 +953,7 @@ function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, o
   // browser allows; the Mac app's own browser opens by itself.
   const go = async (body, tab = null) => {
     setBusy(true); setError('');
-    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setDevice(r.code || ''); setValue(''); setStep('code'); if (tab) tab.location.href = r.url; else if (isCodex) window.open(r.url, '_blank', 'noopener'); } else tab?.close(); const account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected && account.how !== 'included') onDone(r); }
+    try { const r = await api('/api/setup', { json: { ...body, backend }, timeout: 90000 }); if (r.url) { setUrl((window.kenDesktop && r.browser_url) || r.url); setDevice(r.code || ''); setValue(''); setStep('code'); if (tab) tab.location.href = r.url; else if (isCodex) window.open(r.url, '_blank', 'noopener'); } else tab?.close(); const account = r.providers?.[backend] || r; if (r.error || account.error) setError(r.error || account.error); if (account.connected && account.how !== 'included') onDone(r); }
     catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
   };
   const begin = () => go({ action: 'start' }, window.kenDesktop ? null : window.open('', '_blank'));
@@ -961,7 +961,7 @@ function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, o
   // Approving in the browser usually connects Ken by itself, with no code to paste.
   useEffect(() => {
     if (step !== 'code') return;
-    const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (account.error) setError(account.error); if (account.connected && account.how !== 'included') { clearInterval(timer); onDone(r); } } catch {} }, 2000);
+    const timer = setInterval(async () => { try { const r = await api('/api/setup'), account = r.providers?.[backend] || r; if (r.error || account.error) setError(r.error || account.error); if (account.connected && account.how !== 'included') { clearInterval(timer); onDone(r); } } catch {} }, 2000);
     // A sign-in left open stops being watched after 15 minutes, and says so.
     const limit = setTimeout(() => { clearInterval(timer); setError('This sign-in timed out. Start again when you’re ready.'); }, 900000);
     return () => { clearInterval(timer); clearTimeout(limit); };
