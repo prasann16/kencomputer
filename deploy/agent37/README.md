@@ -50,6 +50,7 @@ All optional. Set them when creating the instance; a change reaches Ken on the i
 | `KEN_INCLUDED_AI_URL`, `KEN_INCLUDED_AI_TOKEN` | AI included with a plan, until the person connects their own Claude: Claude Code talks to this Anthropic-compatible endpoint (https) with the token as a Bearer. The host's endpoint holds the real provider key and meters each person's spend, so no provider key is ever on the computer (Ken can run commands, and could be asked to print its environment). When the endpoint refuses with 402 (the month's Ken AI credits are used up), Ken says so in plain words ("You've used this month's Ken AI credits.") with a button to connect their own Claude or ChatGPT. |
 | `KEN_INCLUDED_AI_MODEL` | The model the included AI runs on (Ken's model picker shows what the endpoint's `/v1/models` lists). |
 | `TELEGRAM_API_URL`, `TELEGRAM_BOT_TOKEN`, `KEN_TELEGRAM_PUSH=1` | Ken in Telegram through the host. Ken's Telegram code talks to the host's stand-in for Telegram's Bot API (`<url>/bot<token>/<method>`, files under `<url>/file/bot<token>/`) with a token of the host's choosing, so the real bot token stays with the host. A sleeping computer can't fetch updates, so the host pushes them: `POST /api/telegram/update` with Ken's web token, one Telegram update as JSON (`503` while Ken's Telegram is still starting: try again). Whoever the pushed updates are from is the owner; `{"ken_relay": "unlinked"}` means they disconnected. |
+| `KEN_NOTIFY_URL`, `KEN_NOTIFY_TOKEN` | A phone app's pushes: what would buzz on Telegram (a reply, an approval, finished work) is also POSTed here as JSON (`{"kind", "project", "name", "text" or "title"/"status"}`) with the token as a Bearer, for the host to send as a push. |
 | `KEN_OWNER_NAME` | The person's first name, for Ken's first soul file. |
 | `KEN_APPS` | `0` turns off the apps tools. Otherwise Ken gets Agent37's managed Composio MCP server (Gmail, Calendar and more) as `apps`; its calls are metered against the instance's budget, so the budget's monthly cap is the app-actions cap. With a host (`KEN_KEEPALIVE_URL`), Ken runs `ken --apps [app]`, which asks the host's `/box/apps` with the check-in token what's connected and for a one-tap Connect link; the host then calls `POST /api/apps/connected` and the chat that gave the link carries on. Settings → Apps lists connected apps and links to the host's Apps page. |
 | `KEN_PUBLIC_ORIGINS` | Extra page addresses Ken trusts. Set by `ken-supervise` to the instance's own URLs. |
@@ -68,6 +69,14 @@ forwards to Ken should:
 - forward the WebSocket at `/api/events`;
 - set the page's `Content-Security-Policy` itself (Ken's `index.html` also carries one in a `<meta>` tag), and
   `sandbox; default-src 'none'` on `/api/file` and `/api/chats/*/files/*`;
+- for a voice talker it runs itself (the browser page talks to it; Ken's web app shows a talk button when the host
+  answers `GET /voice/status`): `GET /api/voice/context` is a small context pack for the start of a call (the soul
+  file, about them, today's brief, the last few messages; no keys, tokens or paths); the talker's tools call
+  `POST /api/voice/ask` `{request}` (a chat message; the answer if Ken is quick, otherwise "still working") and
+  `POST /api/voice/remember` `{fact}`; after the call `POST /api/voice/done` `{lines, seconds}` puts its words in the chat;
+- for what someone told the host before their computer was ready (a sign-up conversation): `POST /api/onboarding`
+  `{id, facts: {call_name, work, busy, apps, brief: "08:00" | "no", ken_name, style}}` puts it in the soul file, memory
+  and the morning brief job; the same `id` is applied once, so the host can resend until it gets an answer;
 - optionally pass what's left of the person's plan in `X-Ken-Usage`, JSON like
   `{"plan": "…", "lines": [{"label": "Awake time", "left": "3 h", "of": "10 h", "low": false}], "note": "…", "manage_url": "/account"}`.
   Ken shows it in Settings and a line above the chat when something is low.
