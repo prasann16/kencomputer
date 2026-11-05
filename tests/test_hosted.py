@@ -360,15 +360,18 @@ def test_included_ai_needs_https(monkeypatch, clean_ai):
     assert not onboarding.use_included_ai() and "ANTHROPIC_AUTH_TOKEN" not in os.environ
 
 
-def test_included_ai_model_is_the_plans(monkeypatch, clean_ai, tmp_path):
+def test_credits_default_to_haiku_and_their_own_claude_is_separate(monkeypatch, clean_ai, tmp_path):
     import bot
     included(monkeypatch)
-    monkeypatch.setenv("KEN_INCLUDED_AI_MODEL", "claude-sonnet-test")
+    monkeypatch.setenv("KEN_INCLUDED_AI_MODEL", "claude-sonnet-5-5")  # what older computers were given: no longer the default
+    monkeypatch.setattr(bot.ENGINE, "home", tmp_path)
     onboarding.use_included_ai()
-    assert bot.active_model("claude") == "claude-sonnet-test"
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    assert bot.active_model("claude") == "claude-haiku-5-5"
+    (tmp_path / "model-credits").write_text("claude-sonnet-5-5\n")  # a paid plan picked Sonnet
+    assert bot.active_model("claude") == "claude-sonnet-5-5"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)  # their own Claude: its own pick, not the credits one
     onboarding.use_included_ai()
-    assert bot.active_model("claude") != "claude-sonnet-test"
+    assert bot.active_model("claude") not in ("claude-haiku-5-5", "claude-sonnet-5-5") or not bot.credits_model("claude")
 
 
 def test_status_says_included(tmp_path, monkeypatch, clean_ai):
@@ -580,20 +583,23 @@ class _Accounts:
         return {"providers": self.p}
 
 
-async def test_on_ken_ai_credits_the_menu_is_sonnet_only(monkeypatch, clean_ai, tmp_path):
+async def test_on_ken_ai_credits_the_menu_is_haiku_or_sonnet(monkeypatch, clean_ai, tmp_path):
     import bot
     included(monkeypatch)
-    monkeypatch.setenv("KEN_INCLUDED_AI_MODEL", "claude-sonnet-5-5")
     monkeypatch.setattr(bot, "ACCOUNTS", _Accounts(included=True))
     monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    monkeypatch.setattr(bot.ENGINE, "home", tmp_path)
     (tmp_path / "model").write_text("claude-opus-5-5\n")  # chosen before, on their own Claude
     assert onboarding.use_included_ai()
-    assert await bot.model_choices("claude") == ["claude-sonnet-5-5"]
+    assert await bot.model_choices("claude") == ["claude-haiku-5-5", "claude-sonnet-5-5"]
     assert await bot.model_choices("codex") == []  # ChatGPT isn't connected: none of its models
     assert bot.usable_brains() == ["claude"]
-    assert bot.active_model("claude") == "claude-sonnet-5-5"  # the saved Opus quietly gives way
+    assert bot.active_model("claude") == "claude-haiku-5-5"  # the saved Opus quietly gives way to the default
     reply = await bot.model("opus")
-    assert reply["reply"].startswith("Ken AI credits run on Sonnet.") and reply["choices"] == ["claude-sonnet-5-5"]
+    assert reply["reply"].startswith("Ken AI credits run on Haiku or Sonnet") and reply["choices"] == ["claude-haiku-5-5", "claude-sonnet-5-5"]
+    reply = await bot.model("sonnet")
+    assert reply["reply"].startswith("✓ Ken AI credits on claude-sonnet-5-5")
+    assert bot.active_model("claude") == "claude-sonnet-5-5"  # their pick sticks
     assert (tmp_path / "model").read_text() == "claude-opus-5-5\n"  # kept for when their own Claude is back
 
 
@@ -623,11 +629,17 @@ async def test_the_runtime_says_credits_and_only_usable_brains(engine):
     engine.brains.update({"claude": first, "codex": first})
     engine.kv_set(f"backend:{HOME}", "claude")
     engine.usable_brains = lambda: ["claude"]
-    engine.credits_model = lambda backend: "claude-sonnet-5-5" if backend == "claude" else ""
+    engine.credits_model = lambda backend: "claude-haiku-5-5" if backend == "claude" else ""
 
     async def choices(backend):
-        return ["claude-sonnet-5-5"] if backend == "claude" else []
+        return ["claude-opus-5-5"] if backend == "claude" else []
     engine.model_choices = choices
     r = await engine.runtime(HOME)
-    assert r == {"backend": "claude", "current": "claude-sonnet-5-5", "choices": ["claude-sonnet-5-5"], "providers": ["claude"], "credits": True}
-    assert engine.model_for(HOME) == "claude-sonnet-5-5"
+    assert r == {"backend": "claude", "current": "claude-haiku-5-5", "choices": ["claude-haiku-5-5", "claude-sonnet-5-5"], "providers": ["claude"], "credits": True}
+    assert engine.model_for(HOME) == "claude-haiku-5-5"
+    # A paid plan picks Sonnet: it sticks, kept apart from the model picked for their own Claude.
+    await engine.set_runtime(HOME, model="claude-sonnet-5-5")
+    assert (await engine.runtime(HOME))["current"] == "claude-sonnet-5-5" and engine.model_for(HOME) == "claude-sonnet-5-5"
+    assert not (engine.home / "model").exists()
+    with pytest.raises(ValueError):
+        await engine.set_runtime(HOME, model="claude-opus-5-5")

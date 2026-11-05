@@ -67,6 +67,9 @@ APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
 NO_ANSWER_LIMIT = 2 * 60
+# Ken AI credits run on these only: Haiku by default (about 14x cheaper, and good at real tasks), Sonnet if a paid
+# plan picks it. The site keeps free trials on Haiku whatever is asked.
+CREDIT_MODELS = ("claude-haiku-5-5", "claude-sonnet-5-5")
 # Background jobs share the subscription with the chat: two at a time, an hour at most each.
 RUN_SLOTS = 2
 RUN_LIMIT = 60 * 60
@@ -1205,10 +1208,19 @@ class Engine:
         except OSError:
             return ""
 
+    def credits_choice(self) -> str:
+        """The model picked for Ken AI credits (Haiku or Sonnet), kept apart from the model picked for their own
+        Claude or ChatGPT, so switching between the two never mixes them up. "" until they pick."""
+        try:
+            chosen = (self.home / "model-credits").read_text().strip()
+        except OSError:
+            return ""
+        return chosen if chosen in CREDIT_MODELS else ""
+
     def model_for(self, pid: str) -> str:
-        # On Ken AI credits only their model runs: a model chosen before (say Opus) quietly gives way to it.
+        # On Ken AI credits only the credits models run: Haiku by default, Sonnet if they picked it (paid plans).
         if self.credits_model and (credits := self.credits_model(self.backend(pid))):
-            return credits
+            return self.credits_choice() or credits
         return self.model_choice(pid) or getattr(self.brain_for(pid), "model_fn", lambda: "")()
 
     async def runtime(self, pid: str) -> dict:
@@ -1216,8 +1228,8 @@ class Engine:
         from an account that isn't connected), and on Ken AI credits only their model ("credits": true)."""
         backend = self.backend(pid)
         credits = self.credits_model(backend) if self.credits_model else ""
-        current = credits or self.model_choice(pid)
-        choices = await self.model_choices(backend) if self.model_choices else []
+        current = (self.credits_choice() or credits) if credits else self.model_choice(pid)
+        choices = list(CREDIT_MODELS) if credits else await self.model_choices(backend) if self.model_choices else []
         usable = self.usable_brains() if self.usable_brains else list(self.brains)
         return {"backend": backend, "current": current, "choices": choices,
                 "providers": [b for b in self.brains if b in usable] or [backend], "credits": bool(credits)}
@@ -1230,6 +1242,13 @@ class Engine:
             raise ValueError("Choose Claude or Codex.")
         if model is not None and (not isinstance(model, str) or len(model) > 500):
             raise ValueError("Invalid model.")
+        on_credits = bool(self.credits_model and self.credits_model(backend))
+        if on_credits and model is not None:
+            if model and model not in CREDIT_MODELS:
+                raise ValueError("Ken AI credits run on Haiku or Sonnet.")
+            (self.home / "model-credits").write_text(model.strip() + "\n")  # their own account's pick is left as it was
+            self.broadcast("chat.runtime", pid, backend=backend)
+            return
         if model and self.model_choices and model not in await self.model_choices(backend):
             raise ValueError("Choose a model available for this account.")
         if self.chat_busy(pid) or self.list_runs(project=pid, active=True):

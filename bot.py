@@ -50,7 +50,7 @@ import crash
 
 from brains import ClaudeBrain
 from codex_brain import CodexBrain
-from engine import HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
+from engine import CREDIT_MODELS, HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from usage import Usage
 from web import WebApp
 from connections import Connections
@@ -1985,14 +1985,15 @@ def set_model(name: str, backend=None) -> None:
     crash.track("model_changed", model=name)
 
 
-# What Ken AI credits run on: Sonnet (the host's model; Opus costs ~5x, and ChatGPT models can't run on credits).
-CREDITS_MODEL = "claude-sonnet-5-5"
+# What Ken AI credits run on by default: Haiku (about 14x cheaper than Sonnet and good at real tasks). A paid plan can
+# pick Sonnet in the model menu (engine.credits_choice). ChatGPT models can't run on credits.
+CREDITS_MODEL = "claude-haiku-5-5"
 
 
 def credits_model(backend=None) -> str:
-    """The model Ken AI credits run on, when this backend is on them now; "" otherwise."""
+    """The default model Ken AI credits run on, when this backend is on them now; "" otherwise."""
     backend = backend or ENGINE.backend(HOME)
-    return (included_ai_model() or CREDITS_MODEL) if backend == "claude" and included_ai_in_use() else ""
+    return CREDITS_MODEL if backend == "claude" and included_ai_in_use() else ""
 
 
 def usable_brains() -> list[str]:
@@ -2007,7 +2008,7 @@ def active_model(backend=None) -> str:
     """The chosen model, else the newest Opus the account offers (the list is newest first)."""
     backend = backend or ENGINE.backend(HOME)
     if credits := credits_model(backend):
-        return credits  # on Ken AI credits only their model runs; a model saved before quietly gives way
+        return ENGINE.credits_choice() or credits  # on Ken AI credits: Haiku, or Sonnet if picked; their own pick waits
     try:
         chosen = (KEN_HOME / ("model-codex" if backend == "codex" else "model")).read_text().strip()
     except OSError:
@@ -2024,9 +2025,10 @@ def available_models(backend=None) -> list[str]:
 
 
 async def model_choices(backend):
-    # On Ken AI credits: their one model. An account that isn't connected: nothing (never its models).
-    if credits := credits_model(backend):
-        return [credits]
+    # On Ken AI credits: Haiku or Sonnet (the site keeps a free trial on Haiku). An account that isn't connected:
+    # nothing (never its models).
+    if credits_model(backend):
+        return list(CREDIT_MODELS)
     if ACCOUNTS is not None and backend not in usable_brains():
         return []
     # The list comes from the account's own /v1/models; refresh it daily as models change.
@@ -2043,8 +2045,14 @@ async def model(arg: str = "") -> dict:
     models = await model_choices(backend)
     want = arg.strip().lower()
     if credits_model(backend):
-        return {"reply": "Ken AI credits run on Sonnet. For other models, connect your own Claude or ChatGPT in Settings.",
-                "choices": models, "current": active_model(backend)}
+        match = next((m for m in models if want and want in m), None)
+        if not want or not match:
+            return {"reply": f"Ken AI credits run on {'Haiku or Sonnet' if not want else 'Haiku or Sonnet, not ' + want}: now "
+                             f"{active_model(backend)}. For other models, connect your own Claude or ChatGPT in Settings.",
+                    "choices": models, "current": active_model(backend)}
+        (ENGINE.home / "model-credits").write_text(match + "\n")  # engine.credits_choice; their own pick is untouched
+        ENGINE.broadcast("chat.runtime", HOME, backend=backend)
+        return {"reply": f"✓ Ken AI credits on {match} — from the next task."}
     if not want:
         return {"reply": f"Model — current: {active_model(backend) or 'default'}", "choices": models, "current": active_model(backend)}
     match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
