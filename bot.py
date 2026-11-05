@@ -752,6 +752,81 @@ async def handle_prompt(update: Update, prompt: str, context: str = "", said: st
     apply_model_request()
 
 
+# People often send a thought in pieces ("Apply here", then the link a few seconds later). Ken waits
+# for a short quiet spell before answering, so the pieces arrive as one turn. Each new piece restarts
+# the wait, up to a cap. 0 turns it off. Telegram never tells a bot when someone is typing, so a quiet
+# spell is the only signal there is.
+MERGE_QUIET = float(os.environ.get("KEN_MERGE_SECONDS") or 3)
+MERGE_CAP = float(os.environ.get("KEN_MERGE_MAX_SECONDS") or 12)
+
+
+class Gather:
+    """Holds one burst of messages per chat until they go quiet."""
+
+    def __init__(self, quiet: float, cap: float) -> None:
+        self.quiet, self.cap = quiet, cap
+        self.pending: dict[int, list] = {}
+        self.wake: dict[int, asyncio.Event] = {}
+
+    def waiting(self, key: int) -> bool:
+        return key in self.pending
+
+    def poke(self, key: int) -> None:
+        """More is coming (a new message, or a typing signal from a window that has one): wait longer."""
+        if key in self.wake:
+            self.wake[key].set()
+
+    async def add(self, key: int, item) -> list | None:
+        """The first message of a burst waits and gets the whole burst back; later ones join it and get None."""
+        if key in self.pending:
+            self.pending[key].append(item)
+            self.poke(key)
+            return None
+        self.pending[key], wake = [item], asyncio.Event()
+        self.wake[key] = wake
+        start = time.monotonic()
+        try:
+            while (left := self.cap - (time.monotonic() - start)) > 0:
+                wake.clear()
+                try:
+                    await asyncio.wait_for(wake.wait(), min(self.quiet, left))
+                except asyncio.TimeoutError:
+                    break
+        finally:
+            self.wake.pop(key, None)
+        return self.pending.pop(key)
+
+
+GATHER = Gather(MERGE_QUIET, MERGE_CAP)
+
+
+def merge_burst(burst: list[tuple]) -> tuple:
+    """Several messages, one turn: their words in order, every attachment, the first one's reply context."""
+    if len(burst) == 1:
+        return burst[0]
+    update, _, context, _, _ = burst[0]
+    shown = [said if said is not None else prompt for _, prompt, _, said, _ in burst
+             if said is not None or not prompt.startswith("(")]
+    files = [f for *_, fs in burst for f in fs or []]
+    prompt = (f"(They sent {len(burst)} messages in a row; read them together as one.)\n"
+              + "\n\n".join(prompt for _, prompt, _, _, _ in burst))
+    said = "\n\n".join(s for s in shown if s)
+    return update, prompt, context, said if said or files else None, files or None
+
+
+async def gathered(update: Update, prompt: str, context: str = "", said: str | None = None,
+                   files: list[str] | None = None) -> None:
+    """handle_prompt, after a short human pause so a message sent in pieces is answered once.
+    While Ken is working nothing waits: new messages join its work as before."""
+    if GATHER.quiet <= 0 or (ENGINE.chat_busy(HOME) and not GATHER.waiting(update.effective_chat.id)):
+        await handle_prompt(update, prompt, context, said=said, files=files)
+        return
+    burst = await GATHER.add(update.effective_chat.id, (update, prompt, context, said, files))
+    if burst:
+        update, prompt, context, said, files = merge_burst(burst)
+        await handle_prompt(update, prompt, context, said=said, files=files)
+
+
 async def sync_identity(update: Update) -> None:
     """The soul file is the source of truth: if its '# You are <Name>' title
     changed, rename the Telegram bot to match."""
@@ -842,7 +917,7 @@ async def pair_here(update: Update) -> bool:
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update) and not await pair_here(update):
         return
-    await handle_prompt(update, update.effective_message.text, reply_context(update.effective_message))
+    await gathered(update, update.effective_message.text, reply_context(update.effective_message))
 
 
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -870,7 +945,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     caption = (msg.caption or "").strip()
     log_history("you", f"[sent image: {name}]")  # the caption goes in with the message
-    await handle_prompt(
+    await gathered(
         update, said=caption, files=[name], prompt=
         f"(The human sent you an image, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
@@ -922,7 +997,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     caption = (msg.caption or "").strip()
     log_history("you", f"[sent {kind}: {path.name}]")
-    await handle_prompt(
+    await gathered(
         update, said=caption, files=[path.name], prompt=
         f"(The human sent you {kind}, saved at {path}. "
         + (f'Their message with it: "{caption}". ' if caption else "They sent no caption. ")
@@ -957,7 +1032,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text("🎙️ Couldn't make out any speech in that one.")
         return
     await msg.reply_text(f"🎙️ “{text}”", do_quote=True, allow_sending_without_reply=True)
-    await handle_prompt(update, text, reply_context(msg))
+    await gathered(update, text, reply_context(msg))
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
