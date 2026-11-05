@@ -1145,26 +1145,55 @@ function PhoneSteps({ toast, onPaired }) {
 // or skipped. Then the chat opens and Ken takes it from there.
 // Ken in the cloud: Telegram is linked on the account page (the site keeps the bot); here it's just where to go.
 // Hosted Ken: apps are connected on the host's Apps page; this shows which are, and links there.
-function HostedApps({ account }) {
-  const [apps, setApps] = useState(null), [error, setError] = useState('');
-  const load = () => { setError(''); api('/api/apps', { timeout: 20000 }).then(setApps).catch((e) => setError(e.message)); };
-  useEffect(load, []);
-  const page = apps?.apps_url || ((account || '/account').replace(/\/$/, '') + '/apps');
+// Hosted Ken's Settings → Apps: connected apps, search, and Connect, right here. The site serves Ken, so its
+// /account/*.json answers on this same address. Connect goes to the app's own sign-in, which comes back here.
+function HostedApps() {
+  const [data, setData] = useState(null), [error, setError] = useState(''), [q, setQ] = useState(''), [busy, setBusy] = useState('');
+  const say = new URLSearchParams(location.search);
+  const load = (query = q) => { setError(''); fetch('/account/apps.json' + (query ? '?q=' + encodeURIComponent(query) : ''), { credentials: 'same-origin' })
+    .then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load your apps just now.")); };
+  useEffect(() => { load(''); }, []);
+  useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
+  const connect = async (slug) => {
+    setBusy(slug); setError('');
+    try {
+      const r = await fetch('/account/apps/connect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ app: slug }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.url) throw new Error(body.error || "Couldn't start connecting just now. Try again.");
+      location.href = body.url;  // the app's own sign-in; it comes back to Settings → Apps
+    } catch (e) { setError(e.message); setBusy(''); }
+  };
   return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 1,700+ more apps. Ken asks before it sends or changes anything.</p>
-    ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${load}>Try again</button></p>` : !apps ? html`<p class="np-note">Loading…</p>`
-      : apps.connected.length ? html`<div class="conn-list">${apps.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`
-      : html`<p class="np-note">No apps connected yet.</p>`}
-    <a class="btn primary" href=${page} target="_top">Connect apps</a>`;
+    ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
+    ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
+    ${data?.connected?.length > 0 && html`<div class="conn-list">${data.connected.map((a) => html`<div><span class="conn-on"><i></i>${a.name}${a.accounts?.length ? ` · ${a.accounts.join(', ')}` : ''}</span></div>`)}</div>`}
+    <input class="np-input apps-search" type="search" placeholder="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
+    ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
+      : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
+          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="text-action" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`
+      : html`<p class="np-note">No app called "${q}".</p>`}`;
 }
 
-function HostedTelegram({ account }) {
-  const [phone, setPhone] = useState(null), [error, setError] = useState('');
-  useEffect(() => { api('/api/phone').then(setPhone).catch((e) => setError(e.message)); }, []);
-  const link = (account || '/account') + '#telegram';
+// Hosted Ken's Settings → Telegram: a code to scan with the phone (a button on the phone itself), right here; it
+// says Connected by itself once they press Start in Telegram.
+function HostedTelegram() {
+  const [linked, setLinked] = useState(null), [link, setLink] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const check = () => fetch('/account/telegram/status.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject()).then((r) => setLinked(r.linked));
+  useEffect(() => { check().catch(() => setError("Couldn't check Telegram just now.")); }, []);
+  useEffect(() => { if (!link || linked) return; const t = setInterval(() => check().catch(() => {}), 3000); const end = setTimeout(() => { clearInterval(t); setLink(null); setError('That code expired. Press Connect Telegram again.'); }, 1800000); return () => { clearInterval(t); clearTimeout(end); }; }, [link, linked]);
+  const start = async () => {
+    setBusy(true); setError('');
+    try { const r = await fetch('/account/telegram/link.json', { method: 'POST', credentials: 'same-origin' }); const body = await r.json().catch(() => ({})); if (!r.ok || !body.url) throw new Error(body.error || "Telegram isn't available just now."); setLink(body); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+  const stop = async () => { setBusy(true); try { await fetch('/account/telegram/disconnect', { method: 'POST', credentials: 'same-origin' }); await check(); setLink(null); } catch { setError("Couldn't disconnect just now."); } finally { setBusy(false); } };
   return html`<p class="np-help">Talk to Ken in Telegram too. Same Ken, same memory, and it can message you there (your morning brief, reminders, finished jobs).</p>
-    ${error ? html`<p class="connect-error" role="alert">${error}</p>` : !phone ? html`<p class="np-note">Loading…</p>`
-      : phone.paired ? html`<div class="conn-list"><div><span class="conn-on"><i></i>Connected${phone.owner ? ` · ${phone.owner}` : ''}</span><a class="text-action" href=${link} target="_top">Manage</a></div></div>`
-      : html`<a class="btn primary" href=${link} target="_top">Connect Telegram</a>`}`;
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    ${linked === null && !error ? html`<p class="np-note">Loading…</p>`
+      : linked ? html`<div class="conn-list"><div><span class="conn-on"><i></i>Connected</span><button class="text-action" disabled=${busy} onClick=${stop}>Disconnect</button></div></div>`
+      : link ? html`<div class="tg-connect"><p class="np-help tg-scan">Scan this with your phone's camera. Telegram opens; press Start.</p><div class="tg-qr" dangerouslySetInnerHTML=${{ __html: link.qr }}></div>
+          <a class="btn primary" href=${link.url} target="_blank" rel="noopener">Open Telegram</a><p class="np-note" role="status">Waiting for you to press Start…</p></div>`
+      : html`<button class="btn primary" disabled=${busy} onClick=${start}>${busy ? 'Getting a code…' : 'Connect Telegram'}</button>`}`;
 }
 
 function PhoneSetup({ onDone, toast }) {
@@ -1242,8 +1271,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
         return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
       ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}</div>`}
     ${current === 'tools' && html`<div class="set-body"><p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}</div>`}
-    ${current === 'apps' && html`<div class="set-body"><${HostedApps} account=${meta.account_url}/></div>`}
-    ${current === 'phone' && (HOSTED ? html`<div class="set-body"><${HostedTelegram} account=${meta.account_url}/></div>`
+    ${current === 'apps' && html`<div class="set-body"><${HostedApps}/></div>`}
+    ${current === 'phone' && (HOSTED ? html`<div class="set-body"><${HostedTelegram}/></div>`
       : html`<div class="set-body phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
     ${current === 'feedback' && html`<div class="set-body feedback">${sent
       ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.</p><button class="text-action" onClick=${() => { setSent(false); setTab('claude'); }}>Back to Settings</button>`
@@ -1265,7 +1294,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
-  const manage = usage.manage_url || accountUrl;
+  // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
+  const manage = HOSTED ? '/account/card?back=ken' : usage.manage_url || accountUrl;
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     <div class="plan-lines">${usage.lines.map((l) => html`<div class=${l.low ? 'low' : ''}><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>`)}</div>
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}

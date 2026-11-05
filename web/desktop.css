@@ -168,3 +168,6 @@ html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-
 .talk-log details{max-width:640px;padding:10px 14px;border-radius:12px;background:var(--well)}.talk-log summary{cursor:pointer;font-size:14px;color:var(--muted)}.talk-lines{padding-top:8px;font-size:14px;line-height:1.5}.talk-lines p{margin:4px 0}
 /* A link that looks like a button (Connect apps, Plan & billing): centred, no underline, only as wide as its words. */
 a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.set-body>a.btn{align-self:flex-start}
+.apps-search{margin:12px 0 8px}.apps-grid{display:flex;flex-direction:column;gap:2px;max-height:300px;overflow-y:auto}.apps-row{display:flex;align-items:center;gap:10px;padding:7px 2px;font-size:14px}.apps-row img{border-radius:5px}.apps-row span:first-of-type{flex:1}
+.tg-connect{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}.tg-qr{width:200px;height:200px;padding:8px;border-radius:12px;background:#fff;box-shadow:0 0 0 1px var(--line)}.tg-qr svg{width:100%;height:100%;display:block}
+@media (hover:none) and (pointer:coarse){.tg-qr,.tg-scan{display:none}}
