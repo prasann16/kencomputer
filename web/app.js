@@ -933,7 +933,7 @@ function Connect(props) {
   return html`<${LocalConnect} ...${props}/>`;
 }
 
-function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
+function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, onBack }) {
   const isCodex = backend === 'codex', label = isCodex ? 'ChatGPT' : 'Claude';
   const [step, setStep] = useState('start'), [url, setUrl] = useState(''), [device, setDevice] = useState(''), [value, setValue] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   // In the Mac app the browser is on this computer, so the sign-in finishes by itself and a code is rarely needed.
@@ -946,7 +946,7 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
     catch (e) { tab?.close(); setError(e.message); } finally { setBusy(false); }
   };
   const begin = () => go({ action: 'start' }, window.kenDesktop ? null : window.open('', '_blank'));
-  useEffect(() => { if (start) go({ action: 'start' }); }, []);
+  useEffect(() => { if (start) go({ action: 'start' }, tab); }, []);
   // Approving in the browser usually connects Ken by itself, with no code to paste.
   useEffect(() => {
     if (step !== 'code') return;
@@ -978,11 +978,12 @@ function LocalConnect({ onDone, backend = 'claude', start = false, onBack }) {
 
 // First run, nothing connected yet: Ken runs on a Claude or a ChatGPT account. The other can be added later in Settings.
 function FirstConnect({ onPick, onDone }) {
-  const [backend, setBackend] = useState('');
-  const pick = (b) => { setBackend(b); onPick(b); };
-  if (backend) return html`<${Connect} key=${backend} backend=${backend} start onDone=${onDone} onBack=${() => setBackend('')}/>`;
+  const [backend, setBackend] = useState(''), tab = useRef(null);
+  // In a browser, the sign-in tab has to be opened by the click itself; Connect points it at Claude or OpenAI.
+  const pick = (b) => { tab.current = window.kenDesktop ? null : window.open('', '_blank'); setBackend(b); onPick(b); };
+  if (backend) return html`<${Connect} key=${backend} backend=${backend} start tab=${tab.current} onDone=${onDone} onBack=${() => setBackend('')}/>`;
   return html`<div class="connect first-connect"><img src="/ken.svg" alt=""/><h1>Connect Ken</h1>
-    <p>${HOSTED ? 'Ken thinks with Claude or ChatGPT. Connect your account or an API key once and you’re set.' : 'Ken runs on your Claude or ChatGPT subscription. Sign in once and you’re set.'}</p>
+    <p>Ken runs on your Claude or ChatGPT subscription. Sign in once and you’re set.</p>
     <button class="btn primary" onClick=${() => pick('claude')}>Connect Claude</button>
     <button class="btn primary" onClick=${() => pick('codex')}>Connect ChatGPT</button>
     <p class="first-connect-note">You can add the other one later in Settings.</p></div>`;
