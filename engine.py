@@ -502,10 +502,15 @@ class Engine:
         if not self.new_install() or HOME in self._greeting or self.db.execute(
                 "SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (HOME,)).fetchone():
             return
+        # A hello that just failed isn't tried again for 10 minutes (each page load would otherwise retry it at once).
+        if time.time() - getattr(self, "_hello_failed_at", 0) < 600:
+            return
         self._greeting.add(HOME)
         try:
-            await self.send_message(HOME, "", log_user=False, via="app",
-                                    prompt=first_contact_prompt("opened the Ken app on this computer for the first time"))
+            ok = await self.send_message(HOME, "", log_user=False, via="app",
+                                         prompt=first_contact_prompt("opened the Ken app on this computer for the first time"))
+            if ok is False:
+                self._hello_failed_at = time.time()
         finally:
             self._greeting.discard(HOME)
 
@@ -1403,8 +1408,10 @@ class Engine:
                 msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
                                if quiet else explain_failure(e, self.backend(pid)))
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
-                # Ken speaking first (its hello) that failed says nothing: there's no message of theirs to answer or retry.
-                if not text.strip() and not job and not log_user:
+                # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
+                # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
+                # say it once with its button; that message also stops the hello being tried again and again.
+                if not text.strip() and not job and not log_user and action == "retry":
                     return False
                 self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
                                  **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))

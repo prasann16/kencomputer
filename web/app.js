@@ -1029,8 +1029,13 @@ function FirstThink({ usage, onPick, onConnected, onCredits }) {
     <div class="think-options" role="group" aria-label="How Ken thinks">
       ${option('Connect Claude', 'Use your Claude subscription', () => pick('claude'))}
       ${option('Connect ChatGPT', 'Use your ChatGPT subscription', () => pick('codex'))}
-      ${option(busy ? 'Starting…' : free ? 'Try it free' : 'Use Ken AI credits',
-        free ? `${(usage?.credits_left || '$1').replace(/\.00$/, '')} of Ken AI credits, no account needed` : `${usage.credits_left ? usage.credits_left + ' of' : 'The'} Ken AI credits with your plan`, credits, true)}
+      ${(() => {
+        // None left (a used-up trial or month): don't offer them; a paid plan can add more instead.
+        const none = usage?.credits_left && !(parseFloat(usage.credits_left.replace(/[^0-9.]/g, '')) > 0);
+        if (none) return usage.topup_url ? html`<a class="think-option" href=${usage.topup_url}><b>Add Ken AI credits</b><span>None left this month. Add any amount, or connect your own above.</span></a>` : '';
+        return option(busy ? 'Starting…' : free ? 'Try it free' : 'Use Ken AI credits',
+          free ? `${(usage?.credits_left || '$1').replace(/\.00$/, '')} of Ken AI credits, no account needed` : `${usage.credits_left ? usage.credits_left + ' of' : 'The'} Ken AI credits with your plan`, credits, true);
+      })()}
     </div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <p class="first-connect-note">You can switch any time in Settings → AI.</p></div>`;
