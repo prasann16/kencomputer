@@ -1499,6 +1499,24 @@ def set_job(name: str, on: bool | None = None, at: str | None = None, agent: str
     return list_jobs()
 
 
+def apply_onboarding(facts: dict) -> dict:
+    """What they told the hosting site while their computer was set up: soul and memory (the engine), the morning brief
+    at their time, and the getting-to-know questions it answered ticked off, so Ken doesn't ask them again."""
+    covered = ENGINE.apply_onboarding(facts)
+    brief = str(facts.get("brief") or "").strip()
+    try:
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", brief):
+            set_job("morning-brief", on=True, at=brief)
+        elif brief == "no":
+            set_job("morning-brief", on=False)
+    except ValueError as e:
+        log.warning("onboarding: couldn't set the morning brief: %s", e)
+    for item in covered:
+        if item in SETUP_ITEMS:
+            mark_setup(item, "done")
+    return {"covered": covered}
+
+
 async def scheduler() -> None:
     while True:
         try:
@@ -1654,7 +1672,7 @@ async def start_engine() -> WebApp | None:
     use_signed_in_account()
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding)
     if os.environ.get("KEN_NOTIFY_URL"):
         task = asyncio.create_task(notify_app())
         APP_TASKS.add(task)

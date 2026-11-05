@@ -114,7 +114,7 @@ def _json(data, status: int = 200) -> web.Response:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -126,6 +126,7 @@ class WebApp:
         self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
+        self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
@@ -409,6 +410,21 @@ class WebApp:
         seconds = b.get("seconds") if isinstance(b.get("seconds"), (int, float)) and 0 <= b.get("seconds") <= 7200 else 0
         message = self.engine.voice_call_done(lines, seconds)
         return _json({"ok": True, "message": message})
+
+    async def onboarding_facts(self, request):
+        """What they told the hosting site while their computer was set up (a voice call or a short form): {id, facts:
+        {call_name, work, busy, apps, brief ("08:00" or "no"), ken_name, style}}. The same id is applied once, so the
+        site can send it again until it gets an answer."""
+        b = await self._body(request)
+        facts = b.get("facts") if isinstance(b.get("facts"), dict) else {}
+        key = str(b.get("id") or "")[:100]
+        if not key or not facts:
+            return _json({"error": "id and facts, please"}, 400)
+        if self.engine.kv_get("onboarding:applied") == key:
+            return _json({"ok": True, "already": True})
+        result = self.onboarding(facts)
+        self.engine.kv_set("onboarding:applied", key)
+        return _json({"ok": True, **result})
 
     async def apps_list(self, request):
         """Hosted Ken's Settings: the apps connected on the host's Apps page."""
@@ -1005,6 +1021,7 @@ class WebApp:
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)
         r.add_post("/api/voice", self.voice)
+        r.add_post("/api/onboarding", self.onboarding_facts)
         r.add_get("/api/voice/context", self.voice_context)
         r.add_post("/api/voice/ask", self.voice_ask)
         r.add_post("/api/voice/remember", self.voice_remember)

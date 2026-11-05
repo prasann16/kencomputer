@@ -1813,7 +1813,7 @@ class Engine:
         except OSError:
             soul = ""
         title = next((ln for ln in soul.splitlines() if ln.strip()), "")
-        name = m.group(1).strip() if (m := re.match(r"#\s*You are\s+(.+)", title)) else "Ken"
+        name = m.group(1).strip().rstrip(",.") or "Ken" if (m := re.match(r"#\s*You are\s+([^(\n]+)", title)) else "Ken"
         # About them: the notes that look like they're about the person, then what each other note is about.
         about, d = [], self.memory_dir(HOME)
         notes = sorted(d.glob("*.md")) if d.is_dir() else []
@@ -1839,6 +1839,64 @@ class Engine:
             "recent_chat": part("\n".join(chat), 1800),
             "now": time.strftime("%A, %B %-d, %-I:%M %p"),
         }
+
+    ONBOARDING_KEYS = ("call_name", "work", "busy", "apps", "brief", "ken_name", "style")
+
+    def apply_onboarding(self, facts: dict) -> list[str]:
+        """What they told the hosting site about themselves while their computer was set up (each a few plain words):
+        into the soul file and memory, where Ken keeps such things. Returns the getting-to-know items it answers."""
+        def clean(key: str, limit: int = 300) -> str:
+            value = facts.get(key)
+            value = ", ".join(map(str, value)) if isinstance(value, list) else str(value or "")
+            return " ".join(speakable(value).split())[:limit].strip()
+
+        call, work, busy, apps, brief, style = (clean(k) for k in ("call_name", "work", "busy", "apps", "brief", "style"))
+        ken = re.sub(r"[^\w .'-]", "", clean("ken_name", 40)).strip()
+        covered = []
+        f = self.context_file(HOME)
+        try:
+            soul = f.read_text()
+        except OSError:
+            soul = "# You are Ken\n\nYou are their personal assistant.\n"
+        if call:
+            soul = soul.replace("my human", call)
+        lines = soul.rstrip("\n").splitlines() or ["# You are Ken"]
+        if ken:
+            lines[0] = f"# You are {ken}"
+            covered.append("ken-name")
+
+        def add(heading_prefix: str, new: list[str], heading: str) -> None:
+            at = next((i for i, ln in enumerate(lines) if ln.startswith(heading_prefix)), None)
+            if at is None:
+                lines.extend(["", heading, *new])
+                return
+            end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+            body = [ln for ln in lines[at + 1:end] if ln.strip() not in ("(Nothing yet.)",)]
+            while body and not body[-1].strip():
+                body.pop()
+            lines[at + 1:end] = [*body, *new, ""]
+
+        about = [f"- Call them {call}." if call else "", f"- Work: {work}" if work else ""]
+        if any(about):
+            add("## About", [a for a in about if a], f"## About {call or 'them'}")
+        if style:
+            add("## Style", [f"- How they like to be talked to: {style}"], "## Style")
+            covered.append("style")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("\n".join(lines).rstrip() + "\n")
+        covered += [item for item, value in (("call-you", call), ("work", work), ("tools", apps), ("brief-time", brief)) if value]
+        # The rest goes into memory, dated, where Ken looks things up.
+        notes = [f"- Work: {work}" if work else "", f"- Eating their time this week: {busy}" if busy else "",
+                 f"- Apps they live in: {apps}" if apps else "",
+                 f"- Morning brief: {'none' if brief == 'no' else brief}" if brief else ""]
+        if any(notes):
+            m = self.memory_dir(HOME) / "about-them.md"
+            m.parent.mkdir(parents=True, exist_ok=True)
+            head = "" if m.exists() else "About them: work, what's on their plate, the apps they use\n\n"
+            with m.open("a") as out:
+                out.write(head + f"From setting Ken up ({time.strftime('%b %-d')}):\n" + "\n".join(n for n in notes if n) + "\n\n")
+        self.emit("project.updated", project=HOME)
+        return covered
 
     def remember(self, fact: str) -> str:
         """Something said on a voice call that's worth keeping, into Ken's memory (the nightly review files it)."""
