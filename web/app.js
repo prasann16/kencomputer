@@ -1221,7 +1221,6 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   }); }, []);
 
   const setTab = onTab;
-  useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
@@ -1233,12 +1232,10 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // One Settings for every Ken: each section says where it shows (both, web = hosted Ken, mac = the Mac app).
   const sections = SETTINGS_SECTIONS.filter((x) => x.on === 'both' || (x.on === 'web') === HOSTED);
   const current = tab === 'feedback' || sections.some((x) => x.id === tab) ? tab : sections[0].id;
-  return html`<div class="settings-page" role="region" aria-label="Settings">
-  <header class="sp-head"><button class="text-action sp-back" onClick=${onClose}>← Back to chat</button><h1>Settings</h1></header>
-  <div class="sp-body"><nav class="sp-nav">${sections.map((x) => html`<button class=${current === x.id ? 'on' : ''} aria-current=${current === x.id ? 'page' : null} onClick=${() => { setTab(x.id); setError(''); }}>${HOSTED && x.web ? x.web : x.label}</button>`)}</nav>
-  <section class="sp-main">
+  return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
+    <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
+    <div class="set-tabs" role="tablist">${sections.map((x) => html`<button role="tab" aria-selected=${current === x.id} class=${current === x.id ? 'on' : ''} onClick=${() => { setTab(x.id); setError(''); }}>${HOSTED && x.web ? x.web : x.label}</button>`)}</div>
     ${current === 'plan' && html`<div class="set-body">${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}<${Plans}/></div>`}
-    ${current === 'appearance' && html`<div class="set-body"><div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div></div>`}
     ${current === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
         return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
@@ -1263,7 +1260,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
     ${current !== 'feedback' && html`<div class="settings-foot"><button class="text-action settings-feedback" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Send feedback</button>${meta.logout_url && html`<a class="btn sm settings-signout" href=${meta.logout_url}>Sign out</a>`}${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
       : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
-  </section></div></div>`;
+  <//>`;
 }
 // Hosted Ken: the plans, right here in Settings. The site serves Ken, so its account routes are this same address:
 // switching posts to it and comes straight back here; card and invoices are Stripe's page, which also comes back.
@@ -1289,12 +1286,11 @@ function PlanUsage({ usage, accountUrl }) {
   </div>`;
 }
 const SETTINGS_SECTIONS = [
-  { id: 'plan', label: 'Plan & usage', on: 'web' },
   { id: 'claude', label: 'AI accounts', on: 'both' },
-  { id: 'apps', label: 'Apps', on: 'web' },
-  { id: 'phone', label: 'Phone', web: 'Telegram', on: 'both' },
   { id: 'tools', label: 'Tools', on: 'both' },
-  { id: 'appearance', label: 'Appearance', on: 'both' },
+  { id: 'phone', label: 'Phone', web: 'Telegram', on: 'both' },
+  { id: 'apps', label: 'Apps', on: 'web' },
+  { id: 'plan', label: 'Plan', on: 'web' },
   { id: 'privacy', label: 'Privacy', on: 'both' },
 ];
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
@@ -1783,7 +1779,7 @@ function App() {
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${bigFile && html`<${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/>`}
     ${talking && html`<${VoiceMode} onClose=${() => { setTalking(false); checkTalk(); }}/>`}
-    ${connections && html`<${Settings} tab=${connections === 'start' ? (HOSTED ? 'plan' : 'claude') : connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
+    ${connections && html`<${Settings} tab=${connections === 'start' ? 'claude' : connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
     ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}
