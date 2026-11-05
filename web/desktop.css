@@ -143,10 +143,6 @@ ol.conn-steps{padding-left:1.3em}ol.conn-steps li{margin:2px 0}
 /* Hosted Ken, in a browser: Geist, the same as its website. */
 html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 /* Hosted Ken: the mascot's menu back to the website (Account & plan, Apps, Sign out). */
-.site-menu{position:relative;display:flex;margin-left:8px;flex-shrink:0}
-.site-menu-button{display:flex;align-items:center;gap:6px;padding:7px 12px;border:0;border-radius:999px;background:var(--well);color:var(--ink);font:inherit;font-size:14px;font-weight:500;cursor:pointer}.site-menu-chev{color:var(--muted)}.site-menu-button:hover,.site-menu-button[aria-expanded='true']{background:var(--well)}
-.site-menu-list{position:absolute;right:0;top:calc(100% + 8px);z-index:40;min-width:190px;padding:6px;border-radius:12px;background:var(--card);box-shadow:0 0 0 1px var(--line),0 12px 40px #00000018;display:flex;flex-direction:column}
-.site-menu-list a,.site-menu-list button{padding:10px 12px;border:0;border-radius:8px;background:none;font:inherit;font-size:14px;color:var(--ink);text-align:left;text-decoration:none;white-space:nowrap;cursor:pointer}.site-menu-list a:hover,.site-menu-list a:focus-visible,.site-menu-list button:hover,.site-menu-list button:focus-visible{background:var(--well);outline:none}.site-menu-list hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
 .modal.big-file{position:relative}.big-file-pick{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;height:44px;cursor:pointer}
 /* Voice mode (hosted): a calm full-screen call. Ken's face grows as Ken speaks; a soft ring follows their voice. */
 .talk{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px 16px calc(24px + env(safe-area-inset-bottom));background:var(--bg);color:var(--ink);text-align:center}
@@ -170,3 +166,11 @@ html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-
 .talk-mute.on{background:var(--ink);color:var(--bg)}
 @media (prefers-reduced-motion:reduce){.talk *,.talk *::before{animation:none!important;transition:none!important}}
 .talk-log details{max-width:640px;padding:10px 14px;border-radius:12px;background:var(--well)}.talk-log summary{cursor:pointer;font-size:14px;color:var(--muted)}.talk-lines{padding-top:8px;font-size:14px;line-height:1.5}.talk-lines p{margin:4px 0}
+/* Settings: a page of its own (back returns to the chat), sections down the side; on a phone, sections across the top. */
+.settings-page{position:fixed;inset:0;z-index:30;background:var(--bg);overflow-y:auto}
+.sp-head{max-width:880px;margin:0 auto;padding:22px 26px 8px}.sp-head h1{margin:10px 0 0;font:500 24px/1.2 var(--sans);letter-spacing:-.4px}.sp-back{font-size:13px;color:var(--muted)}
+html[data-desktop='darwin'] .sp-head{padding-top:44px}
+.sp-body{max-width:880px;margin:0 auto;padding:16px 26px 60px;display:grid;grid-template-columns:180px 1fr;gap:36px;align-items:start}
+.sp-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:16px}.sp-nav button{border:0;background:none;text-align:left;padding:8px 10px;border-radius:7px;font:inherit;font-size:14px;color:var(--muted);cursor:pointer}.sp-nav button:hover{background:var(--well);color:var(--ink-2)}.sp-nav button.on{background:var(--well);color:var(--ink);font-weight:500}
+.sp-main{min-width:0;display:flex;flex-direction:column;gap:20px}.sp-main .appearance{border-bottom:0;padding-bottom:0}.sp-out{align-self:flex-start;margin-top:4px;text-decoration:none}
+@media(max-width:700px){.sp-head{padding:16px 16px 4px}.sp-body{grid-template-columns:1fr;gap:16px;padding:8px 16px 48px}.sp-nav{flex-direction:row;overflow-x:auto;position:static;gap:4px;scrollbar-width:none}.sp-nav button{white-space:nowrap;flex-shrink:0}}
