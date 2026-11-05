@@ -253,15 +253,24 @@ function waveformPeaks(values, count = 48) {
   });
 }
 
+// Bars of a fixed thin width spread across whatever width the wave has (the live one while recording fills the
+// composer), so it never stretches into blocks. The live wave fits one bar every 5px of the room it has.
+const LIVE_BAR_PITCH = 5;
 function Waveform({ stream, peaks = [], onPeak, progress = 0 }) {
-  const svg = useRef(null);
+  const svg = useRef(null), [liveBars,setLiveBars] = useState(48);
+  useLayoutEffect(() => {
+    if (!stream || !svg.current) return;
+    const fit = () => setLiveBars(Math.max(12, Math.floor((svg.current?.clientWidth || 240) / LIVE_BAR_PITCH)));
+    fit(); window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [stream]);
   useEffect(() => {
     if (!stream) return;
     const Audio = window.AudioContext || window.webkitAudioContext;
     if (!Audio) return;
     const context = new Audio(), source = context.createMediaStreamSource(stream), analyser = context.createAnalyser();
     analyser.fftSize = 1024; source.connect(analyser); context.resume().catch(() => {});
-    const data = new Float32Array(analyser.fftSize), history = Array(48).fill(0);
+    const data = new Float32Array(analyser.fftSize), history = Array(liveBars).fill(0);
     let frame, last = 0;
     const draw = (now) => {
       if (now - last > 50) {
@@ -274,11 +283,11 @@ function Waveform({ stream, peaks = [], onPeak, progress = 0 }) {
     };
     frame = requestAnimationFrame(draw);
     return () => { cancelAnimationFrame(frame); source.disconnect(); context.close().catch(() => {}); };
-  }, [stream]);
-  const bars = waveformPeaks(peaks), peak = Math.max(.001, ...bars);
-  return html`<svg ref=${svg} class=${'voice-wave' + (stream ? ' live-wave' : '')} viewBox="0 0 192 32" preserveAspectRatio="none" role="img" aria-label=${stream ? 'Live microphone waveform' : 'Voice recording'}>${bars.map((p,i) => {
+  }, [stream, liveBars]);
+  const bars = stream ? Array(liveBars).fill(0) : waveformPeaks(peaks), peak = Math.max(.001, ...bars);
+  return html`<svg ref=${svg} class=${'voice-wave' + (stream ? ' live-wave' : '')} height="32" role="img" aria-label=${stream ? 'Live microphone waveform' : 'Voice recording'}>${bars.map((p,i) => {
     const height = Math.max(2, Math.pow(p / peak, .65) * 26);
-    return html`<rect x=${i*4} y=${(32-height)/2} width="2" height=${height} rx="1" class=${i / bars.length < progress ? 'played' : ''}/>`;
+    return html`<rect x=${`${(i / bars.length) * 100}%`} y=${(32-height)/2} width="2.5" height=${height} rx="1.25" class=${i / bars.length < progress ? 'played' : ''}/>`;
   })}</svg>`;
 }
 
@@ -391,7 +400,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`} alt=${f}/>`:Icon.file}${f}
       <button class="x" aria-label=${'Remove ' + f} onClick=${() => setFiles(files.filter((x) => x !== f))}>${Icon.close}</button></span>`)}</div>`}
     <div class="composer" onClick=${(e) => { if (e.target === e.currentTarget) ta.current?.focus(); }}>
-      ${voiceBusy ? html`<div class="recording-input"><button class="icon-btn" aria-label="Cancel recording" onClick=${()=>recorder.finish(false)}>${Icon.close}</button>${recording && html`<span class="recording-label"><i aria-hidden="true"></i>Recording</span>`}<${Waveform} stream=${recorder.stream} onPeak=${recorder.peak}/><span class="voice-time">${recorder.status==='requesting'?'Allow microphone…':durationLabel(recorder.seconds)}</span></div>` : html`<label class="sr" for=${id}>${placeholder}</label>
+      ${voiceBusy ? html`<div class="recording-input"><button class="icon-btn" aria-label="Cancel recording" onClick=${()=>recorder.finish(false)}>${Icon.close}</button>${recorder.status==='requesting' ? html`<span class="recording-wait" role="status">Allow microphone…</span>` : html`<${Waveform} stream=${recorder.stream} onPeak=${recorder.peak}/>`}${recorder.status!=='requesting' && html`<span class="voice-time">${recording && html`<i class="rec-dot" aria-label="Recording"></i>`}${durationLabel(recorder.seconds)}</span>`}</div>` : html`<label class="sr" for=${id}>${placeholder}</label>
       <textarea id=${id} ref=${ta} rows="1" placeholder=${placeholder} value=${text}
         onInput=${(e) => setText(e.target.value)} onKeyDown=${onKey}></textarea>`}
       ${onAttach && !voiceBusy && html`<button class="icon-btn attach-button" aria-label="Attach files" title="Attach files" onClick=${() => window.kenDesktop?.pickFiles ? window.kenDesktop.pickFiles().then(attach).catch((e) => toast(e.message)) : picker.current.click()}>${Icon.plus}</button>
