@@ -340,6 +340,13 @@ class Onboarding:
             self._failed(f"Claude didn’t accept that code ({problem}). Connect again and paste the new code.", problem)
             raise RuntimeError(self.error)
         if not token:
+            # Keep what the CLI said (no token in it, or we'd have it) so a sign-in that breaks can be looked at.
+            tail = re.sub(r"\s+", " ", self.output[before:])[-600:]
+            log.warning("Claude sign-in: no token after the code (exited=%s): %s", self.exited, tail)
+            try:
+                (self.env_file.parent / "signin-last.txt").write_text(f"exited={self.exited}\n{tail}\n")
+            except OSError:
+                pass
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
         await self._save(token)
         return self.status()
