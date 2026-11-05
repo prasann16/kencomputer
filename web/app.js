@@ -214,6 +214,7 @@ function DocViewer({ file, onClose }) {
 // -------------------------------------------------------------------- icons
 
 const Icon = {
+  talk: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>`,
   copy: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>`,
   check: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`,
   sun: html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
@@ -330,7 +331,7 @@ function useRecorder(onAudio, toast) {
   return {status,stream,seconds,start,finish,heard,error,peak:(p)=>{peaks.current.push(p);if(p>0.0000001)setHeard(true);}};
 }
 
-function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey }) {
+function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop, toast, draft, dropped, onDraftUsed, storageKey, onTalk }) {
   const savedDraft = (() => { try { return JSON.parse(sessionStorage.getItem('ken-draft:' + storageKey) || '{}'); } catch { return {}; } })();
   const [text, setText] = useState(savedDraft.text || '');
   const [files, setFiles] = useState(savedDraft.files || []);
@@ -394,6 +395,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
       ${onAttach && !voiceBusy && html`<button class="icon-btn attach-button" aria-label="Attach files" title="Attach files" onClick=${() => window.kenDesktop?.pickFiles ? window.kenDesktop.pickFiles().then(attach).catch((e) => toast(e.message)) : picker.current.click()}>${Icon.plus}</button>
         <input ref=${picker} type="file" multiple hidden onChange=${(e) => { attach(e.target.files); e.target.value = ''; }} />`}
       ${voice && !voiceBusy && html`<button class="icon-btn" aria-label="Voice" title="Record a voice note" onClick=${recorder.start}>${Icon.mic}</button>`}
+      ${onTalk && !voiceBusy && html`<button class="icon-btn talk-button" aria-label="Talk with Ken" title="Talk with Ken (voice mode)" onClick=${onTalk}>${Icon.talk}</button>`}
       ${busy && !ready && !voiceBusy && onStop
         ? html`<button class="icon-btn hot" aria-label="Stop reply" title="Stop this reply" onClick=${() => Promise.resolve(onStop()).catch((e) => toast(e.message))}>${Icon.stop}</button>`
         : (ready || voiceBusy) && html`<button class="icon-btn hot" aria-label="Send" disabled=${recording ? !recorder.heard : (!ready || sending || voiceBusy || uploading > 0)} onClick=${send}>${Icon.send}</button>`}
@@ -430,7 +432,14 @@ function Message({ m, label }) {
       })}
       ${m.text && !recording && html`<div class="bubble" ref=${body}>${content}</div>`}
       ${m.via === 'telegram' && html`<div class="msg-from">📱 from Telegram</div>`}
+      ${m.via === 'voice' && !m.call && m.role === 'you' && html`<div class="msg-from">🎙️ said on a voice call</div>`}
     </div></div>`;
+  }
+  // A voice call, after it ended: what was said, folded away.
+  if (m.call) {
+    const mins = Math.max(1, Math.round((m.call.seconds || 0) / 60));
+    return html`<div class="msg talk-log"><details><summary>🎙️ Voice call · ${mins} min</summary>
+      <div class="talk-lines">${m.text.split('\n').map((line) => { const [who, ...rest] = line.split(': '); return html`<p><b>${who}</b> ${rest.join(': ')}</p>`; })}</div></details></div>`;
   }
   // A scheduled job's report says what it is, so Ken never seems to talk out of nowhere.
   return html`<div class=${'msg' + (m.error ? ' err' : '') + (m.job ? ' from-job' : '')}>
@@ -631,7 +640,7 @@ function PreviewModal({ file, onClose, toast }) {
   <//>`;
 }
 
-function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup, loadError, onReload, onAIAccounts }) {
+function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup, loadError, onReload, onAIAccounts, onTalk }) {
   const thread = useRef(null);
   const [dragging, setDragging] = useState(false);
   // Drop files anywhere in the window, or paste them, to attach to the message.
@@ -723,10 +732,180 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
       <${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
         onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list, onProgress) => upload(pid, list, true, onProgress)} onStop=${stop}
-        onSend=${async (text, files) => { sent(); await onSend(text, files); }}/>
+        onSend=${async (text, files) => { sent(); await onSend(text, files); }} onTalk=${onTalk}/>
     </div>
     ${dragging && html`<div class="dropzone">Drop files into your message</div>`}
   </section>`;
+}
+
+// ------------------------------------------------------------------ voice mode (hosted)
+
+// Talk with Ken out loud, back and forth. The site Ken is hosted on runs a fast voice service that does the talking:
+// /voice/start gives each call a one-use link and what Ken knows about them (GET /api/voice/context), and the talker
+// hands real work to Ken here (ask_ken → /api/voice/ask, remember → /api/voice/remember). The voice service's key
+// stays on the site; its client and audio worklets are served by Ken (vendor/elevenlabs/README.md).
+let voiceClient = null;
+function loadVoiceClient() {
+  voiceClient ||= new Promise((resolve, reject) => {
+    const tag = Object.assign(document.createElement('script'), { src: '/vendor/elevenlabs/client.js' });
+    tag.onload = () => (window.ElevenLabsClient ? resolve(window.ElevenLabsClient) : reject(new Error('Voice mode didn’t load. Try again.')));
+    tag.onerror = () => { voiceClient = null; tag.remove(); reject(new Error('Voice mode didn’t load. Check your connection and try again.')); };
+    document.head.append(tag);
+  });
+  return voiceClient;
+}
+const VOICE_FILES = {
+  workletPaths: { rawAudioProcessor: '/vendor/elevenlabs/rawAudioProcessor.js', audioConcatProcessor: '/vendor/elevenlabs/audioConcatProcessor.js' },
+  libsampleratePath: '/vendor/elevenlabs/libsamplerate.worklet.js',
+};
+const TALK_CONNECT_WAIT = 25000;  // the whole way to a live call: the mic, Ken's context, the voice service
+const TALK_LINES = { mic: 'Allow the microphone…', connecting: 'Connecting…', listening: 'Listening', speaking: 'Ken is talking', working: 'Ken is on it…', ended: 'Call ended', failed: '' };
+
+async function voiceStatus() {
+  try {
+    const r = await fetch('/voice/status', { signal: AbortSignal.timeout(10000) });
+    return r.ok && (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
+  } catch { return null; }
+}
+
+function VoiceMode({ onClose }) {
+  const [state, setState] = useState('mic');  // mic | connecting | live | ended | failed
+  const [mode, setMode] = useState('listening');
+  const [working, setWorking] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [problem, setProblem] = useState({ text: '', retry: true });
+  const [seconds, setSeconds] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const session = useRef(null), call = useRef(null), lines = useRef([]), started = useRef(0), face = useRef(null), endButton = useRef(null);
+
+  // Once per call: tell the site it ended (it counts the minutes from the voice service's own record), and put what
+  // was said into the chat.
+  const wrapUp = () => {
+    const c = call.current;
+    if (!c || c.done) return;
+    c.done = true;
+    const secs = started.current ? (Date.now() - started.current) / 1000 : 0;
+    api('/voice/end', { json: { conversation_id: c.conversation_id } }).catch(() => {});
+    if (lines.current.length) api('/api/voice/done', { json: { lines: lines.current, seconds: secs } }).catch(() => {});
+  };
+  const hangUp = () => { const s = session.current; session.current = null; s?.endSession?.().catch?.(() => {}); wrapUp(); };
+
+  useEffect(() => {
+    let gone = false, timer = 0;
+    const fail = (text, retry = true) => {
+      if (gone) return;
+      clearTimeout(timer); hangUp();
+      setProblem({ text, retry }); setState('failed');
+    };
+    started.current = 0; call.current = null; lines.current = [];
+    setState('mic'); setProblem({ text: '', retry: true }); setSeconds(0); setMuted(false); setMode('listening');
+    (async () => {
+      // The microphone first, asked only now that they tapped: a refusal gets a plain answer.
+      try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        return fail(e && e.name === 'NotAllowedError'
+          ? 'Ken can’t hear you: this site isn’t allowed to use your microphone. Allow it in your browser’s settings for this site, then try again.'
+          : 'No microphone was found. Check that one is connected, then try again.');
+      }
+      if (gone) return;
+      setState('connecting');
+      timer = setTimeout(() => fail('Couldn’t connect. Check your connection and try again.'), TALK_CONNECT_WAIT);
+      let Client, start;
+      try {
+        [Client, start] = await Promise.all([loadVoiceClient(), api('/voice/start', { json: {}, timeout: TALK_CONNECT_WAIT })]);
+      } catch (e) {
+        return fail(e.message, !/minutes of voice mode/.test(e.message));
+      }
+      if (gone) return;
+      call.current = start;
+      try {
+        const s = await Client.Conversation.startSession({
+          signedUrl: start.signed_url, connectionType: 'websocket', dynamicVariables: start.dynamic_variables, ...VOICE_FILES,
+          clientTools: {
+            ask_ken: async ({ request }) => {
+              setWorking((n) => n + 1);
+              try { return (await api('/api/voice/ask', { json: { request }, timeout: 28000 })).answer; }
+              catch { return 'Ken couldn’t be reached just now. Say so, and that it’s worth trying again in a moment.'; }
+              finally { setWorking((n) => n - 1); }
+            },
+            remember: ({ fact }) => api('/api/voice/remember', { json: { fact } }).then(() => 'Saved.', () => 'That couldn’t be saved just now.'),
+          },
+          onConnect: () => { clearTimeout(timer); started.current = Date.now(); if (!gone) setState('live'); },
+          onModeChange: ({ mode }) => !gone && setMode(mode),
+          onMessage: ({ message, role, source }) => { if (message) lines.current.push({ role: (role || source) === 'user' ? 'you' : 'ken', text: message }); },
+          onDisconnect: (d) => {
+            if (gone || !session.current) return;
+            if (d && d.reason === 'error') return fail('The call dropped. Try again.');
+            session.current = null; wrapUp(); setState('ended');
+          },
+          onError: (message) => console.error('voice mode:', message),
+        });
+        if (gone) { s.endSession(); return; }
+        session.current = s;
+      } catch {
+        fail('Couldn’t connect. Check your connection and try again.');
+      }
+    })();
+    return () => { gone = true; clearTimeout(timer); hangUp(); };
+  }, [attempt]);
+
+  // The call's clock, and its end: the month's minutes running out ends it here (a call is 15 minutes at most; the
+  // voice service ends it there itself).
+  useEffect(() => {
+    if (state !== 'live') return;
+    const tick = setInterval(() => {
+      const secs = (Date.now() - started.current) / 1000;
+      setSeconds(secs);
+      const max = call.current?.max_seconds || 900;
+      if (secs >= max + (max >= 900 ? 5 : 0)) {
+        hangUp();
+        if (max < 900) { setProblem({ text: `That’s all of this month’s voice minutes. They start again on ${call.current.resets_on}. You can still type to Ken.`, retry: false }); setState('failed'); }
+        else setState('ended');
+      }
+    }, 500);
+    return () => clearInterval(tick);
+  }, [state]);
+
+  // Ken's face moves with the voices: bigger as Ken speaks, a soft ring as they do.
+  useEffect(() => {
+    if (state !== 'live') return;
+    let frame = 0;
+    const draw = () => {
+      const s = session.current;
+      if (s && face.current) {
+        face.current.style.setProperty('--out', Math.min(1, (s.getOutputVolume?.() || 0) * 2).toFixed(3));
+        face.current.style.setProperty('--in', Math.min(1, (s.getInputVolume?.() || 0) * 3).toFixed(3));
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(frame);
+  }, [state]);
+
+  useEffect(() => {
+    endButton.current?.focus();
+    const key = (e) => { if (e.key === 'Escape') { hangUp(); onClose(); } };
+    addEventListener('keydown', key);
+    return () => removeEventListener('keydown', key);
+  }, []);
+
+  const mute = () => { const next = !muted; session.current?.setMicMuted(next); setMuted(next); };
+  const line = state === 'live' ? (working ? TALK_LINES.working : muted ? 'Muted' : TALK_LINES[mode] || '') : TALK_LINES[state];
+  const over = state === 'failed' || state === 'ended';
+  return html`<div class=${'talk ' + state + ' ' + (state === 'live' ? mode : '') + (working ? ' working' : '')} role="dialog" aria-modal="true" aria-label="Voice call with Ken">
+    <div class="talk-face" ref=${face}><img src="/ken.svg" alt=""/></div>
+    <p class="talk-line" role="status">${line}</p>
+    ${state === 'live' && html`<p class="talk-time">${durationLabel(seconds)}</p>`}
+    ${problem.text && html`<p class="talk-problem" role="alert">${problem.text}</p>`}
+    ${state === 'ended' && html`<p class="talk-note">What you said is in the chat.</p>`}
+    <div class="talk-controls">
+      ${state === 'live' && html`<button class=${'talk-mute' + (muted ? ' on' : '')} aria-pressed=${muted} onClick=${mute}>${muted ? 'Unmute' : 'Mute'}</button>`}
+      ${state === 'failed' && problem.retry && html`<button class="talk-retry" onClick=${() => setAttempt((n) => n + 1)}>Try again</button>`}
+      <button class="talk-end" ref=${endButton} onClick=${() => { hangUp(); onClose(); }}>${over ? 'Close' : 'End'}</button>
+    </div>
+  </div>`;
 }
 
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
@@ -1345,6 +1524,9 @@ function App() {
   const [newProject,setNewProject]=useState(false);
   const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
   const [connections,setConnections]=useState(false), [bigFile, setBigFile] = useState('');
+  // Voice mode: only where the site Ken is hosted on offers it, with minutes left this month (/voice/status).
+  const [talk, setTalk] = useState(null), [talking, setTalking] = useState(false);
+  const checkTalk = () => voiceStatus().then(setTalk);
   const [projectMeta,setProjectMeta]=useState(null);
   const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/agents/${id}`).then((v)=>setProjectMeta(v.agent)).catch(()=>setProjectMeta(null)); };
   const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
@@ -1437,6 +1619,7 @@ function App() {
   const loadMeta = () => api('/api/meta').then((m) => {
     HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; setMeta(m);
     if (HOSTED) document.documentElement.dataset.hosted = '';  // Geist, like its website (desktop.css)
+    if (HOSTED && !window.kenDesktop) checkTalk();
     // In the cloud Ken's clock starts on UTC: use this browser's time zone until they say otherwise.
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (m.hosted && !m.timezone && zone) api('/api/command', { json: { text: '/timezone ' + zone } }).catch(() => {});
@@ -1609,12 +1792,13 @@ function App() {
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
   return html`<div class="shell"><main class="main"><${ChatHeader} siteMenu=${siteLinks(meta)} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>setConnections(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline ? 'Reconnecting…' : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/>${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}
     ${meta.usage?.lines?.some((l) => l.low) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
-    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>setConnections(true)}/>`}
+    ${setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : setup && setup.phone === 'unset' ? html`<${PhoneSetup} toast=${toast} onDone=${(r)=>{setSetup(r);load();}}/>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>setConnections(true)} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}
   </main>
     ${docFile && html`<${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/>`}
     ${runId && html`<${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/>`}
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${bigFile && html`<${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/>`}
+    ${talking && html`<${VoiceMode} onClose=${() => { setTalking(false); checkTalk(); }}/>`}
     ${connections && html`<${Settings} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${()=>setConnections(false)} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
     ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}

@@ -29,7 +29,8 @@ import crash
 log = logging.getLogger("ken")
 
 HOME = "home"  # the conversation with Ken itself
-WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)"}
+WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)",
+         "voice": "said out loud on a voice call, passed on by your voice side, which speaks your answer back to them: keep it short and speakable"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
 # Ken's very first contact, the same wherever it happens (the app or the phone): Ken writes it,
@@ -257,6 +258,17 @@ def prepare_skills(home: Path, builtin: Path | None = None, others: dict[str, li
 def slugify(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s[:40] or "project"
+
+
+# Things never said out loud or sent to a voice service: keys and tokens, and paths on this computer.
+SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,}|sk_(?:live|test)_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|"
+                       r"AKIA[0-9A-Z]{16}|\d{6,}:[A-Za-z0-9_-]{30,}|[A-Za-z0-9+/_=-]{40,})")
+PATH_TEXT_RE = re.compile(r"(?<![\w/])(?:~|/(?:home|Users|root|tmp|var|opt|etc|mnt|private))/[^\s'\"`)>\]]*")
+
+
+def speakable(text: str) -> str:
+    text = re.sub(r"(?im)^.*\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\b\s*[=:].*$", "", str(text))
+    return PATH_TEXT_RE.sub("(a file)", SECRET_RE.sub("(hidden)", text))
 
 
 def safe_filename(name: str) -> str:
@@ -1129,6 +1141,10 @@ class Engine:
         if said:
             self.kv_set(f"jobs:said:{pid}", "[]")
             parts.append("since your last turn your scheduled jobs sent them: " + " | ".join(said))
+        call = self.kv_get(f"voice:said:{pid}")
+        if call:
+            self.kv_set(f"voice:said:{pid}", "")
+            parts.append("since your last turn they talked with your voice side on a call: " + call)
         if jobs:
             parts.append("background jobs running: " + ", ".join(
                 f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
@@ -1781,6 +1797,71 @@ class Engine:
             "home": self.messages(HOME, 30),
             "home_busy": self.chat_busy(HOME),
         }
+
+    # ------------------------------------------------------------------ voice
+
+    # Voice mode: a fast talker (a voice service the hosting site connects) speaks for Ken, and hands real work to
+    # Ken itself. What it knows at the start of each call comes from here: small, so it stays fast, and only things
+    # fit to say out loud (no keys, tokens or file paths).
+    def voice_context(self) -> dict:
+        def part(text: str, limit: int) -> str:
+            text = speakable(text).strip()
+            return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0].rstrip() + " …"
+
+        try:
+            soul = self.context_file(HOME).read_text(errors="replace")
+        except OSError:
+            soul = ""
+        title = next((ln for ln in soul.splitlines() if ln.strip()), "")
+        name = m.group(1).strip() if (m := re.match(r"#\s*You are\s+(.+)", title)) else "Ken"
+        # About them: the notes that look like they're about the person, then what each other note is about.
+        about, d = [], self.memory_dir(HOME)
+        notes = sorted(d.glob("*.md")) if d.is_dir() else []
+        personal = [f for f in notes if re.search(r"about|profile|people|family|person|me\b|work|voice", f.stem, re.I)]
+        for f in personal[:3]:
+            about.append(f.read_text(errors="replace").strip())
+        listing = [next((ln.strip().lstrip("#").strip() for ln in f.read_text(errors="replace").splitlines() if ln.strip()), "")
+                   for f in notes if f not in personal]
+        if listing := [ln for ln in listing if ln]:
+            about.append("Other things in memory: " + "; ".join(listing[:15]))
+        # Today: this morning's brief, if Ken sent one today.
+        recent = self.messages(HOME, 60)
+        start_of_day = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        brief = next((m["text"] for m in reversed(recent) if m.get("role") == "ken" and m.get("ts", 0) >= start_of_day
+                      and (m.get("job") or {}).get("name") == "morning-brief" and m.get("text")), "")
+        chat = [f"{'Them' if m['role'] == 'you' else name}: {' '.join(str(m['text']).split())[:280]}"
+                for m in recent if m.get("role") in ("you", "ken") and m.get("text") and not m.get("call")][-8:]
+        return {
+            "ken_name": name[:40],
+            "soul": part(soul, 3000),
+            "about_you": part("\n\n".join(about), 1500),
+            "today": part(brief, 1000),
+            "recent_chat": part("\n".join(chat), 1800),
+            "now": time.strftime("%A, %B %-d, %-I:%M %p"),
+        }
+
+    def remember(self, fact: str) -> str:
+        """Something said on a voice call that's worth keeping, into Ken's memory (the nightly review files it)."""
+        fact = " ".join(speakable(fact).split())[:300]
+        if not fact:
+            raise ValueError("Nothing to remember.")
+        f = self.memory_dir(HOME) / "voice.md"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if not f.exists():
+            f.write_text("Things they told me on voice calls (to file into the right notes)\n\n")
+        with f.open("a") as out:
+            out.write(f"- {fact} ({time.strftime('%b %-d')})\n")
+        return fact
+
+    def voice_call_done(self, lines: list[dict], seconds: float) -> dict | None:
+        """After a voice call, its words go into the Home chat, so voice and text are one history."""
+        said = [(str(x.get("role")), " ".join(str(x.get("text", "")).split())[:1000]) for x in lines[:200]
+                if isinstance(x, dict) and x.get("role") in ("you", "ken") and str(x.get("text", "")).strip()]
+        if not said:
+            return None
+        text = "\n".join(f"{'You' if role == 'you' else 'Ken'}: {words}" for role, words in said)
+        self.kv_set(f"voice:said:{HOME}", " | ".join(f"{'they' if role == 'you' else 'you'}: {words}" for role, words in said)[-3000:])
+        return self.log_message(HOME, "ken", text[:20000], call={"seconds": round(seconds)}, via="voice")
 
     def agent_view(self, pid: str) -> dict:
         p = self.get_agent(pid)

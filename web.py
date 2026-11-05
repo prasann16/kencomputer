@@ -196,9 +196,10 @@ class WebApp:
     async def index(self, request: web.Request) -> web.FileResponse:
         # The live updates socket is this same host: ws:// on this computer, wss:// behind an HTTPS proxy.
         host = request.host if all(c.isalnum() or c in ".-:[]" for c in request.host) else "localhost"
+        voice = " wss://api.elevenlabs.io" if hosted_web() else ""  # voice mode's talker (the hosting site connects it)
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
-            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}; object-src 'none'; frame-src 'none'; base-uri 'none'",
+            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}{voice}; object-src 'none'; frame-src 'none'; base-uri 'none'",
         })
 
     async def static_file(self, request: web.Request) -> web.StreamResponse:
@@ -360,6 +361,54 @@ class WebApp:
         if not name or "/" in name or name.startswith(".") or not path.is_file():
             return _json({"error": "That file didn't arrive. Try sending it again."}, 400)
         return _json({"ok": True}) if await self.phone.file_arrived(token, path) else expired
+
+    # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
+    # talker that can make HTTP calls with Ken's web token can use them.
+    async def voice_context(self, request):
+        """What the talker knows at the start of a call: small, and nothing that isn't fit to say out loud."""
+        return _json(self.engine.voice_context())
+
+    ASK_WAIT = 20  # seconds: a talker can only keep someone waiting so long
+
+    async def voice_ask(self, request):
+        """Real work, asked for out loud: it goes into the Home chat like a typed message. Ken's answer comes back if
+        it's quick; a longer job says so at once and Ken finishes in the chat as usual."""
+        text = " ".join(str((await self._body(request)).get("request", "")).split())[:2000]
+        if not text:
+            return _json({"error": "empty request"}, 400)
+        if not self._brain_connected(HOME):
+            return _json({"done": True, "answer": "I can't do that yet: an AI account needs connecting in Settings first."})
+        said: list[str] = []
+
+        async def listener(t: str) -> None:
+            said.append(t)
+
+        work = asyncio.ensure_future(self.engine.send_message(HOME, text, via="voice", listener=listener))
+        self.bg.add(work)
+        work.add_done_callback(self.bg.discard)
+        try:
+            await asyncio.wait_for(asyncio.shield(work), self.ASK_WAIT)
+        except asyncio.TimeoutError:
+            first = f"So far: {said[0][:600]} " if said else ""
+            return _json({"done": False, "answer": f"{first}Ken is still working on it and will finish in the chat."})
+        except Exception:
+            return _json({"done": True, "answer": "That didn't work just now. It's in the chat to try again."})
+        return _json({"done": True, "answer": "\n".join(said)[-2000:] or "Done."})
+
+    async def voice_remember(self, request):
+        try:
+            fact = self.engine.remember(str((await self._body(request)).get("fact", "")))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+        return _json({"ok": True, "saved": fact})
+
+    async def voice_done(self, request):
+        """After the call: what was said goes into the chat, so voice and text are one history."""
+        b = await self._body(request)
+        lines = b.get("lines") if isinstance(b.get("lines"), list) else []
+        seconds = b.get("seconds") if isinstance(b.get("seconds"), (int, float)) and 0 <= b.get("seconds") <= 7200 else 0
+        message = self.engine.voice_call_done(lines, seconds)
+        return _json({"ok": True, "message": message})
 
     async def apps_list(self, request):
         """Hosted Ken's Settings: the apps connected on the host's Apps page."""
@@ -956,6 +1005,10 @@ class WebApp:
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)
         r.add_post("/api/voice", self.voice)
+        r.add_get("/api/voice/context", self.voice_context)
+        r.add_post("/api/voice/ask", self.voice_ask)
+        r.add_post("/api/voice/remember", self.voice_remember)
+        r.add_post("/api/voice/done", self.voice_done)
         r.add_post("/api/command", self.command)
         r.add_get("/api/setup", self.setup_status)
         r.add_get("/api/connections", self.connections_status)
