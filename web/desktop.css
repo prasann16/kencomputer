@@ -185,3 +185,12 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 .plan-usage>.text-action{margin-top:10px;align-self:flex-start}
 .sp-foot{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding-top:22px;border-top:1px solid var(--line);font-size:13px}.sp-foot .settings-version{margin-left:auto}
 @media(max-width:600px){.sp-wrap{padding:16px 16px 48px}.apps-grid{grid-template-columns:1fr}}
+/* Settings is a page you read, so it uses the website's roomier sizes (the account page), not the chat's compact ones. */
+.settings-page{font-size:15px}.sp-wrap{max-width:680px;padding-top:32px}
+.sp-head h1{font-size:30px;margin:12px 0 26px}.sp-back{font-size:14px}
+.sp-section{padding:28px 0}.sp-section h2{font-size:18px;margin-bottom:8px}.sp-section .np-help,.settings-page .np-note{font-size:15px;line-height:1.55}
+.settings-page .btn{height:40px;padding:0 18px;border-radius:999px;font-size:14px}.settings-page .btn.sm{height:34px;padding:0 14px;font-size:13px}
+.settings-page .text-action{font-size:14px}.settings-page .conn-list{padding:0;gap:10px}.settings-page .conn-list>div{font-size:15px}
+.settings-page .apps-row{font-size:15px;padding:12px 14px}.settings-page .apps-search{height:44px;font-size:15px;border-radius:12px}
+.settings-page .plan-usage{padding:20px 22px;border-radius:18px}.settings-page .plan-usage>b{font-size:16px}.settings-page .plan-usage .meter-top{font-size:14px}
+.settings-page .sp-foot{font-size:14px}
