@@ -1276,7 +1276,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   useEffect(() => { if (tab && tab !== 'start') document.getElementById('set-' + (tab.startsWith('connect-') ? 'claude' : tab))?.scrollIntoView({ block: 'start' }); }, []);
   const section = (id, title, body) => html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
-  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><p class="np-note" role="status">Loading…</p></div></div>`;
+  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
@@ -1307,6 +1307,14 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
       : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</footer>
   </div></div>`;
+}
+// Waiting for Ken's computer (it's waking up or restarting into an update): say so, and never wait forever.
+function WaitingForKen() {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => { const t = setInterval(() => setSecs((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  if (secs < 3) return html`<p class="np-note" role="status">Loading…</p>`;
+  if (secs < 45) return html`<p class="np-note" role="status">Ken's computer is waking up. This usually takes under a minute…</p>`;
+  return html`<p class="connect-error" role="alert">Ken's computer isn't answering yet.</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button>`;
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
