@@ -475,8 +475,16 @@ async def test_keep_awake_checks_in(monkeypatch):
     monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "secret")
     with pytest.raises(SystemExit):
         await bot.keep_awake()
-    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev", "started"}
-    assert posts[0][1]["started"] == bot.STARTED_AT
+    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev", "started", "talked"}
+    assert posts[0][1]["started"] == bot.STARTED_AT and posts[0][1]["talked"] == bot.BORN_FLAG.exists()
+    # How Ken thinks, once chosen on its first screen (the host's funnel counts it once).
+    class Claude:
+        def ai_choice(self):
+            return "credits"
+    monkeypatch.setattr(bot, "ACCOUNTS", type("A", (), {"providers": {"claude": Claude()}, "active": False})())
+    with pytest.raises(SystemExit):
+        await bot.keep_awake()
+    assert posts[1][1]["ai"] == "credits"
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "http://insecure.example")
     assert await bot.keep_awake() is None
 

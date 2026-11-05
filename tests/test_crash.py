@@ -142,3 +142,18 @@ def test_a_client_hanging_up_early_is_not_an_error(sent):
     finally:
         loop.close()
     assert len(sent) == 1
+
+
+def test_ken_in_the_cloud_counts_under_the_websites_id_for_the_person(sent, monkeypatch, tmp_path):
+    """Round 27: the host gives each computer its user id (KEN_ANALYTICS_ID) so Ken's events and the website's are one
+    person in PostHog. The Mac keeps its random install id and no person profile."""
+    crash.track("message", via="app")
+    mac = sent[-1]
+    assert mac["distinct_id"] == crash.install_id(tmp_path) and mac["properties"]["$process_person_profile"] is False
+    monkeypatch.setenv("KEN_ANALYTICS_ID", "google-123")
+    assert crash.install_id(tmp_path) == crash.install_id(tmp_path)  # not on the Mac (no KEN_PLATFORM): still the install's
+    assert crash.install_id(tmp_path) != "google-123"
+    monkeypatch.setenv("KEN_PLATFORM", "agent37")
+    crash._state["id"] = crash.install_id(tmp_path)
+    crash.track("message", via="app")
+    assert sent[-1]["distinct_id"] == "google-123" and "$process_person_profile" not in sent[-1]["properties"]

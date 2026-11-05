@@ -1641,7 +1641,10 @@ async def keep_awake() -> None:
         while True:
             try:
                 busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active)
-                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT},
+                # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
+                ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
+                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
+                                             "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {})},
                                   headers={"Authorization": f"Bearer {token}"})
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)
