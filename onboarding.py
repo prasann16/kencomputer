@@ -313,7 +313,9 @@ class Onboarding:
 
         If the sign-in has gone away (the CLI exited, or was never started),
         open a fresh one instead of failing: the user approves and pastes again."""
-        if self.connected():  # the browser already finished the sign-in
+        # Their own Claude is already in (the browser finished the sign-in). Ken AI credits don't count: someone on them
+        # pasting a code is connecting their own account, so the code must go through.
+        if self.connected() and not use_included_ai():
             return self.status()
         self.error = ""
         try:
