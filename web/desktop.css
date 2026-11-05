@@ -174,3 +174,5 @@ html[data-desktop='darwin'] .sp-head{padding-top:44px}
 .sp-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:16px}.sp-nav button{border:0;background:none;text-align:left;padding:8px 10px;border-radius:7px;font:inherit;font-size:14px;color:var(--muted);cursor:pointer}.sp-nav button:hover{background:var(--well);color:var(--ink-2)}.sp-nav button.on{background:var(--well);color:var(--ink);font-weight:500}
 .sp-main{min-width:0;display:flex;flex-direction:column;gap:20px}.sp-main .appearance{border-bottom:0;padding-bottom:0}.sp-out{align-self:flex-start;margin-top:4px;text-decoration:none}
 @media(max-width:700px){.sp-head{padding:16px 16px 4px}.sp-body{grid-template-columns:1fr;gap:16px;padding:8px 16px 48px}.sp-nav{flex-direction:row;overflow-x:auto;position:static;gap:4px;scrollbar-width:none}.sp-nav button{white-space:nowrap;flex-shrink:0}}
+/* A link that looks like a button (Connect apps, Plan & billing): centred, no underline, only as wide as its words. */
+a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.set-body>a.btn{align-self:flex-start}
