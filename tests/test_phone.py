@@ -113,7 +113,7 @@ async def test_saying_hi_pairs_a_just_connected_bot(phone, monkeypatch):
     monkeypatch.setattr(bot, "PHONE", phone)
     replies, prompts = [], []
 
-    async def handle(update, text, context=""):
+    async def handle(update, text, context="", **kw):
         prompts.append(text)
 
     monkeypatch.setattr(bot, "handle_prompt", handle)
