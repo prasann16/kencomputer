@@ -1826,6 +1826,9 @@ async def notify_app() -> None:
                     note = {"kind": "run", "title": ev.get("title", ""), "status": ev.get("status")}
                 elif ev["type"] == "message" and ev.get("role") == "ken" and (ev.get("text") or "").strip():
                     note = {"kind": "message", "text": ev["text"].strip()[:300]}
+                    if isinstance(ev.get("job"), dict):  # a scheduled job's result: the site emails it without Telegram
+                        note["job"] = {"name": ev["job"].get("name", ""), "label": ev["job"].get("label", "")}
+                        note["full_text"] = ev["text"].strip()[:20000]
                 else:
                     continue
                 name = "Ken" if pid == HOME else ENGINE.get_agent(pid)["name"]

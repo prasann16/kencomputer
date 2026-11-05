@@ -49,10 +49,12 @@ async def test_what_buzzes_reaches_the_app(monkeypatch):
         {"type": "approval.created", "project": "res", "approval": {"project": "res", "title": "Send the email?"}},
         {"type": "run.finished", "project": "res", "status": "stopped", "title": "x"},
         {"type": "run.finished", "project": "res", "status": "done", "title": "Find flights"},
+        {"type": "message", "project": "home", "role": "ken", "text": "Brief " + "x" * 30000,
+         "job": {"name": "morning-brief", "label": "☀️ Morning brief", "time": "07:30", "at": 1.0}},
     ):
         engine.q.put_nowait(ev)
     for _ in range(50):
-        if len(FakeClient.sent) == 3:
+        if len(FakeClient.sent) == 4:
             break
         await asyncio.sleep(0.01)
     task.cancel()
@@ -60,5 +62,8 @@ async def test_what_buzzes_reaches_the_app(monkeypatch):
         {"kind": "message", "text": "Here's your reel.", "project": "home", "name": "Ken"},
         {"kind": "approval", "title": "Send the email?", "project": "res", "name": "Researcher"},
         {"kind": "run", "title": "Find flights", "status": "done", "project": "res", "name": "Researcher"},
+        {"kind": "message", "text": ("Brief " + "x" * 30000)[:300], "project": "home", "name": "Ken",
+         "job": {"name": "morning-brief", "label": "☀️ Morning brief"}, "full_text": ("Brief " + "x" * 30000)[:20000]},
     ]
+    assert "job" not in FakeClient.sent[0][1] and "full_text" not in FakeClient.sent[0][1]  # a plain reply
     assert all(s[0] == "https://example.test/app/notify" and s[2] == {"Authorization": "Bearer t0k"} for s in FakeClient.sent)
