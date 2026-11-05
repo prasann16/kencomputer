@@ -1234,8 +1234,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const current = tab === 'feedback' || sections.some((x) => x.id === tab) ? tab : sections[0].id;
   return html`<${Modal} title="Settings" className="settings" closeX onClose=${onClose}>
     <div class="appearance"><span id="appearance-label">Appearance</span><div class="segmented" role="radiogroup" aria-labelledby="appearance-label">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div></div>
+    ${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}
+    ${!meta.usage && meta.account_url && html`<p class="np-note"><a class="text-action" href=${meta.account_url}>Your plan and billing</a></p>`}
     <div class="set-tabs" role="tablist">${sections.map((x) => html`<button role="tab" aria-selected=${current === x.id} class=${current === x.id ? 'on' : ''} onClick=${() => { setTab(x.id); setError(''); }}>${HOSTED && x.web ? x.web : x.label}</button>`)}</div>
-    ${current === 'plan' && html`<div class="set-body">${meta.usage && html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>`}<${Plans}/></div>`}
     ${current === 'claude' && html`<div class="set-body"><p class="np-help">Connect Claude, Codex, or both. Choose a brain and model at the top of each chat; different agents can use different brains.</p>
       <div class="conn-list">${[['claude', 'Claude'], ['codex', 'Codex']].map(([id, label]) => { const account = setup?.providers?.[id] || {}, included = account.how === 'included';
         return html`<div><span>${included ? on(`${label} · Using Ken AI credits`) : account.connected ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${included ? 'Use your own account' : account.connected ? `Reconnect ${label}` : `Connect ${label}`}</button>${HOSTED && account.connected && !included && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
@@ -1262,35 +1263,19 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</div>`}
   <//>`;
 }
-// Hosted Ken: the plans, right here in Settings. The site serves Ken, so its account routes are this same address:
-// switching posts to it and comes straight back here; card and invoices are Stripe's page, which also comes back.
-function Plans() {
-  const [data, setData] = useState(null), [error, setError] = useState('');
-  const load = () => { setError(''); fetch('/account/plans.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load the plans just now.")); };
-  useEffect(load, []);
-  if (error) return html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${load}>Try again</button></p>`;
-  if (!data) return html`<p class="np-note">Loading…</p>`;
-  return html`<div class="plan-cards">${data.plans.map((p) => html`<div class=${'plan-card' + (p.id === data.current ? ' on' : '')}>
-      <div class="plan-top"><b>${p.name}</b><span>$${p.price}<small> / month</small></span></div>
-      <ul>${p.points.map((x) => html`<li>${x}</li>`)}</ul>
-      ${p.id === data.current ? html`<span class="plan-yours">Your plan</span>` : data.canSwitch && html`<form method="post" action="/account/plan"><input type="hidden" name="plan" value=${p.id}/><input type="hidden" name="back" value="ken"/><button class=${'btn ' + (p.up ? 'primary' : 'ghost')}>${p.up ? 'Upgrade' : 'Switch'} to ${p.name}</button></form>`}
-    </div>`)}</div>
-    <p class="np-note">An upgrade is charged now for the rest of the month; a smaller plan leaves credit on your next bill. Ken keeps its memory and files either way.</p>
-    <a class="btn ghost" href="/account/card?back=ken">Card, invoices and cancelling</a>`;
-}
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
 function PlanUsage({ usage, accountUrl }) {
+  const manage = usage.manage_url || accountUrl;
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     <div class="plan-lines">${usage.lines.map((l) => html`<div class=${l.low ? 'low' : ''}><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>`)}</div>
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
-  </div>`;
+    ${manage && html`<a class="text-action" href=${manage}>Change plan or billing</a>`}</div>`;
 }
 const SETTINGS_SECTIONS = [
   { id: 'claude', label: 'AI accounts', on: 'both' },
   { id: 'tools', label: 'Tools', on: 'both' },
   { id: 'phone', label: 'Phone', web: 'Telegram', on: 'both' },
   { id: 'apps', label: 'Apps', on: 'web' },
-  { id: 'plan', label: 'Plan', on: 'web' },
   { id: 'privacy', label: 'Privacy', on: 'both' },
 ];
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it

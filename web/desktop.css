@@ -168,6 +168,3 @@ html[data-hosted]{--sans:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-
 .talk-log details{max-width:640px;padding:10px 14px;border-radius:12px;background:var(--well)}.talk-log summary{cursor:pointer;font-size:14px;color:var(--muted)}.talk-lines{padding-top:8px;font-size:14px;line-height:1.5}.talk-lines p{margin:4px 0}
 /* A link that looks like a button (Connect apps, Plan & billing): centred, no underline, only as wide as its words. */
 a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.set-body>a.btn{align-self:flex-start}
-.plan-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.plan-card{display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line);font-size:13px}.plan-card.on{box-shadow:inset 0 0 0 1.5px var(--ink-2)}
-.plan-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.plan-top b{font-size:14px;font-weight:600}.plan-top small{color:var(--muted);font-size:12px}
-.plan-card ul{margin:0;padding-left:16px;color:var(--muted);line-height:1.5;flex:1}.plan-card .btn{width:100%}.plan-yours{font-size:12px;color:var(--muted);padding:6px 0}
