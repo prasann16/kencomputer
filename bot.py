@@ -341,6 +341,7 @@ def _current_rev() -> str:
 
 
 RUNNING_REV = _current_rev()
+STARTED_AT = int(time.time())  # sent with each check-in, so the host notices a Ken that keeps restarting
 
 
 def log_history(role: str, text: str) -> None:
@@ -1592,7 +1593,7 @@ async def keep_awake() -> None:
         while True:
             try:
                 busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active)
-                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12]},
+                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT},
                                   headers={"Authorization": f"Bearer {token}"})
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)

@@ -39,12 +39,25 @@ NOTE
 }
 
 update() {
-  git -C "$APP" pull --ff-only -q || log "update: git pull failed; starting the version that's here"
+  if ! git -C "$APP" pull --ff-only -q; then
+    # The code folder changed here (an edit, a local commit) so a plain pull can't move it: put Ken's own code back
+    # on the branch it follows. Only ~/.ken/app, never their data; the old commit stays in git's reflog.
+    local was up
+    was=$(git -C "$APP" rev-parse --short HEAD 2>/dev/null)
+    up=$(git -C "$APP" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+    if [ -n "$up" ] && git -C "$APP" fetch -q "${up%%/*}" && git -C "$APP" reset -q --hard "$up"; then
+      log "update: git pull failed (Ken's code had changed here); reset it to $up: $was -> $(git -C "$APP" rev-parse --short HEAD)"
+    else
+      log "update: git pull failed and the code couldn't be reset; starting the version that's here ($was)"
+    fi
+  fi
   "$VENV/bin/python" "$APP/pins.py" "$APP/requirements.txt" > "$KEN_HOME/requirements-installed.txt" \
     && "$VENV/bin/pip" install -q -r "$KEN_HOME/requirements-installed.txt" \
     || log "update: installing Python packages failed; starting anyway"
 }
 
+# Sourced (tests): just the functions above.
+[ "${BASH_SOURCE[0]}" != "$0" ] && return 0
 setup
 export KEN_HOME APP VENV
 export -f log update

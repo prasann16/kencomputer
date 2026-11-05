@@ -475,7 +475,8 @@ async def test_keep_awake_checks_in(monkeypatch):
     monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "secret")
     with pytest.raises(SystemExit):
         await bot.keep_awake()
-    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev"}
+    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev", "started"}
+    assert posts[0][1]["started"] == bot.STARTED_AT
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "http://insecure.example")
     assert await bot.keep_awake() is None
 
@@ -526,3 +527,35 @@ def test_supervisor_sets_up_restarts_and_updates(tmp_path):
     assert oct((ken / ".env").stat().st_mode)[-3:] == "600"
     assert (home / "pip.log").read_text().count("install -q -r") == 3
     assert r.stdout.count("starting Ken") == 3
+
+
+@posix_only
+def test_update_gets_through_a_code_folder_that_changed_here(tmp_path):
+    """A plain pull can't move a code folder with a local commit and an edit; the update resets it to its branch."""
+    git = lambda *a, cwd=None: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    origin, app, venv = tmp_path / "origin", tmp_path / "home" / ".ken" / "app", tmp_path / "venv"
+    git("init", "-q", "-b", "hosted-agent37", str(origin))
+    (origin / "bot.py").write_text("v1\n")
+    (origin / "requirements.txt").write_text("")
+    (origin / "pins.py").write_text((ROOT / "pins.py").read_text())
+    git("add", ".", cwd=origin); git("commit", "-qm", "v1", cwd=origin)
+    git("clone", "-q", "-b", "hosted-agent37", str(origin), str(app))
+    # Here: an edit and a local commit. There: the next version of Ken.
+    (app / "bot.py").write_text("changed here\n"); git("commit", "-qam", "local", cwd=app)
+    (app / "pins.py").write_text("# edited\n" + (app / "pins.py").read_text())
+    (origin / "bot.py").write_text("v2\n"); git("commit", "-qam", "v2", cwd=origin)
+    (tmp_path / "home" / ".ken" / "memory").mkdir()
+    (tmp_path / "home" / ".ken" / "memory" / "people.md").write_text("theirs\n")
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").symlink_to(sys.executable)
+    (venv / "bin" / "pip").write_text("#!/bin/sh\nexit 0\n")
+    (venv / "bin" / "pip").chmod(0o755)
+    script = ROOT / "deploy" / "agent37" / "ken-supervise"
+    env = {"HOME": str(tmp_path / "home"), "PATH": os.environ["PATH"]}
+    r = subprocess.run(["bash", "-c", f'source "{script}"; VENV={venv}; update'], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (app / "bot.py").read_text() == "v2\n"
+    assert git("status", "--porcelain", cwd=app) == ""
+    assert git("rev-parse", "HEAD", cwd=app) == git("rev-parse", "HEAD", cwd=origin)
+    assert "reset it to origin/hosted-agent37" in r.stdout
+    assert (tmp_path / "home" / ".ken" / "memory" / "people.md").read_text() == "theirs\n"  # their data untouched
