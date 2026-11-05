@@ -500,9 +500,13 @@ class WebApp:
         # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
         # greets on Start), here when the phone step was skipped. Quiet during setup.
         phone_skipped = not self.setup or self.setup.phone_step() == "declined"
-        if pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid):
+        greeting = pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid)
+        if greeting:
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
-        return _json(self.engine.chat_view(pid))
+        view = self.engine.chat_view(pid)
+        if greeting and not view.get("messages"):
+            view["busy"] = True  # its first words are on the way: show Ken typing, not the empty-chat suggestions
+        return _json(view)
 
     async def open_chat(self, request):
         pid = self._pid(request)
