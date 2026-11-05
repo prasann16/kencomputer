@@ -1247,7 +1247,7 @@ function JobList({ jobs, change }) {
   </div>`)}</div>`;
 }
 
-function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab }) {
+function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
   useEffect(() => {
     const changed = () => setAppearance(window.kenTheme.preference);
@@ -1280,11 +1280,20 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   ${HOSTED && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
-  ${section('claude', 'AI accounts', html`<p class="np-help">Connect your Claude or ChatGPT subscription.</p>
-    <div class="conn-list">${[['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => { // Only their own subscription shows here: Ken AI credits are a separate thing (the plan card), used only when
-      // neither is connected.
-      const account = setup?.providers?.[id] || {}, own = account.connected && account.how !== 'included';
-      return html`<div><span>${own ? on(`${label} · Connected`) : `${label} · Not connected`}</span><button class="text-action" onClick=${() => setReconnect(id)}>${own ? `Reconnect` : `Connect ${label}`}</button>${HOSTED && own && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</div>`; })}</div>
+  ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
+    <div class="conn-list ai-uses">${(() => {
+      // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).
+      // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
+      const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
+      const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
+      const rows = [['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => html`<div>${name(id, label)}<span class="ai-state">${own[id] ? `Connected${inUse === id ? ' · in use' : ''}` : 'Not connected'}</span>
+        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span></div>`);
+      const usage = meta.usage || {};
+      if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
+        <span class="ai-actions">${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<span class="ai-note">Free trial</span>`}</span></div>`);
+      return rows;
+    })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', HOSTED ? 'Telegram' : 'Phone', HOSTED ? html`<${HostedTelegram}/>`
@@ -1827,7 +1836,7 @@ function App() {
     ${preview && html`<${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/>`}
     ${bigFile && html`<${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/>`}
     ${talking && html`<${VoiceMode} onClose=${() => { setTalking(false); checkTalk(); }}/>`}
-    ${connections && html`<${Settings} tab=${connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
+    ${connections && html`<${Settings} brain=${model?.backend} tab=${connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/>`}
     ${projectDialog?.kind==='keys' && html`<${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/>`}
     ${projectDialog?.kind==='rename' && html`<${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/>`}
     ${projectDialog?.kind==='remove' && html`<${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/>`}

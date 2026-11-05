@@ -321,6 +321,14 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .conn-list > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); padding: var(--s3) 0; font-size: var(--text-md); }
 .conn-list > div + div { border-top: 1px solid var(--line-strong); }
 .conn-list > div > span:first-child { flex: 1; min-width: 0; }
+/* AI that Ken uses: name, what it is now, its buttons. A dot marks the one Ken runs on. */
+.conn-list.ai-uses > div > .ai-name { flex: 0 0 9.5em; display: inline-flex; align-items: center; gap: var(--s2); font-weight: 500; }
+.ai-uses .ai-state { flex: 1; min-width: 0; color: var(--muted); }
+.ai-uses .ai-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.ai-uses .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
+.ai-uses .ai-name:not(:has(.ai-dot)) { padding-left: 15px; }
+.ai-uses .ai-note { font-size: var(--text-ui); color: var(--faint); }
+@media (max-width: 600px) { .conn-list.ai-uses > div > .ai-name { flex-basis: 100%; } .ai-uses .ai-name:not(:has(.ai-dot)) { padding-left: 0; } }
 .conn-list .text-action, .conn-right .text-action, .plan-usage > .text-action { min-height: var(--control-sm); padding: 0 14px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1.5px var(--ink);
   font-size: var(--text-ui); font-weight: 500; text-decoration: none; }
 .conn-list .text-action:hover, .conn-right .text-action:hover, .plan-usage > .text-action:hover { opacity: .8; }
