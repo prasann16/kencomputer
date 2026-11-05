@@ -26,7 +26,8 @@ def _url(app: str = "") -> str:
 
 def fetch(app: str = "") -> dict:
     """{"connected": [{"slug", "name", "accounts": [...]}], "apps_url": ..., "match": {...} | None}."""
-    req = urllib.request.Request(_url(app), headers={"Authorization": f"Bearer {os.environ['KEN_KEEPALIVE_TOKEN']}"})
+    # A named client: Cloudflare in front of the host refuses Python's default "Python-urllib" (403), as in voice.py.
+    req = urllib.request.Request(_url(app), headers={"Authorization": f"Bearer {os.environ['KEN_KEEPALIVE_TOKEN']}", "User-Agent": "Ken"})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.loads(r.read())
 
