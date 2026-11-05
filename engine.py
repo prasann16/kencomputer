@@ -297,6 +297,8 @@ class Engine:
         self.brains = brains or {brain.name: brain}
         self.model_choices = None  # async backend -> available model IDs
         self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
+        self.resume_listener = None  # via -> where a resumed reply also goes (Telegram), or None
+        self.stopping = False  # set while Ken shuts down (close)
         self.credits_model = None  # backend -> the model Ken AI credits run on ("" when that backend isn't on them)
         self.agents_dir = self.home / "agents"
         self.requests_dir = self.home / "requests"
@@ -352,7 +354,9 @@ class Engine:
         self._bg.append(asyncio.create_task(keep_tidy(self.home)))
 
     async def close(self) -> None:
-        """Stop what's running before the process exits so tools are not orphaned."""
+        """Stop what's running before the process exits so tools are not orphaned. A chat reply stopped this way keeps
+        its turn-in-progress note, so the next start carries on with it."""
+        self.stopping = True
         pending = set(self._bg) | set(self.run_tasks.values()) | self.chat_tasks
         for task in pending:
             task.cancel()
@@ -1351,6 +1355,7 @@ class Engine:
             if pid == HOME:
                 self.chat_origin = origin
             body = f"{await self.state(pid, via)}\n{body}"
+            self._turn_started(pid, text or prompt or "", via, job)
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
             backend = self.backend(pid)
@@ -1410,6 +1415,8 @@ class Engine:
                 if session.session_id:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
+                if outcome != "stopped" or not self.stopping:
+                    self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
                 self.broadcast("chat.busy", pid, busy=False)
             return outcome == 'ok'
         finally:
@@ -1417,6 +1424,64 @@ class Engine:
                 self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
+
+    # ---- a reply cut off by a restart (the computer restarted, Ken updated, or crashed) ----
+    # While a chat turn runs, a small note on disk says so; it's cleared when the turn ends. A note still there when Ken
+    # starts means the turn was cut off: Ken says so in one line and carries on in the same conversation.
+    @property
+    def _turns_file(self) -> Path:
+        return self.home / "turns-in-progress.json"
+
+    def _turns(self) -> dict:
+        try:
+            data = json.loads(self._turns_file.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_turns(self, turns: dict) -> None:
+        try:
+            if turns:
+                self._turns_file.write_text(json.dumps(turns))
+            else:
+                self._turns_file.unlink(missing_ok=True)
+        except OSError:
+            log.warning("couldn't keep the turn-in-progress note", exc_info=True)
+
+    def _turn_started(self, pid: str, asked: str, via: str | None, job: dict | None) -> None:
+        turns = self._turns()
+        turns[pid] = {"since": time.time(), "asked": asked.strip()[:1500], "via": via or "", "job": bool(job)}
+        self._write_turns(turns)
+
+    def _turn_ended(self, pid: str) -> None:
+        turns = self._turns()
+        if turns.pop(pid, None) is not None:
+            self._write_turns(turns)
+
+    async def resume_interrupted(self) -> list[str]:
+        """On start: carry on with every chat whose last turn was cut off. Returns those chats."""
+        turns = self._turns()
+        self._write_turns({})
+        resumed = []
+        for pid, turn in turns.items():
+            if pid != HOME and pid not in {a["id"] for a in self.list_agents()}:
+                continue
+            if time.time() - float(turn.get("since", 0)) > 6 * 3600:
+                continue  # long ago: picking it up now would surprise them more than help
+            via = turn.get("via") or None
+            asked = turn.get("asked") or "(their last message in this chat)"
+            prompt = (
+                "(Your last reply was cut off: the computer you run on restarted in the middle of it. First say exactly "
+                "this one short line: \"Sorry, I was interrupted. Picking up where I left off.\" Then finish what they "
+                f"asked, in this same conversation: \"{asked}\". Check what's already done before redoing anything. If "
+                "what's left would send, post, publish, pay, delete or change something for them (an email, a post, a "
+                "message to someone, a purchase, a file they care about) and you can't be sure it didn't already happen "
+                "before the restart, ask them before doing it again instead of repeating it.)")
+            listener = self.resume_listener(via) if self.resume_listener else None
+            self._bg.append(asyncio.create_task(self.send_message(pid, "", log_user=False, via=via, prompt=prompt, listener=listener)))
+            resumed.append(pid)
+            log.info("resuming %s after a cut-off reply", pid)
+        return resumed
 
     async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
                       listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:

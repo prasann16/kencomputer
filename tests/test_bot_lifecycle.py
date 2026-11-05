@@ -29,7 +29,7 @@ async def test_run_starts_and_cleans_up(monkeypatch, signal_support, cancel):
 
     web_task = asyncio.create_task(background())
     web = SimpleNamespace(bg={web_task}, runner=SimpleNamespace(cleanup=AsyncMock()))
-    engine, phone = SimpleNamespace(close=AsyncMock()), SimpleNamespace(stop=AsyncMock())
+    engine, phone = SimpleNamespace(close=AsyncMock(), resume_interrupted=AsyncMock(return_value=[])), SimpleNamespace(stop=AsyncMock())
     monkeypatch.setattr(bot, "ENGINE", engine)
     monkeypatch.setattr(bot, "PHONE", phone)
     start = AsyncMock(return_value=web)
@@ -58,6 +58,8 @@ async def test_run_starts_and_cleans_up(monkeypatch, signal_support, cancel):
             await asyncio.wait_for(task, 5)
         assert len(jobs) == 4 and all(job.cancelled() for job in jobs)
         engine.close.assert_awaited_once()
+        if not cancel:
+            engine.resume_interrupted.assert_awaited_once()  # a reply cut off by the last restart carries on
         phone.stop.assert_awaited_once()
         web.runner.cleanup.assert_awaited_once()
         if signal_support:

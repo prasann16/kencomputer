@@ -2513,6 +2513,8 @@ async def run() -> None:
     except NotImplementedError:  # Windows event loops do not support signal handlers.
         pass
     web_app = await start_engine()
+    # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
+    ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
                   asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(keep_awake())]
     try:
@@ -2522,6 +2524,7 @@ async def run() -> None:
             PHONE.keep_starting(token)
         else:
             log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+        await ENGINE.resume_interrupted()
         await stop.wait()
     finally:
         for task in background:
