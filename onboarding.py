@@ -21,9 +21,12 @@ from typing import Callable
 log = logging.getLogger("ken")
 
 CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
-ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[=>]")
+# Colours and cursor moves, links (ended by BEL or by ESC \\), and character-set switches like ESC ( B.
+ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
-TOKEN = re.compile(r"sk-ant-oat[A-Za-z0-9_-]+")
+# The CLI draws its screen with terminal codes; a stray one can eat the "o" (seen as "sk-ant-at01-…"), so accept that
+# and put it back (_token).
+TOKEN = re.compile(r"sk-ant-o?at\d{2}-[A-Za-z0-9_-]{40,}")
 CLAUDE_API_KEY = re.compile(r"^sk-ant-api[A-Za-z0-9_-]{20,}$")
 OPENAI_API_KEY = re.compile(r"^sk-[A-Za-z0-9_-]{20,}$")
 # AI a hosting plan includes: the host runs an Anthropic-compatible endpoint (KEN_INCLUDED_AI_URL) that holds the
@@ -254,6 +257,7 @@ class Onboarding:
         crash.track("connect_failed", tool="claude", reason=reason)
 
     async def _save(self, token: str) -> None:
+        token = re.sub(r"^sk-ant-at", "sk-ant-oat", token)  # a terminal code ate the "o" (see TOKEN)
         if token == self.saved:  # the browser and a pasted code can both deliver it
             return
         self.saved = token
@@ -341,7 +345,7 @@ class Onboarding:
             raise RuntimeError(self.error)
         if not token:
             # Keep what the CLI said (no token in it, or we'd have it) so a sign-in that breaks can be looked at.
-            tail = re.sub(r"\s+", " ", self.output[before:])[-600:]
+            tail = re.sub(r"sk-ant-\S+", "sk-ant-…", re.sub(r"\s+", " ", self.output[before:]))[-600:]  # never keep a token
             log.warning("Claude sign-in: no token after the code (exited=%s): %s", self.exited, tail)
             try:
                 (self.env_file.parent / "signin-last.txt").write_text(f"exited={self.exited}\n{tail}\n")
