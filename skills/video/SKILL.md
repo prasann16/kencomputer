@@ -12,12 +12,36 @@ changes later pick up where you left off. Never change their original file.
 
 `<ken>` below is the exact command in your instructions.
 
-**Run the edit as a background job, never in the chat.** If you're in the chat with them: ask the style question
-below if you need to, take a quick look (how long it is, what they talk about: the first lines of the transcript are
-enough), and tell them the plan in a few short lines: what the reel will keep, the graphics you have in mind, the
-length, and roughly how long it'll take. Then hand the whole job off right away (the video's full path, what they
-asked, the style, your plan), say it's running and they can keep talking to you, and stop. The background job does everything
-from step 1 on and reports back when the reel is ready.
+**Plan first, and wait for their yes.** Every new video gets a full look and a written plan before any editing,
+even when they told you exactly what to do: they see what they'll get, fix it in a sentence, and nothing is
+rendered on a guess. In the chat:
+
+1. Copy the video into `videos/<short-name>/` as `source.<ext>` and run `transcribe_media` on it (step 1).
+2. **Watch it.** Read the whole transcript, then look at the footage: one contact sheet of frames every few seconds
+   (`ffmpeg -v error -y -i source.<ext> -vf "fps=1/3,scale=270:-1,tile=6x6" -frames:v 1 checks/source.jpg`, more
+   sheets for a long video), and closer frames of anything worth showing (a screen, a product, a gesture). Know who is
+   speaking, where, what's in the frame, where the open space is, and what each part says.
+3. **Write `plan.md`** in the folder, the whole edit decided:
+   - **The story**: what the reel says in one sentence, and how long it'll be.
+   - **The hook**: the line it opens on (their words, quoted) and the hook text on screen.
+   - **The cut**: what stays and what goes, each part quoted by its first words ("cut the intro 'so today I want to…'",
+     "cut the retake of 'it's super cheap'"), in their order.
+   - **Every graphic**: the second it comes in, the words it lands on (quoted), what it shows and where on screen.
+     The first 20 seconds need something to see too, not only captions.
+   - **Captions**: their exact words, and the look (font, colour, where).
+   - **The look**: the brief from step 3 in one line, and their style note if they have one.
+4. **Send them the plan** in plain words, short: a list they can read in thirty seconds, then "Shall I go ahead? Tell
+   me anything to change." **Then stop and wait.** Don't cut, design or render anything before their yes.
+5. On their yes (with any changes written into `plan.md`), hand the whole job off as a background job: the folder,
+   what they asked, `plan.md`. Say it's running and they can keep talking to you. The job follows `plan.md`: steps 2
+   to 5 carry it out, and anything it couldn't do as planned goes in its message at the end.
+
+They can skip this: "just do it", "no need to check", or a style note that says so. A change to a reel already made
+("bigger captions", "drop that bit") needs no plan: do it.
+
+**Captions are their exact words.** Never shorten, tidy or paraphrase what they said. Before the cut, read every
+word of `source.words.json` once against the transcript and fix what Whisper got wrong: names, product names,
+numbers, web addresses ("kencomputer.dev", "24/7"), so the captions match what they say, word for word.
 
 ## 0. Their style first
 
@@ -32,15 +56,14 @@ say it twice. Never save a look you chose yourself as their style: each new reel
 
 ## 1. Listen
 
-Copy the video into `videos/<short-name>/` as `source.<ext>`. Run `transcribe_media` on it: you get the
-transcript and `source.words.json` with every word's timing. Fix words Whisper mishears in `source.words.json`,
+The video is already in `videos/<short-name>/` as `source.<ext>`, transcribed for the plan (do both now if not):
+the transcript and `source.words.json` with every word's timing. Fix words Whisper mishears in `source.words.json`,
 especially names and product names (check your memory for the right spellings). Then:
 
     <ken> --video-cut videos/<short-name>
 
-prints the transcript with every word numbered and the pauses marked. Read all of it before choosing anything,
-and write two lines in `story.md`: what the video is about in one sentence, and the hook text you'll show (3 to 7
-words that add to their first line rather than repeat it).
+prints the transcript with every word numbered and the pauses marked. Pick the ranges that carry out the cut in
+`plan.md`. The hook text there is 3 to 7 words that add to their first line rather than repeat it.
 
 ## 2. Tighten it
 
@@ -113,7 +136,7 @@ what would make them look alike.
 
 **Plan the moments.** Read the cut words in order and decide what the viewer should *see*:
 
-- **Hook** (`hook`): over the first 2.5 to 3.5 s, from `story.md`, in your hook type. Star the one word that matters.
+- **Hook** (`hook`): over the first 2.5 to 3.5 s, from `plan.md`, in your hook type. Star the one word that matters.
   Or design your own hook graphic for those seconds and leave `hook` out.
 - **Emphasis** (`words[i].emph = true`): about one word per sentence, the word they'd stress out loud. Never two in a row.
 - **Push-in** (`zooms`): `{start, end}` on the one line that carries the reel, at most one.

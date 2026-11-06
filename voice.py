@@ -177,8 +177,18 @@ def captions(path: str) -> str:
     crash.track("captions", audio_seconds=round(info.duration), took_seconds=round(time.monotonic() - started))
     srt = src.with_suffix(".srt")
     srt.write_text("\n".join(f"{i}\n{_stamp(s.start)} --> {_stamp(s.end)}\n{s.text.strip()}\n" for i, s in enumerate(segments, 1)))
-    timed = [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2)}
-             for s in segments for w in (s.words or []) if w.word.strip()]
+    timed = []
+    for s in segments:
+        for n, w in enumerate(s.words or []):
+            text = w.word.strip()
+            if not text:
+                continue
+            # Whisper splits "24-7", "follow-up", "kencomputer.dev", "it's" and "50%" into pieces; a piece that starts
+            # with one of these belongs to the word before, or captions show "24 -7" and "kencomputer .dev".
+            if n and timed and text[0] in "-.'’%" and (len(text) > 1 or text == "%") and not text.startswith(".."):
+                timed[-1].update(w=timed[-1]["w"] + text, e=round(w.end, 2))
+                continue
+            timed.append({"w": text, "s": round(w.start, 2), "e": round(w.end, 2)})
     words = src.with_suffix(".words.json")
     words.write_text(json.dumps(timed))
     lines = "\n".join(f"[{_stamp(s.start)[:8]}–{_stamp(s.end)[:8]}] {s.text.strip()}" for s in segments)
