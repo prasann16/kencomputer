@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import runtimes
+
 log = logging.getLogger("ken")
 
 CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
@@ -50,6 +52,12 @@ def claude_cli() -> str:
     except ImportError:
         pass
     return shutil.which("claude") or "claude"
+
+
+def codex_signed_in() -> bool:
+    """Ken's own Codex login (or an API key) is there."""
+    home = os.environ.get("KEN_CODEX_HOME")
+    return bool(os.environ.get("OPENAI_API_KEY") or (home and (Path(home) / "auth.json").exists()))
 
 
 def save_env(env_file: Path, key: str, value: str) -> None:
@@ -210,6 +218,7 @@ class Onboarding:
 
         self.stop()
         self.error = ""
+        await runtimes.ensure("claude")
         # The CLI opens the browser through this, so Ken learns the link it opened: that one finishes
         # the sign-in by itself, unlike the code-to-paste link the CLI prints for other computers.
         opener = self.env_file.parent / "signin-browser"
@@ -433,6 +442,10 @@ class CodexOnboarding(Onboarding):
     async def refresh(self):
         from codex_brain import codex_client
 
+        if runtimes.missing("codex"):
+            # The Mac app gets Codex when it's first needed. Signed in before: it's coming (update()).
+            self._connected, self.error = codex_signed_in(), ""
+            return
         try:
             async with codex_client() as client:
                 account = await client.account()
@@ -447,6 +460,7 @@ class CodexOnboarding(Onboarding):
         from codex_brain import codex_client
 
         self.stop()
+        await runtimes.ensure("codex")
         await self.refresh()
         if self._connected:
             await self.on_connected()
@@ -575,7 +589,8 @@ class BrainOnboarding:
         providers = {name: p.status() for name, p in self.providers.items()}
         return {"providers": providers, "backend": self.backend(),
                 "connected": any(p["connected"] for p in providers.values()), "ask_ai": self.ask_ai(),
-                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status()}
+                "phone": self.phone_step(), "voice": self.providers["claude"].voice_status(),
+                "runtimes": runtimes.status()}
 
     def phone_step(self):
         return self.providers["claude"].phone_step()

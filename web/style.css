@@ -514,3 +514,6 @@ ol.conn-steps li { margin: 2px 0; }
 .app-add:hover { color: var(--ink); }
 .app-add:disabled { opacity: .5; cursor: default; }
 @media (max-width: 600px) { .app-account:has(.app-confirm) > .conn-on { flex-basis: 100%; } .app-confirm { margin-left: auto; } }
+/* The update bar sits above the header on the Mac: it drags the window, its button and link don't. */
+.update-ready { -webkit-app-region: drag; }
+.update-ready .btn, .update-failed a { -webkit-app-region: no-drag; }

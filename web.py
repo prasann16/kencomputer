@@ -24,6 +24,7 @@ from typing import Callable
 
 from aiohttp import WSMsgType, web
 
+import runtimes
 from engine import HOME, Engine
 
 log = logging.getLogger("ken")
@@ -238,6 +239,9 @@ class WebApp:
         try:
             if b.get("action") == "start":
                 return _json(await self.setup.start(backend=b.get("backend")))
+            if b.get("action") == "get-ready":  # Try again after a failed download
+                runtimes.get_ready("codex" if b.get("backend") == "codex" else "claude")
+                return _json(self.setup.status() if self.setup else {})
             if b.get("action") == "skip-phone":
                 return _json(self.setup.skip_phone())
             if b.get("action") == "ai":  # the first screen: how Ken should think ("credits", "claude", "codex")
@@ -535,10 +539,9 @@ class WebApp:
 
     async def chat(self, request):
         pid = self._pid(request)
-        # Ken's first words come once setup is done: on the phone when it was just connected (Telegram
-        # greets on Start), here when the phone step was skipped. Quiet during setup.
-        phone_skipped = not self.setup or self.setup.phone_step() == "declined"
-        greeting = pid == HOME and self.engine.new_install() and phone_skipped and self._brain_connected(pid) and not self._asking_ai()
+        # Ken speaks first once a brain is connected and (in the cloud) how it thinks is settled. (Telegram, set up
+        # later in Settings, greets on Start.)
+        greeting = pid == HOME and self.engine.new_install() and self._brain_connected(pid) and not self._asking_ai()
         if greeting:
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
         view = self.engine.chat_view(pid)

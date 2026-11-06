@@ -294,7 +294,15 @@ async function start() {
   // A background service can't run from a disk image or a quarantined download folder.
   if (app.isPackaged && !app.isInApplicationsFolder()) {
     const { response } = await dialog.showMessageBox({ message: 'Move Ken to your Applications folder?', detail: 'Ken runs in the background, so it needs to live in Applications.', buttons: ['Move to Applications', 'Quit'], defaultId: 0 });
-    if (response !== 0 || !app.moveToApplicationsFolder()) { app.quit(); return; }
+    // A move opens the copy in Applications and only asks this one to quit, so this one must
+    // stop here: its own files were just moved away, and loading them fails ("Could not open Ken").
+    if (response === 0) {
+      try { app.moveToApplicationsFolder(); } catch {
+        dialog.showErrorBox('Could not move Ken', 'Drag Ken into your Applications folder, then open it from there.');
+      }
+    }
+    app.quit();
+    return;
   }
   if (app.isPackaged && process.platform === 'darwin') ejectInstallers();
   // Restore before opening the loading page, which follows nativeTheme via CSS.

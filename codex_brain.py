@@ -6,6 +6,7 @@ import logging
 import os
 import time
 
+import runtimes
 from brains import AIUnavailable, Brain, Session, describe_tool, give_up
 
 log = logging.getLogger("ken")
@@ -28,7 +29,7 @@ def codex_client(*, cwd=None, env=None):
             'model_providers.ken_openai.wire_api="responses"',
         )
     return AsyncCodex(CodexConfig(
-        codex_bin=os.environ.get("CODEX_BIN") or None,
+        codex_bin=runtimes.codex_bin(),
         cwd=cwd, env=extra, config_overrides=overrides,
         client_name="ken", client_title="Ken Computer",
     ))
@@ -116,6 +117,7 @@ class CodexSession(Session):
         async with self._connecting:
             if self.thread is not None:
                 return
+            await runtimes.ensure("codex")
             client = codex_client(cwd=self.cwd, env=self.env_fn() if self.env_fn else {})
             try:
                 await client.__aenter__()
@@ -251,6 +253,8 @@ class CodexBrain(Brain):
 
     async def usage(self) -> dict | None:
         """Ask Codex for the plan's usage now, for /usage."""
+        if runtimes.missing("codex"):
+            return None
         client = codex_client()
         try:
             await client.__aenter__()

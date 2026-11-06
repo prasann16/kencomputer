@@ -13,6 +13,8 @@ import time
 from collections import deque
 from typing import Awaitable, Callable
 
+import runtimes
+
 log = logging.getLogger("ken")
 # Claude Code's error when a model is newer than it supports ("...does not support this model;
 # version X or newer is required"). Ken retries on the default model instead of showing it.
@@ -196,6 +198,7 @@ class ClaudeSession(Session):
     async def _connect(self, resume: str | None) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+        await runtimes.ensure("claude")
         system = self.system() if callable(self.system) else self.system
         model = self.model_fn()
         options = ClaudeAgentOptions(
@@ -443,6 +446,7 @@ async def claude_models() -> list[str]:
     """Ask the signed-in runtime when its saved OAuth token cannot list models directly."""
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+    await runtimes.ensure("claude")
     async with ClaudeSDKClient(options=ClaudeAgentOptions(setting_sources=[], strict_mcp_config=True)) as client:
         info = await client.get_server_info() or {}
         models = [m.get("resolvedModel") or m.get("value") for m in info.get("models", [])]
