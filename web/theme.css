@@ -114,7 +114,7 @@ h1, h2, h3 { font-family: var(--sans); margin: 0; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 button:focus:not(:focus-visible), select:focus:not(:focus-visible), a:focus:not(:focus-visible), summary:focus:not(:focus-visible) { outline: none; }
 /* No pressed look, ever: a clicked menu (Chrome counts it as keyboard focus) shows only its hover colour. */
-select:focus, select:focus-visible { outline: none; }
+select:focus, select:focus-visible, summary:focus, summary:focus-visible { outline: none; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row { display: flex; align-items: center; gap: var(--s2); }

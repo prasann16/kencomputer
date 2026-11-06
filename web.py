@@ -117,6 +117,18 @@ def _json(data, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, default=str))
 
 
+# After a voice call: one more turn for Ken, so nothing said on the call falls through.
+VOICE_FOLLOW_UP = (
+    "(A voice call with them just ended; the call is below. Go through it now, quietly: no progress messages, your "
+    "only message is the last one.\n"
+    "1. Save to memory anything worth keeping that isn't saved yet.\n"
+    "2. Do whatever they asked for that didn't get done on the call. What you already did for them during the call "
+    "(their requests from it are in this chat) is done: don't do it twice. Anything that goes out to other people or "
+    "spends money (sending an email or a message, posting, paying): prepare it and ask them first.\n"
+    "3. Then reply in a line or two starting \"From our call:\" with what you saved and did. If there was nothing to "
+    "save or do, reply exactly NOTHING_TO_SAY.)\n\nThe call:\n"
+)
+
 class WebApp:
     def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
@@ -443,6 +455,13 @@ class WebApp:
         lines = b.get("lines") if isinstance(b.get("lines"), list) else []
         seconds = b.get("seconds") if isinstance(b.get("seconds"), (int, float)) and 0 <= b.get("seconds") <= 7200 else 0
         message = self.engine.voice_call_done(lines, seconds)
+        # Then Ken goes through the call: saves what's worth keeping and does what was asked but not done.
+        spoke = any(isinstance(x, dict) and x.get("role") == "you" and str(x.get("text", "")).strip() for x in lines)
+        if message and spoke and self._brain_connected(HOME):
+            work = asyncio.ensure_future(self.engine.send_message(
+                HOME, "", log_user=False, prompt=VOICE_FOLLOW_UP + message["text"][:12000]))
+            self.bg.add(work)
+            work.add_done_callback(self.bg.discard)
         return _json({"ok": True, "message": message})
 
     async def onboarding_facts(self, request):
