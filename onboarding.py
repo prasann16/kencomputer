@@ -604,9 +604,11 @@ class BrainOnboarding:
         return {**result, **self.status()}
 
     async def submit(self, code, backend=None):
-        await self.provider(backend).submit(code)
+        # A sign-in that had gone away (the computer restarted, say) answers with a fresh link and why: pass both on,
+        # or the page hears only "not connected" and nothing happens.
+        result = await self.provider(backend).submit(code) or {}
         self._chose(backend)
-        return self.status()
+        return {**self.status(), **{k: result[k] for k in ("url", "browser_url", "code", "error") if result.get(k)}}
 
     async def save_token(self, token):
         await self.providers["claude"].save_token(token)
