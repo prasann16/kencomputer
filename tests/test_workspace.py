@@ -43,11 +43,13 @@ def test_sweep_keeps_the_brain_and_clears_old_work(tmp_path):
         assert p.exists(), p
     for p in (raw_old, cut_old, reel_old, piece_old, doc_old, agent_old):
         assert not p.exists(), p
+    assert (home / "inbox").is_dir()  # the workspace folders themselves stay
     if os.utime in os.supports_follow_symlinks:  # where the link could be made old (not Windows)
         assert not link.is_symlink() and target.exists()  # the link went, what it pointed to stayed
-    assert not (home / "work" / "videos" / "porto").exists()  # emptied folders go too
-    assert (home / "inbox").is_dir()  # the workspace folders themselves stay
-    assert did["removed"] == 7  # six files and one link
+        assert not (home / "work" / "videos" / "porto").exists()  # emptied folders go too
+        assert did["removed"] == 7  # six files and one link
+    else:
+        assert did["removed"] == 6  # the six old files; the fresh-looking link stays
 
 
 def test_sweep_never_leaves_kens_folder_through_a_linked_workspace(tmp_path):
