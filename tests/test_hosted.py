@@ -318,11 +318,8 @@ def test_sign_in_helper_needs_no_browser(tmp_path, monkeypatch):
     """No xdg-open on a computer in the cloud: the helper records the link and succeeds, so the CLI prints it."""
     monkeypatch.setenv("PATH", "/nonexistent")
     script = tmp_path / "signin-browser"
-    import asyncio, inspect  # noqa: E401
-    source = inspect.getsource(Onboarding.start)
-    assert "exit 0" in source
-    script.write_text('#!/bin/sh\nprintf %s "$1" > "$0.url"\n'
-                      'if command -v open >/dev/null; then exec open "$1"; elif command -v xdg-open >/dev/null; then exec xdg-open "$1"; fi\nexit 0\n')
+    import onboarding
+    script.write_text(onboarding.OPENER)  # the real script (a copy here once hid that it called itself)
     script.chmod(0o700)
     r = subprocess.run(["/bin/sh", str(script), "https://claude.com/x"], env={"PATH": "/nonexistent"})
     assert r.returncode == 0 and (tmp_path / "signin-browser.url").read_text() == "https://claude.com/x"
