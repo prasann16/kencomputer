@@ -1,0 +1,5 @@
+#!/bin/bash
+# The instance's main process: Ken (kept running by ken-supervise) and, in the foreground, the base
+# image's boot, which runs the ~/.agent37/hooks scripts and serves a terminal on port 7681.
+/usr/local/bin/ken-supervise &
+exec /usr/local/bin/entrypoint.sh

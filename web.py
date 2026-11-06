@@ -15,7 +15,10 @@ import json
 import logging
 import os
 import secrets
+import re
 import tempfile
+import time
+import urllib.parse
 from pathlib import Path
 from typing import Callable
 
@@ -29,10 +32,22 @@ log = logging.getLogger("ken")
 WEB_DIR = Path(__file__).parent / "web"
 COOKIE = "ken_token"
 MAX_UPLOAD = 200 * 1024 * 1024
+# Big files (a phone's raw video) come in pieces: a proxy in front of a Ken in the cloud refuses any one request over
+# 100 MB. Each piece is appended to <chat files>/.uploads/<id>.part, and the last one moves it into place.
+MAX_PIECED = 4 * 1024 ** 3
+PIECE_DIR = ".uploads"
 
 
 def load_token(home: Path) -> str:
+    """The app's access token. A hosting service that signs people in itself sets KEN_WEB_TOKEN and sends it
+    as a Bearer token on every request it forwards; otherwise Ken makes one and keeps it in ~/.ken/web-token."""
     f = home / "web-token"
+    if given := os.environ.get("KEN_WEB_TOKEN", "").strip():
+        if len(given) < 24:
+            raise ValueError("KEN_WEB_TOKEN must be at least 24 characters.")
+        f.write_text(given + "\n")  # `ken open` and Ken's own requests to its app read it here
+        f.chmod(0o600)
+        return given
     try:
         tok = f.read_text().strip()
         if tok:
@@ -45,12 +60,65 @@ def load_token(home: Path) -> str:
     return tok
 
 
+def hosted_web() -> bool:
+    """Ken on a computer in the cloud that people use in their browser (KEN_PLATFORM names the host)."""
+    return bool(os.environ.get("KEN_PLATFORM"))
+
+
+def logout_url() -> str:
+    """Hosted Ken: the host's sign-out, beside the account page KEN_ACCOUNT_URL names ("/account" → "/auth/logout")."""
+    account = os.environ.get("KEN_ACCOUNT_URL", "")
+    return urllib.parse.urljoin(account, "/auth/logout") if hosted_web() and account else ""
+
+
+def trusted_origins(request: web.Request) -> set[str]:
+    """Where a request to this app may come from: this app's own page. Behind an HTTPS proxy Ken sees plain http and
+    often an internal address as its host, while the browser's page is https://the public name: the https form,
+    the name a proxy forwards (X-Forwarded-Host, X-Forwarded-Proto) and KEN_PUBLIC_ORIGINS count too. A page
+    elsewhere can't send those headers here without a preflight, which this check refuses."""
+    hosts = {request.host}
+    forwarded = request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+    if forwarded:
+        hosts.add(forwarded)
+    proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+    schemes = {request.scheme, "https"} | ({proto} if proto in ("http", "https") else set())
+    origins = {f"{scheme}://{host}" for scheme in schemes for host in hosts}
+    origins |= {o.strip().rstrip("/") for o in os.environ.get("KEN_PUBLIC_ORIGINS", "").split(",") if o.strip()}
+    return origins
+
+
+USAGE_HEADER = "X-Ken-Usage"  # what the hosting service says is left of the plan, shown in the app
+
+
+def plan_usage(request: web.Request) -> dict | None:
+    """The plan usage a hosting service passes with each request: {"plan": "...", "lines": [{"label", "left", "of"?,
+    "low"?}], "note"?, "manage_url"?}. Shown as given; anything malformed is ignored."""
+    raw = request.headers.get(USAGE_HEADER, "")
+    if not raw or len(raw) > 4000:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    text = lambda v: str(v)[:120] if isinstance(v, (str, int, float)) else ""
+    lines = [{"label": text(l.get("label")), "left": text(l.get("left")), "of": text(l.get("of")), "low": bool(l.get("low"))}
+             for l in data.get("lines", []) if isinstance(l, dict) and l.get("label")][:6]
+    link = lambda k: (lambda u: u if u.startswith(("https://", "/")) else "")(text(data.get(k)))
+    return {"plan": text(data.get("plan")), "lines": lines, "note": text(data.get("note"))[:300],
+            "manage_url": link("manage_url"),
+            # Ken AI credits: what's left (month plus added), added credits, the free trial, and where to add or upgrade.
+            "credits_left": text(data.get("credits_left")), "added": text(data.get("added")), "free": bool(data.get("free")),
+            "topup_url": link("topup_url"), "upgrade_url": link("upgrade_url")}
+
+
 def _json(data, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, default=str))
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.rev = rev
@@ -62,6 +130,7 @@ class WebApp:
         self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
+        self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
@@ -79,7 +148,7 @@ class WebApp:
     async def auth_mw(self, request: web.Request, handler):
         path = request.path
         origin = request.headers.get("Origin")
-        if origin and origin != f"{request.scheme}://{request.host}":
+        if origin and origin not in trusted_origins(request):
             return _json({"error": "Untrusted origin."}, 403)
         if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
             return await handler(request)
@@ -89,7 +158,8 @@ class WebApp:
             text=(
                 "<!doctype html><meta name=viewport content='width=device-width'>"
                 "<body style='font:16px system-ui;padding:40px;background:#F6F4EF;color:#1B1A17'>"
-                "<h2>Ken is locked</h2><p>Open it with the link from <code>ken open</code> on the Ken computer.</p>"
+                + ("<h2>Ken is locked</h2><p>Sign in again on the website you use to open Ken.</p>" if hosted_web() else
+                   "<h2>Ken is locked</h2><p>Open it with the link from <code>ken open</code> on the Ken computer.</p>")
             ),
             content_type="text/html",
             status=401,
@@ -129,9 +199,12 @@ class WebApp:
     # ------------------------------------------------------------------ pages
 
     async def index(self, request: web.Request) -> web.FileResponse:
+        # The live updates socket is this same host: ws:// on this computer, wss:// behind an HTTPS proxy.
+        host = request.host if all(c.isalnum() or c in ".-:[]" for c in request.host) else "localhost"
+        voice = " wss://api.elevenlabs.io" if hosted_web() else ""  # voice mode's talker (the hosting site connects it)
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
-            "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; frame-src 'none'; base-uri 'none'",
+            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}{voice}; object-src 'none'; frame-src 'none'; base-uri 'none'",
         })
 
     async def static_file(self, request: web.Request) -> web.StreamResponse:
@@ -146,7 +219,12 @@ class WebApp:
     async def meta(self, request):
         return _json({"rev": self.rev, "voice": self.transcribe is not None, "commands": sorted(self.commands),
                       # busy: don't restart the engine (e.g. to update) now
-                      "busy": self.engine.busy() or bool(self.setup and self.setup.active)})
+                      "busy": self.engine.busy() or bool(self.setup and self.setup.active),
+                      # In the cloud: no Mac features, and the plan's usage when the hosting service passes it.
+                      "hosted": hosted_web(), "usage": plan_usage(request),
+                      "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
+                      "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
+                      "logout_url": logout_url()})
 
     async def setup_status(self, request):
         return _json(self.setup.status() if self.setup else {
@@ -166,6 +244,18 @@ class WebApp:
                 return _json(self.setup.status() if self.setup else {})
             if b.get("action") == "skip-phone":
                 return _json(self.setup.skip_phone())
+            if b.get("action") == "ai":  # the first screen: how Ken should think ("credits", "claude", "codex")
+                ai = str(b.get("ai", ""))
+                result = self.setup.choose_ai(ai)
+                if ai == "credits" and self.engine.backend(HOME) != "claude":
+                    await self.engine.set_runtime(HOME, backend="claude")  # Ken AI credits run on Claude
+                return _json(self.setup.status() if ai == "credits" else result)
+            if b.get("action") == "token":  # a Claude token made with `claude setup-token` on another computer
+                return _json(await self.setup.save_token(str(b.get("token", ""))))
+            if b.get("action") == "api-key":
+                return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
+            if b.get("action") == "disconnect":
+                return _json(await self.setup.disconnect(backend=b.get("backend")))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
         except (RuntimeError, ValueError) as exc:
@@ -242,6 +332,153 @@ class WebApp:
         except ValueError as exc:
             return _json({"error": str(exc)}, 400)
 
+    async def telegram_update(self, request):
+        """Hosted Ken: a Telegram update its host pushes (see bot.py's Phone.receive)."""
+        if not self.phone or os.environ.get("KEN_TELEGRAM_PUSH") != "1":
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+        except Exception:
+            return _json({"error": "invalid update"}, 400)
+        if not isinstance(data, dict):
+            return _json({"error": "invalid update"}, 400)
+        if not await self.phone.receive(data):
+            return _json({"error": "Ken's Telegram is still starting"}, 503)
+        return _json({"ok": True})
+
+    async def app_connected(self, request):
+        """Hosted Ken: its host says an app was just connected through a link Ken gave (see engine.app_connected)."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+            slug, name = str(data["slug"]), str(data.get("name") or data["slug"])
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        if not re.fullmatch(r"[a-z0-9_-]{1,60}", slug):
+            return _json({"error": "invalid"}, 400)
+        return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
+
+    async def credits_low(self, request):
+        """Hosted Ken: its host says most of the Ken AI credits are used (once per threshold): a note in the chat."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            used = int((await request.json()).get("used_pct", 80))
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        self.engine.credits_low(max(1, min(used, 100)))
+        return _json({"ok": True})
+
+    async def big_file(self, request):
+        """Hosted Ken: a file too big for Telegram, sent here instead (bot.py's too_big link). GET: what the link is
+        waiting for. POST {"file": <name uploaded into Home's files>}: it's here; Ken carries on in Telegram."""
+        expired = _json({"error": "This link has expired or was already used. Send the file to Ken in Telegram again for a new one."}, 404)
+        token = request.match_info["token"]
+        if not self.phone:
+            return expired
+        if request.method == "GET":
+            info = self.phone.waiting_file(token)
+            return _json(info) if info else expired
+        name = str((await self._body(request)).get("file", ""))
+        path = self.engine.files_dir(HOME) / name
+        if not name or "/" in name or name.startswith(".") or not path.is_file():
+            return _json({"error": "That file didn't arrive. Try sending it again."}, 400)
+        return _json({"ok": True}) if await self.phone.file_arrived(token, path) else expired
+
+    # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
+    # talker that can make HTTP calls with Ken's web token can use them.
+    async def voice_context(self, request):
+        """What the talker knows at the start of a call: small, and nothing that isn't fit to say out loud."""
+        return _json(self.engine.voice_context())
+
+    ASK_WAIT = 20  # seconds: a talker can only keep someone waiting so long
+
+    async def voice_ask(self, request):
+        """Real work, asked for out loud: it goes into the Home chat like a typed message. Ken's answer comes back if
+        it's quick; a longer job says so at once and Ken finishes in the chat as usual."""
+        text = " ".join(str((await self._body(request)).get("request", "")).split())[:2000]
+        if not text:
+            return _json({"error": "empty request"}, 400)
+        if not self._brain_connected(HOME):
+            return _json({"done": True, "answer": "I can't do that yet: an AI account needs connecting in Settings first."})
+        said: list[str] = []
+
+        async def listener(t: str) -> None:
+            said.append(t)
+
+        work = asyncio.ensure_future(self.engine.send_message(HOME, text, via="voice", listener=listener))
+        self.bg.add(work)
+        work.add_done_callback(self.bg.discard)
+        try:
+            await asyncio.wait_for(asyncio.shield(work), self.ASK_WAIT)
+        except asyncio.TimeoutError:
+            first = f"So far: {said[0][:600]} " if said else ""
+            return _json({"done": False, "answer": f"{first}Ken is still working on it and will finish in the chat."})
+        except Exception:
+            return _json({"done": True, "answer": "That didn't work just now. It's in the chat to try again."})
+        return _json({"done": True, "answer": "\n".join(said)[-2000:] or "Done."})
+
+    async def voice_remember(self, request):
+        try:
+            fact = self.engine.remember(str((await self._body(request)).get("fact", "")))
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
+        return _json({"ok": True, "saved": fact})
+
+    async def voice_done(self, request):
+        """After the call: what was said goes into the chat, so voice and text are one history."""
+        b = await self._body(request)
+        lines = b.get("lines") if isinstance(b.get("lines"), list) else []
+        seconds = b.get("seconds") if isinstance(b.get("seconds"), (int, float)) and 0 <= b.get("seconds") <= 7200 else 0
+        message = self.engine.voice_call_done(lines, seconds)
+        return _json({"ok": True, "message": message})
+
+    async def onboarding_facts(self, request):
+        """What they told the hosting site while their computer was set up (a voice call or a short form): {id, facts:
+        {call_name, work, busy, apps, brief ("08:00" or "no"), ken_name, style}}. The same id is applied once, so the
+        site can send it again until it gets an answer."""
+        b = await self._body(request)
+        facts = b.get("facts") if isinstance(b.get("facts"), dict) else {}
+        key = str(b.get("id") or "")[:100]
+        if not key or not facts:
+            return _json({"error": "id and facts, please"}, 400)
+        if self.engine.kv_get("onboarding:applied") == key:
+            return _json({"ok": True, "already": True})
+        result = self.onboarding(facts)
+        self.engine.kv_set("onboarding:applied", key)
+        return _json({"ok": True, **result})
+
+    async def apps_list(self, request):
+        """Hosted Ken's Settings: the apps connected on the host's Apps page."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await asyncio.to_thread(apps.fetch)
+        except Exception:
+            return _json({"error": "Couldn't check your apps just now."}, 502)
+        # Each app's accounts, named (apps.with_accounts): the apps tools are asked here, never in the browser.
+        connected = await asyncio.to_thread(apps.with_accounts, data.get("connected", []))
+        return _json({"connected": connected, "apps_url": data.get("apps_url", "")})
+
+    async def apps_disconnect(self, request):
+        """Hosted Ken's Settings → Apps: disconnect one account ({"app", "account"}: the apps tools' id from /api/apps)."""
+        import apps
+        if not apps.hosted() or not apps.mcp_ready():
+            return _json({"error": "not found"}, 404)
+        b = await self._body(request)
+        slug, account = str(b.get("app", "")), str(b.get("account", ""))
+        if not re.fullmatch(r"[a-z0-9_-]{1,60}", slug) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", account):
+            return _json({"error": "invalid"}, 400)
+        try:
+            await asyncio.to_thread(apps.disconnect, slug, account)
+        except Exception:
+            return _json({"error": "Couldn't disconnect that account just now. Try again in a minute."}, 502)
+        return _json({"ok": True})
+
     async def phone_handoff(self, request):
         """Send the code from your phone: start (POST), confirm the bot it sent (POST …/confirm), or stop (DELETE)."""
         if not self.phone:
@@ -302,23 +539,32 @@ class WebApp:
 
     async def chat(self, request):
         pid = self._pid(request)
-        # Ken speaks first once a brain is connected. (Telegram, set up later in Settings, greets on Start.)
-        if pid == HOME and self.engine.new_install() and self._brain_connected(pid):
+        # Ken speaks first once a brain is connected and (in the cloud) how it thinks is settled. (Telegram, set up
+        # later in Settings, greets on Start.)
+        greeting = pid == HOME and self.engine.new_install() and self._brain_connected(pid) and not self._asking_ai()
+        if greeting:
             self._spawn(self.engine.first_contact())  # Ken speaks first, the same as on the phone
-        return _json(self.engine.chat_view(pid))
+        view = self.engine.chat_view(pid)
+        if greeting and not view.get("messages"):
+            view["busy"] = True  # its first words are on the way: show Ken typing, not the empty-chat suggestions
+        return _json(view)
 
     async def open_chat(self, request):
         pid = self._pid(request)
-        if self._brain_connected(pid):
+        if self._brain_connected(pid) and not self._asking_ai():
             self._spawn(self.engine.on_open(pid))
         return _json({"ok": True})
 
     async def warm_chat(self, request):
         # Start the existing CLI session without generating a greeting or a turn.
         pid = self._pid(request)
-        if self._brain_connected(pid):
+        if self._brain_connected(pid) and not self._asking_ai():
             self._spawn(self.engine.warm(pid))
         return _json({"ok": True})
+
+    def _asking_ai(self) -> bool:
+        """The first screen is asking how Ken should think: nothing starts (and no credits are used) until they choose."""
+        return bool(self.setup and getattr(self.setup, "ask_ai", None) and self.setup.ask_ai())
 
     def _brain_connected(self, pid):
         if not self.setup:
@@ -379,6 +625,16 @@ class WebApp:
         self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True))
         return _json({"ok": True, "message": message})
 
+    async def retry(self, request):
+        pid = self._pid(request)
+        if not self._brain_connected(pid):
+            return _json({"error": f"Connect {self.engine.backend(pid).capitalize()} in Settings → AI accounts first."}, 400)
+        work = self.engine.retry_last(pid)
+        if work is None:
+            return _json({"error": "There's nothing to try again."}, 409)
+        self._spawn(work)
+        return _json({"ok": True})
+
     async def stop(self, request):
         return _json({"stopped": await self.engine.stop_chat(self._pid(request))})
 
@@ -409,6 +665,81 @@ class WebApp:
         if saved and request.query.get("attach") != "1":
             self._spawn(self.engine.files_dropped(pid, saved))  # dropped: Ken looks right away
         return _json({"saved": saved})
+
+    def _pieces(self, pid: str) -> Path:
+        d = self.engine.files_dir(pid) / PIECE_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    async def upload_start(self, request):
+        """A big file, sent in pieces: say its name and size first. Refused up front if it won't fit."""
+        pid = self._pid(request)
+        b = await self._body(request)
+        name, size = b.get("name"), b.get("size")
+        if not isinstance(name, str) or not name or not isinstance(size, int) or size <= 0:
+            return _json({"error": "That file couldn't be read."}, 400)
+        if size > MAX_PIECED:
+            return _json({"error": f"{name} is too big (the limit is {MAX_PIECED // 1024 ** 3} GB per file)."}, 413)
+        d = self._pieces(pid)
+        for old in d.glob("*"):  # pieces of uploads abandoned a day ago or more
+            try:
+                if time.time() - old.stat().st_mtime > 86400:
+                    old.unlink()
+            except OSError:
+                pass
+        free = shutil.disk_usage(d).free
+        if size + 200 * 1024 ** 2 > free:  # room for the file and a little to work with
+            gb = lambda n: f"{n / 1024 ** 3:.1f} GB"
+            return _json({"error": f"Not enough space for {name}: it needs {gb(size)} and {gb(free)} is free. "
+                                   "Ask Ken to clear old videos, or move up a plan for more room."}, 507)
+        uid = secrets.token_hex(8)
+        (d / f"{uid}.json").write_text(json.dumps({"name": name, "size": size}))
+        (d / f"{uid}.part").write_bytes(b"")
+        return _json({"id": uid})
+
+    def _piece_meta(self, pid: str, uid: str):
+        if not re.fullmatch(r"[0-9a-f]{16}", uid or ""):
+            raise web.HTTPNotFound(text="no such upload")
+        d = self._pieces(pid)
+        meta, part = d / f"{uid}.json", d / f"{uid}.part"
+        if not meta.exists() or not part.exists():
+            raise web.HTTPNotFound(text="no such upload")
+        return json.loads(meta.read_text()), meta, part
+
+    async def upload_piece(self, request):
+        """The next piece, at ?offset= (what's already here). A piece sent twice is ignored, not doubled."""
+        pid = self._pid(request)
+        info, _, part = self._piece_meta(pid, request.match_info["uid"])
+        try:
+            offset = int(request.query.get("offset", "-1"))
+        except ValueError:
+            offset = -1
+        have = part.stat().st_size
+        if offset != have:
+            data = await request.read()  # drain it; tell the browser where to carry on
+            return _json({"received": have})
+        size = have
+        with open(part, "ab") as f:
+            while chunk := await request.content.read(1 << 16):
+                size += len(chunk)
+                if size > info["size"]:
+                    f.truncate(have)
+                    return _json({"error": "The file sent more than it said it would."}, 400)
+                f.write(chunk)
+        return _json({"received": size})
+
+    async def upload_finish(self, request):
+        """All pieces are here: the file takes its place in the chat like any upload."""
+        pid = self._pid(request)
+        info, meta, part = self._piece_meta(pid, request.match_info["uid"])
+        if part.stat().st_size != info["size"]:
+            return _json({"error": "Part of the file is missing. Try attaching it again."}, 409)
+        dest = self.engine.new_file_path(pid, info["name"])
+        part.replace(dest)
+        meta.unlink(missing_ok=True)
+        if request.query.get("attach") != "1":
+            self._spawn(self.engine.files_dropped(pid, [dest.name]))
+        return _json({"saved": [dest.name]})
 
     async def attach_paths(self, request):
         """Files picked in the Mac app arrive as paths on this computer: copied into the chat's folder."""
@@ -656,7 +987,12 @@ class WebApp:
 
         async def pump():
             while True:
-                event = await q.get()
+                # A quiet minute still says "ping" every 20 seconds, so the app can tell a live line from one cut
+                # silently on the way (a proxy that never passes on the close), and reconnect.
+                try:
+                    event = await asyncio.wait_for(q.get(), 20)
+                except asyncio.TimeoutError:
+                    event = {"type": "ping"}
                 await ws.send_str(json.dumps(event, default=str))
 
         pumping = asyncio.create_task(pump())
@@ -705,8 +1041,12 @@ class WebApp:
         r.add_post("/api/chats/{pid}/warm", self.warm_chat)
         r.add_post("/api/chats/{pid}/messages", self.post_message)
         r.add_post("/api/chats/{pid}/stop", self.stop)
+        r.add_post("/api/chats/{pid}/retry", self.retry)
         r.add_post("/api/chats/{pid}/files", self.upload)
         r.add_post("/api/chats/{pid}/files/paths", self.attach_paths)
+        r.add_post("/api/chats/{pid}/uploads", self.upload_start)
+        r.add_put("/api/chats/{pid}/uploads/{uid}", self.upload_piece)
+        r.add_post("/api/chats/{pid}/uploads/{uid}/done", self.upload_finish)
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
         r.add_post("/api/open", self.open_file)
         r.add_get("/api/file", self.shared_file)
@@ -735,6 +1075,11 @@ class WebApp:
         r.add_post("/api/runs/{rid}/stop", self.stop_run)
         r.add_post("/api/approvals/{aid}", self.resolve)
         r.add_post("/api/voice", self.voice)
+        r.add_post("/api/onboarding", self.onboarding_facts)
+        r.add_get("/api/voice/context", self.voice_context)
+        r.add_post("/api/voice/ask", self.voice_ask)
+        r.add_post("/api/voice/remember", self.voice_remember)
+        r.add_post("/api/voice/done", self.voice_done)
         r.add_post("/api/command", self.command)
         r.add_get("/api/setup", self.setup_status)
         r.add_get("/api/connections", self.connections_status)
@@ -746,6 +1091,13 @@ class WebApp:
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
+        r.add_post("/api/telegram/update", self.telegram_update)
+        r.add_post("/api/apps/connected", self.app_connected)
+        r.add_post("/api/credits/low", self.credits_low)
+        r.add_get("/api/telegram-files/{token}", self.big_file)
+        r.add_post("/api/telegram-files/{token}", self.big_file)
+        r.add_get("/api/apps", self.apps_list)
+        r.add_post("/api/apps/disconnect", self.apps_disconnect)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

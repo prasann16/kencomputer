@@ -160,7 +160,7 @@ if (todo.length) {
 // sfx Ken asked for ({at, sound}). Mixed under the cut's own audio.
 const SOUNDS = ["whoosh", "pop", "tick"];
 const PLACEMENTS = placements();
-const placementOf = (g) => g.placement ?? PLACEMENTS[g.type] ?? "sheet";
+const placementOf = (g) => g.placement ?? PLACEMENTS[g.type] ?? "over";
 const sfx = [
   ...(props.chapters ?? []).map((c) => ({ at: c - 0.25, sound: "whoosh" })),
   ...graphics.map((g) => ({ at: g.start, sound: placementOf(g) === "over" ? "tick" : "pop" })),

@@ -52,8 +52,16 @@ def scrub(text: str) -> str:
     return _SECRETS.sub("[hidden]", str(text).replace(_HOME, "~"))
 
 
+def analytics_id() -> str:
+    """Ken in the cloud: the host's id for this person (KEN_ANALYTICS_ID), so Ken's events and the website's join up."""
+    given = os.environ.get("KEN_ANALYTICS_ID", "").strip()
+    return given[:100] if given and os.environ.get("KEN_PLATFORM") else ""
+
+
 def install_id(home: Path) -> str:
-    """A random id per install, so reports group by machine. Not tied to the person."""
+    """A random id per install, so reports group by machine. Not tied to the person (on the Mac)."""
+    if hosted := analytics_id():
+        return hosted
     f = home / "install-id"
     try:
         if not f.exists():
@@ -218,7 +226,9 @@ def track(name: str, **props) -> None:
         "distinct_id": _state["id"] or "unknown",
         "properties": {
             **safe, "ken_version": _state["version"], "os": f"{platform.system()} {platform.release()}",
-            "arch": platform.machine(), "$process_person_profile": False,
+            "arch": platform.machine(),
+            # On the Mac, nobody's profile. In the cloud, the person the website knows (same id), for the funnel.
+            **({} if analytics_id() else {"$process_person_profile": False}),
         },
     }
     threading.Thread(target=_post, args=(payload,), daemon=True, name="ken-crash-report").start()

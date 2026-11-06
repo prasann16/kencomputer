@@ -23,9 +23,17 @@ import runtimes
 log = logging.getLogger("ken")
 
 CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
-ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[=>]")
+# Colours and cursor moves, links (ended by BEL or by ESC \\), and character-set switches like ESC ( B.
+ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
-TOKEN = re.compile(r"sk-ant-oat[A-Za-z0-9_-]+")
+# The CLI draws its screen with terminal codes; a stray one can eat the "o" (seen as "sk-ant-at01-…"), so accept that
+# and put it back (_token).
+TOKEN = re.compile(r"sk-ant-o?at\d{2}-[A-Za-z0-9_-]{40,}")
+CLAUDE_API_KEY = re.compile(r"^sk-ant-api[A-Za-z0-9_-]{20,}$")
+OPENAI_API_KEY = re.compile(r"^sk-[A-Za-z0-9_-]{20,}$")
+# AI a hosting plan includes: the host runs an Anthropic-compatible endpoint (KEN_INCLUDED_AI_URL) that holds the
+# real key and meters each person's spend; this computer only gets a token for it (KEN_INCLUDED_AI_TOKEN), so no
+# provider key is ever here. The person's own Claude sign-in or key always comes first.
 # What the CLI prints when the sign-in goes wrong, e.g. "OAuth error: …" or "Failed to exchange authorization code…".
 FAILED = re.compile(r"(?im)^.*\b(error|failed|denied|not allowed|not permitted|invalid|expired)\b.*$")
 # Whisper download sizes in MB, for a progress bar while the voice model arrives.
@@ -68,6 +76,64 @@ def drop_env(env_file: Path, key: str) -> None:
     os.environ.pop(key, None)
 
 
+def voice_installed() -> bool:
+    """Voice notes need the local transcription model; a computer can be set up without it (KEN_VOICE=0)."""
+    import importlib.util
+
+    return os.environ.get("KEN_VOICE") != "0" and importlib.util.find_spec("faster_whisper") is not None
+
+
+def included_ai_key() -> str:
+    if not os.environ.get("KEN_INCLUDED_AI_URL", "").startswith("https://"):
+        return ""
+    return os.environ.get("KEN_INCLUDED_AI_TOKEN", "").strip()
+
+
+def included_ai_in_use() -> bool:
+    key = included_ai_key()
+    return bool(key) and os.environ.get("ANTHROPIC_AUTH_TOKEN") == key
+
+
+def included_ai_model() -> str:
+    """The model the plan's included AI runs on, if the host set one."""
+    return os.environ.get("KEN_INCLUDED_AI_MODEL", "").strip()
+
+
+def use_included_ai() -> bool:
+    """Point Claude Code at the plan's included AI when the person hasn't connected their own Claude, and back
+    off it when they have. Returns whether the included AI is in use."""
+    own = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+    key = included_ai_key()
+    if key and not own:
+        os.environ["ANTHROPIC_BASE_URL"] = os.environ["KEN_INCLUDED_AI_URL"].rstrip("/")
+        os.environ["ANTHROPIC_AUTH_TOKEN"] = key
+        return True
+    if key and os.environ.get("ANTHROPIC_AUTH_TOKEN") == key:
+        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+        os.environ.pop("ANTHROPIC_BASE_URL", None)
+    return False
+
+
+async def check_claude(token: str = "", api_key: str = "") -> str:
+    """Ask Anthropic whether a token or key works (listing models is free). Returns a problem in plain words,
+    or "" when it works or Anthropic can't be reached (the next message will say)."""
+    import httpx
+
+    headers = {"anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    else:
+        headers.update({"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"})
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get("https://api.anthropic.com/v1/models", params={"limit": 1}, headers=headers)
+    except httpx.HTTPError:
+        return ""
+    if r.status_code in (401, 403):
+        return "Claude didn’t accept that. Check you copied all of it and try again."
+    return ""
+
+
 class Onboarding:
     def __init__(self, home: Path, connected: Callable[[], bool], on_connected: Callable, voice_ready: Callable[[], bool]) -> None:
         self.env_file = home / ".env"
@@ -90,7 +156,9 @@ class Onboarding:
         return self.pid is not None and not self.exited and time.time() - self.started < 1800
 
     def status(self) -> dict:
+        included = use_included_ai()
         return {"claude": self.connected(), "connected": self.connected(), "backend": "claude",
+                "how": "included" if included else "key" if os.environ.get("ANTHROPIC_API_KEY") else "account" if self.connected() else "",
                 "phone": self.phone_step(), "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
 
     # The second fixed step: Ken on your phone, which they can skip. "unset" until done or skipped.
@@ -104,7 +172,20 @@ class Onboarding:
     def phone_step(self) -> str:
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("ALLOWED_USER_ID"):
             return "done"  # paired, perhaps before this step existed
+        if os.environ.get("KEN_PLATFORM"):
+            return "declined"  # Ken in the cloud is used in the browser; no phone step
         return self._setup().get("phone", "unset")
+
+    # A brand-new Ken in the cloud asks first how it should think (BrainOnboarding.ask_ai): "credits", "claude" or
+    # "codex", kept here so it's asked once. Switching later is Settings → AI.
+    def ai_choice(self) -> str:
+        return str(self._setup().get("ai") or "")
+
+    def choose_ai(self, ai: str) -> None:
+        data = self._setup()
+        data["ai"] = ai
+        self.setup_file.parent.mkdir(parents=True, exist_ok=True)
+        self.setup_file.write_text(json.dumps(data, indent=1) + "\n")
 
     def skip_phone(self) -> dict:
         data = self._setup()
@@ -113,6 +194,10 @@ class Onboarding:
         return self.status()
 
     def voice_status(self) -> dict:
+        if not voice_installed():
+            from voice import cloud
+            # Transcribed by the host (a Ken in the cloud): ready at once. Otherwise nothing to get ready.
+            return {"state": "ready" if cloud() else "off"}
         if self.voice_ready():
             return {"state": "ready"}
         name = os.environ.get("WHISPER_MODEL", "small")
@@ -138,7 +223,8 @@ class Onboarding:
         # the sign-in by itself, unlike the code-to-paste link the CLI prints for other computers.
         opener = self.env_file.parent / "signin-browser"
         opener.write_text('#!/bin/sh\nprintf %s "$1" > "$0.url"\n'
-                          'if command -v open >/dev/null; then exec open "$1"; else exec xdg-open "$1"; fi\n')
+                          'if command -v open >/dev/null; then exec open "$1"; elif command -v xdg-open >/dev/null; then exec xdg-open "$1"; fi\n'
+                          'exit 0\n')  # no browser here (a computer in the cloud): the link to sign in shows in the app
         opener.chmod(0o700)
         Path(str(opener) + ".url").unlink(missing_ok=True)
         pid, fd = pty.fork()
@@ -191,21 +277,65 @@ class Onboarding:
         crash.track("connect_failed", tool="claude", reason=reason)
 
     async def _save(self, token: str) -> None:
+        token = re.sub(r"^sk-ant-at", "sk-ant-oat", token)  # a terminal code ate the "o" (see TOKEN)
         if token == self.saved:  # the browser and a pasted code can both deliver it
             return
         self.saved = token
         save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
+        use_included_ai()  # their own Claude now comes first
         try:
             await self.on_connected()  # the token is saved either way
         except Exception:
             log.exception("post-connect refresh failed")
+
+    async def save_token(self, token: str) -> dict:
+        """A token made with `claude setup-token` on any computer (the sign-in here needs a browser on this one)."""
+        found = TOKEN.search(token.strip())
+        if not found:
+            raise ValueError("That isn’t a Claude token. It starts with sk-ant-oat.")
+        if problem := await check_claude(token=found.group(0)):
+            raise ValueError(problem)
+        self.stop()
+        self.error = ""
+        await self._save(found.group(0))
+        return self.status()
+
+    async def save_api_key(self, key: str) -> dict:
+        key = key.strip()
+        if not CLAUDE_API_KEY.match(key):
+            raise ValueError("That isn’t an Anthropic API key. It starts with sk-ant-api.")
+        if problem := await check_claude(api_key=key):
+            raise ValueError(problem)
+        self.error = ""
+        save_env(self.env_file, "ANTHROPIC_API_KEY", key)
+        use_included_ai()
+        try:
+            await self.on_connected()
+        except Exception:
+            log.exception("post-connect refresh failed")
+        return self.status()
+
+    async def disconnect(self) -> dict:
+        """Forget the Claude sign-in or key Ken saved (an included plan's AI takes over again, if there is one)."""
+        self.stop()
+        self.saved = self.error = ""
+        drop_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN")
+        drop_env(self.env_file, "ANTHROPIC_API_KEY")
+        use_included_ai()
+        try:
+            await self.on_connected()
+        except Exception:
+            log.exception("post-disconnect refresh failed")
+        return self.status()
 
     async def submit(self, code: str) -> dict:
         """Give the CLI the code from the browser; save the token it prints.
 
         If the sign-in has gone away (the CLI exited, or was never started),
         open a fresh one instead of failing: the user approves and pastes again."""
-        if self.connected():  # the browser already finished the sign-in
+        # Their own Claude is already in (the browser finished the sign-in). Ken AI credits don't count: someone on them
+        # pasting a code is connecting their own account, so the code must go through.
+        if self.connected() and not use_included_ai():
             return self.status()
         self.error = ""
         try:
@@ -236,6 +366,13 @@ class Onboarding:
             self._failed(f"Claude didn’t accept that code ({problem}). Connect again and paste the new code.", problem)
             raise RuntimeError(self.error)
         if not token:
+            # Keep what the CLI said (no token in it, or we'd have it) so a sign-in that breaks can be looked at.
+            tail = re.sub(r"sk-ant-\S+", "sk-ant-…", re.sub(r"\s+", " ", self.output[before:]))[-600:]  # never keep a token
+            log.warning("Claude sign-in: no token after the code (exited=%s): %s", self.exited, tail)
+            try:
+                (self.env_file.parent / "signin-last.txt").write_text(f"exited={self.exited}\n{tail}\n")
+            except OSError:
+                pass
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
         await self._save(token)
         return self.status()
@@ -329,15 +466,50 @@ class CodexOnboarding(Onboarding):
             await self.on_connected()
             return self.status()
         self.client = codex_client()
+        # The browser sign-in hands back to a server on this computer, so it only works where the browser is.
+        # Ken in the cloud signs in with a code instead: open a page anywhere, type the code shown.
+        remote = bool(os.environ.get("KEN_PLATFORM"))
         try:
-            self.login = await self.client.login_chatgpt()
+            self.login = await (self.client.login_chatgpt_device_code() if remote else self.client.login_chatgpt())
         except BaseException:
             await self.client.close()
             self.client = None
             raise
         self.error = ""
         self.watch = asyncio.create_task(self._watch_login(self.client, self.login))
+        if remote:
+            return {"url": self.login.verification_url, "code": self.login.user_code, "backend": "codex"}
         return {"url": self.login.auth_url, "backend": "codex"}
+
+    async def save_api_key(self, key):
+        key = key.strip()
+        if not OPENAI_API_KEY.match(key) or key.startswith("sk-ant-"):
+            raise ValueError("That isn’t an OpenAI API key. It starts with sk-.")
+        self.stop()
+        save_env(self.env_file, "OPENAI_API_KEY", key)
+        await self.refresh()
+        try:
+            await self.on_connected()
+        except Exception:
+            log.exception("post-connect refresh failed")
+        return self.status()
+
+    async def disconnect(self):
+        self.stop()
+        drop_env(self.env_file, "OPENAI_API_KEY")
+        from codex_brain import codex_client
+
+        try:
+            async with codex_client() as client:
+                await client._client.account_logout()
+        except Exception as exc:
+            log.warning("Codex sign-out failed: %s", exc)
+        await self.refresh()
+        try:
+            await self.on_connected()
+        except Exception:
+            log.exception("post-disconnect refresh failed")
+        return self.status()
 
     async def _watch_login(self, client, login):
         try:
@@ -366,11 +538,42 @@ class CodexOnboarding(Onboarding):
         self.watch = None
 
 
+AI_CHOICES = ("credits", "claude", "codex")
+
+
 class BrainOnboarding:
     """Both accounts stay connected; each chat chooses its own runtime."""
 
-    def __init__(self, providers, backend):
+    def __init__(self, providers, backend, fresh=lambda: False):
         self.providers, self.backend = providers, backend
+        self.fresh = fresh  # a brand-new Ken: it hasn't said its first words yet
+
+    def own_connected(self) -> bool:
+        """Their own Claude or ChatGPT is in (Ken AI credits don't count)."""
+        own_claude = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+        codex = self.providers.get("codex")
+        return own_claude or bool(codex and codex.status().get("connected"))
+
+    def ask_ai(self) -> bool:
+        """Never asked any more: a brand-new Ken in the cloud just starts on Ken AI credits (the free taste, or the
+        plan's), so someone new is chatting at once. The choice is noted as "credits"; their own Claude or ChatGPT
+        is in Settings → AI, and offered when the credits run out. Never on the Mac (no credits there)."""
+        if (bool(os.environ.get("KEN_PLATFORM")) and bool(included_ai_key()) and self.fresh()
+                and not self.providers["claude"].ai_choice() and not self.own_connected()):
+            self.providers["claude"].choose_ai("credits")
+        return False
+
+    def choose_ai(self, ai: str) -> dict:
+        if ai not in AI_CHOICES:
+            raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
+        self.providers["claude"].choose_ai(ai)
+        return self.status()
+
+    def _chose(self, backend) -> None:
+        """Connecting their own account on the first screen is the choice too."""
+        name, claude = self.backend() if backend is None else backend, self.providers["claude"]
+        if hasattr(claude, "ai_choice") and not claude.ai_choice() and self.provider(name).status().get("connected") and self.own_connected():
+            claude.choose_ai(name)
 
     def provider(self, backend):
         try:
@@ -385,7 +588,7 @@ class BrainOnboarding:
     def status(self):
         providers = {name: p.status() for name, p in self.providers.items()}
         return {"providers": providers, "backend": self.backend(),
-                "connected": any(p["connected"] for p in providers.values()),
+                "connected": any(p["connected"] for p in providers.values()), "ask_ai": self.ask_ai(),
                 "phone": self.phone_step(), "voice": self.providers["claude"].voice_status(),
                 "runtimes": runtimes.status()}
 
@@ -402,6 +605,21 @@ class BrainOnboarding:
 
     async def submit(self, code, backend=None):
         await self.provider(backend).submit(code)
+        self._chose(backend)
+        return self.status()
+
+    async def save_token(self, token):
+        await self.providers["claude"].save_token(token)
+        self._chose("claude")
+        return self.status()
+
+    async def save_api_key(self, key, backend=None):
+        await self.provider(backend).save_api_key(key)
+        self._chose(backend)
+        return self.status()
+
+    async def disconnect(self, backend=None):
+        await self.provider(backend).disconnect()
         return self.status()
 
     def stop(self):

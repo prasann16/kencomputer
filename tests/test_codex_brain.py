@@ -68,7 +68,7 @@ async def test_streams_complete_messages_once_and_resumes(monkeypatch):
     async def on_tool(t): tools.append(t)
     assert await session.ask("hello", on_text, on_tool, on_delta) == "Hello"
     assert text == ["Hello"] and delta == ["Hel", "Hello"]
-    assert tools == ["Shell · pwd"]
+    assert tools == ["Working on it"]  # plain words, never the command (brains.describe_tool)
     assert client.resumes == ["saved-codex-id"] and not client.starts
     assert session.session_id == "codex-thread" and not session.busy
     await session.close()

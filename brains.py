@@ -20,6 +20,25 @@ log = logging.getLogger("ken")
 # version X or newer is required"). Ken retries on the default model instead of showing it.
 NEEDS_NEWER_CLI = "does not support this model"
 TOO_NEW = object()
+# When the AI service fails, the brain's own runtime retries for minutes while Ken looks like it's thinking.
+# Ken stops at once on an answer that won't change (a refused key, no credit) and after RETRY_LIMIT seconds
+# of retrying anything else (busy, down, unreachable), and says so.
+FINAL_STATUSES = {400, 401, 402, 403, 404}
+RETRY_LIMIT = 20
+
+
+class AIUnavailable(RuntimeError):
+    """The AI service didn't answer: `status` is its HTTP status (None when it couldn't be reached)."""
+
+    def __init__(self, status: int | None, error: str = ""):
+        self.status, self.error = status, error or ""
+        super().__init__(f"AI request failed ({status or 'no connection'}): {error}")
+
+
+def give_up(status: int | None, error: str, retrying_for: float, next_wait: float) -> bool:
+    """Whether to stop retrying an AI request now rather than keep the person waiting."""
+    final = status in FINAL_STATUSES or error in ("authentication_failed", "billing_error", "invalid_request")
+    return final or retrying_for + next_wait > RETRY_LIMIT
 
 OnText = Callable[[str], Awaitable[None]]
 OnTool = Callable[[str], Awaitable[None]]
@@ -31,6 +50,7 @@ class Session:
     session_id: str | None = None
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
+    heard: bool = False  # whether this ask got anything from the AI yet; the engine stops one that never answers
     # What the last ask used, one row per model: model, cost_usd (None when the brain can't price it)
     # and token counts. Empty when the brain didn't say.
     usage: list[dict] = []
@@ -74,18 +94,62 @@ class Brain:
         raise NotImplementedError
 
 
+# What a step looks like to the person: plain words, never a command line. Ken's people aren't developers, and the
+# same line shows in the app, in Telegram and on the Mac, so it's made here once.
+_SHELL_WORDS = [  # (any of these in the command, what it means), first match wins
+    (("--video-render",), "Rendering your video"),
+    (("--video-stills",), "Checking how the video looks"),
+    (("--video-cut", "ffmpeg", "ffprobe"), "Editing your video"),
+    (("transcribe",), "Transcribing"),
+    (("remotion", "npx remotion"), "Rendering your video"),
+    (("curl ", "wget ", "http://", "https://"), "Checking online"),
+    (("pip ", "npm install", "npm i ", "uv pip", "apt-get"), "Installing what it needs"),
+    (("git ",), "Updating files"),
+    (("ls ", "find ", "cat ", "head ", "tail ", "grep "), "Looking through files"),
+    (("rm ", "mv ", "cp ", "mkdir "), "Tidying up files"),
+]
+_TOOL_WORDS = {
+    "Read": "Reading", "Write": "Writing", "Edit": "Editing", "MultiEdit": "Editing", "NotebookEdit": "Editing",
+    "Grep": "Looking through files", "Glob": "Looking through files", "LS": "Looking through files",
+    "WebSearch": "Searching the web", "WebFetch": "Reading a web page", "Task": "Getting help with part of this",
+    "Agent": "Getting help with part of this", "TodoWrite": "Planning the steps", "Skill": "Using a skill",
+    "transcribe_media": "Transcribing",
+}
+
+
 def describe_tool(name: str, args: dict) -> str:
-    """One human-readable line for an agent action: 'Bash · npm test'."""
-    for key in ("description", "command", "file_path", "path", "pattern", "url", "query", "prompt"):
-        val = args.get(key) if isinstance(args, dict) else None
-        if isinstance(val, str) and val.strip():
-            detail = " ".join(val.split())
-            if key == "description":
-                return detail[:110]  # already written for humans: "Run the test suite"
-            if key == "file_path" or key == "path":
-                detail = detail.rsplit("/", 1)[-1] or detail
-            return f"{name} · {detail[:110]}"
-    return name
+    """One plain line for an agent action: 'Editing your video', 'Reading invoice.pdf', 'Searching the web for …'."""
+    args = args if isinstance(args, dict) else {}
+    text = lambda key: " ".join(str(args.get(key) or "").split())
+    if text("description") and name not in ("Bash", "Shell", "shell", "local_shell", "exec_command"):
+        return text("description")[:110]  # already written for people: "Run the test suite"
+    if name in ("Bash", "Shell", "shell", "local_shell", "exec_command", "command_execution"):
+        raw = args.get("command")
+        command = " ".join(map(str, raw)) if isinstance(raw, list) else text("command") or text("cmd")
+        low = f" {command.lower()} "
+        for needles, words in _SHELL_WORDS:
+            if any(n in low for n in needles):
+                return words
+        return "Working on it"
+    if name.startswith("mcp__"):  # mcp__apps__GMAIL_SEND_EMAIL -> "Using Gmail"
+        tool = name.split("__")[-1]
+        app = tool.split("_")[0].capitalize() if tool.isupper() else ""
+        return f"Using {app}" if app else "Using one of your apps"
+    words = _TOOL_WORDS.get(name)
+    if words is None:
+        return "Working on it"
+    for key in ("file_path", "path"):
+        if text(key):
+            return f"{words} {text(key).rsplit('/', 1)[-1][:80]}"
+    if name == "WebSearch" and text("query"):
+        return f"{words} for {text('query')[:80]}"
+    if name == "WebFetch" and text("url"):
+        from urllib.parse import urlparse
+        host = urlparse(text("url")).netloc
+        return f"Reading {host}" if host else words
+    if name == "Skill" and text("skill"):
+        return f"Using its {text('skill').split(':')[-1].replace('-', ' ')} skill"
+    return words
 
 
 def spent_since(now: dict | None, before: dict | None) -> list[dict]:
@@ -223,8 +287,9 @@ class ClaudeSession(Session):
         if model != self.model:
             await self.client.set_model(model or None)
             self.model = model
-        self.busy, self._heard = True, False
+        self.busy, self._heard, self.heard = True, False, False
         self._waiting, self._stopping, self._ended = [], False, False
+        retrying, failed = None, None  # when Claude Code started retrying the AI, and why Ken stopped it
         self.usage = []
         self.last_activity = time.monotonic()
         last_text = ""
@@ -233,7 +298,19 @@ class ClaudeSession(Session):
         try:
             await self.client.query(prompt)
             async for msg in self._messages():
-                self._heard, self.last_activity = True, time.monotonic()
+                if isinstance(msg, SystemMessage) and msg.subtype == "api_retry":
+                    # The AI service failed and Claude Code is about to try again: none of this is progress.
+                    status, error = msg.data.get("error_status"), str(msg.data.get("error") or "")
+                    retrying = retrying or time.monotonic()
+                    if failed is None and give_up(status, error, time.monotonic() - retrying,
+                                                  (msg.data.get("retry_delay_ms") or 0) / 1000):
+                        log.warning("AI request failed (%s %s); stopping instead of retrying", status, error)
+                        failed = AIUnavailable(status, error)
+                        await self.client.interrupt()
+                    continue
+                if not (isinstance(msg, SystemMessage) and msg.subtype in ("init", "status")):
+                    self._heard = self.heard = True
+                    self.last_activity = time.monotonic()
                 # Save the session as soon as it exists, not only when a long
                 # task finishes. An interrupted attempt can then resume too.
                 sid = msg.data.get('session_id') if isinstance(msg, SystemMessage) else getattr(msg, 'session_id', None)
@@ -263,6 +340,8 @@ class ClaudeSession(Session):
                             await self.client.interrupt()  # they stopped: a message sent mid-turn starts no new work
                     continue
                 if isinstance(msg, AssistantMessage):
+                    if getattr(msg, "error", None):
+                        continue  # Claude Code's own "API Error: …" line: the turn fails and Ken says it in plain words
                     for block in msg.content:
                         if isinstance(block, ToolUseBlock) and on_tool is not None:
                             await on_tool(describe_tool(block.name, block.input))
@@ -283,6 +362,8 @@ class ClaudeSession(Session):
                             self.usage += spent_since(msg.model_usage, self.spent)
                         self.spent = msg.model_usage
                     result = (msg.result or "").strip()
+                    if failed is not None:
+                        raise failed
                     if NEEDS_NEWER_CLI in result or final is TOO_NEW:
                         final = TOO_NEW
                     elif msg.is_error and getattr(msg, 'terminal_reason', None) not in {'aborted_streaming', 'aborted_tools'}:

@@ -23,13 +23,14 @@ import uuid
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from brains import Brain
+from brains import AIUnavailable, Brain
 import crash
 
 log = logging.getLogger("ken")
 
 HOME = "home"  # the conversation with Ken itself
-WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)"}
+WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)",
+         "voice": "said out loud on a voice call, passed on by your voice side, which speaks your answer back to them: keep it short and speakable"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
 # Ken's very first contact, the same wherever it happens (the app or the phone): Ken writes it,
@@ -64,14 +65,35 @@ DEFAULT_AUTONOMY = {
 APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 # Work runs as long as it needs; only a brain that has said nothing for this long is stopped.
 IDLE_LIMIT = 45 * 60
+# ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
+NO_ANSWER_LIMIT = 2 * 60
+# Ken AI credits run on Haiku only (about 14x cheaper than Sonnet, and it did every real task in testing). Ken picks it;
+# there's no menu on credits. The site enforces it too.
+CREDIT_MODELS = ("claude-haiku-5-5",)
 # Background jobs share the subscription with the chat: two at a time, an hour at most each.
 RUN_SLOTS = 2
 RUN_LIMIT = 60 * 60
 
 
 
-def friendly_error(e: Exception, brain: str) -> str:
-    """What to tell the person when a reply fails: plain words and what to do, never raw JSON."""
+class NoAnswer(TimeoutError):
+    """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
+
+
+# Words from Claude Code, the SDKs and the AI services that must never reach a person as they are.
+AI_WORDS = ("api", "login", "auth", "unauthorized", "forbidden", "overloaded", "rate limit", "usage limit", "billing",
+            "credit", "anthropic", "openai", "claude code", "codex", "connection", "network", "timed out", "timeout")
+
+
+def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
+    """A failed reply in one plain sentence, and the one thing to do about it: "retry" (Try again), "credits" (Ken AI
+    credits ran out: connect their own Claude or ChatGPT, or pick a plan), "connect" (connect their own Claude or
+    ChatGPT) or "reconnect" (their own account stopped working). Never the raw error:
+    no Claude Code or SDK wording, status codes or model ids. The real error goes to the log."""
+    from onboarding import included_ai_in_use
+
+    name = "ChatGPT" if brain.lower() == "codex" else "Claude"
+    included = included_ai_in_use() and brain.lower() == "claude"
     text = str(e)
     try:
         detail = json.loads(text[text.index("{"):])
@@ -79,25 +101,50 @@ def friendly_error(e: Exception, brain: str) -> str:
     except (ValueError, AttributeError):
         pass
     low = text.lower()
-    if "model" in low and ("not supported" in low or "not found" in low or "does not exist" in low):
-        return f"{brain} can't use that model with your account. Pick another model at the top and send again."
-    if "usage limit" in low or "rate limit" in low or "429" in low:
-        return f"You've reached your {brain} plan's limit for now. Try again later, or switch to the other AI at the top."
-    if "401" in low or "unauthorized" in low or "authentication" in low or "invalid api key" in low:
-        return f"Ken's sign-in to {brain} has expired. Reconnect it in Settings → AI accounts."
-    if "overloaded" in low or "529" in low or "503" in low:
-        return f"{brain} is busy right now. Try again in a minute."
-    return f"Something went wrong: {text}"
+    status = e.status if isinstance(e, AIUnavailable) else None
+    codes = set(re.findall(r"\b([45]\d\d)\b", low))
+    has = lambda *words: any(w in low for w in words)
+    ai = isinstance(e, (AIUnavailable, NoAnswer)) or bool(codes) or has(*AI_WORDS)
+
+    if included:
+        if status == 402 or "402" in codes or has("ken ai credits", "included ai", "billing", "credit balance"):
+            return "You've used your Ken AI credits.", "credits"
+        if ai:  # refused, down, unreachable or silent: none of it is theirs to fix
+            return "Ken couldn't reach its AI just now.", "retry"
+        return "Something went wrong on Ken's side.", "retry"
+    if isinstance(e, NoAnswer):
+        return f"{name} didn't answer, so I stopped waiting.", "retry"
+    if has("model") and has("not supported", "not found", "does not exist", "not available"):
+        return f"{name} can't use that model with your account. Pick another model at the top.", "retry"
+    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit"):
+        return f"You've reached your {name} plan's limit for now.", "retry"
+    if status == 402 or "402" in codes or has("credit balance", "billing"):
+        return f"Your {name} account is out of credit.", "reconnect"
+    if status in (401, 403) or codes & {"401", "403"} or has("not logged in", "/login", "unauthorized", "authentication",
+                                                              "invalid api key", "invalid x-api-key", "expired", "oauth"):
+        return f"Your {name} connection stopped working.", "reconnect"
+    if ai:
+        return f"{name} isn't answering just now.", "retry"
+    return "Something went wrong on Ken's side.", "retry"
 
 
-async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT):
-    """Await the brain's work, raising TimeoutError once it has been silent for `limit` seconds."""
-    task = asyncio.ensure_future(work)
+def friendly_error(e: BaseException, brain: str) -> str:
+    """What to tell the person when a reply fails (see explain_failure)."""
+    return explain_failure(e, brain)[0]
+
+
+async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT, first: float | None = None):
+    """Await the brain's work, raising TimeoutError once it has been silent for `limit` seconds,
+    and NoAnswer when the AI hasn't said anything at all `first` seconds after it was asked."""
+    first = NO_ANSWER_LIMIT if first is None else first
+    task, started = asyncio.ensure_future(work), time.monotonic()
     try:
         while True:
-            done, _ = await asyncio.wait({task}, timeout=min(30, limit))
+            done, _ = await asyncio.wait({task}, timeout=min(5, limit, first))
             if done:
                 return task.result()
+            if not getattr(session, "heard", True) and time.monotonic() - started > first:
+                raise NoAnswer
             if time.monotonic() - (getattr(session, "last_activity", 0) or time.monotonic()) > limit:
                 raise asyncio.TimeoutError
     finally:
@@ -217,6 +264,17 @@ def slugify(name: str) -> str:
     return s[:40] or "project"
 
 
+# Things never said out loud or sent to a voice service: keys and tokens, and paths on this computer.
+SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,}|sk_(?:live|test)_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|"
+                       r"AKIA[0-9A-Z]{16}|\d{6,}:[A-Za-z0-9_-]{30,}|[A-Za-z0-9+/_=-]{40,})")
+PATH_TEXT_RE = re.compile(r"(?<![\w/])(?:~|/(?:home|Users|root|tmp|var|opt|etc|mnt|private))/[^\s'\"`)>\]]*")
+
+
+def speakable(text: str) -> str:
+    text = re.sub(r"(?im)^.*\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\b\s*[=:].*$", "", str(text))
+    return PATH_TEXT_RE.sub("(a file)", SECRET_RE.sub("(hidden)", text))
+
+
 def safe_filename(name: str) -> str:
     name = Path(name.replace("\\", "/")).name.strip()
     name = re.sub(r"[\x00-\x1f]", "", name).lstrip(".")
@@ -235,12 +293,28 @@ def memory_listing(folder: Path) -> str:
     return "\n".join(lines) or "  (empty)"
 
 
+
+# Dates without a leading zero ("March 5", "9:05 AM") on every platform: "%-d" works on Mac and Linux but not Windows.
+def _short_date(t=None) -> str:
+    t = t or time.localtime()
+    return f"{time.strftime('%b', t)} {t.tm_mday}"
+
+
+def _day_and_time(t=None) -> str:
+    t = t or time.localtime()
+    hour = t.tm_hour % 12 or 12
+    return f"{time.strftime('%A, %B', t)} {t.tm_mday}, {hour}:{time.strftime('%M %p', t)}"
+
 class Engine:
     def __init__(self, home: Path, brain: Brain, *, brains: dict[str, Brain] | None = None) -> None:
         self.home = Path(home)
         self.brain = brain
         self.brains = brains or {brain.name: brain}
         self.model_choices = None  # async backend -> available model IDs
+        self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
+        self.resume_listener = None  # via -> where a resumed reply also goes (Telegram), or None
+        self.stopping = False  # set while Ken shuts down (close)
+        self.credits_model = None  # backend -> the model Ken AI credits run on ("" when that backend isn't on them)
         self.agents_dir = self.home / "agents"
         self.requests_dir = self.home / "requests"
         self.db = sqlite3.connect(self.home / "app.db", isolation_level=None, check_same_thread=False)
@@ -291,9 +365,13 @@ class Engine:
             "WHERE status IN ('running','queued')", (now,),
         )
         self._bg.append(asyncio.create_task(self._watch_requests()))
+        from workspace import keep_tidy  # old uploads, raw videos and renders go by themselves (workspace.py)
+        self._bg.append(asyncio.create_task(keep_tidy(self.home)))
 
     async def close(self) -> None:
-        """Stop what's running before the process exits so tools are not orphaned."""
+        """Stop what's running before the process exits so tools are not orphaned. A chat reply stopped this way keeps
+        its turn-in-progress note, so the next start carries on with it."""
+        self.stopping = True
         pending = set(self._bg) | set(self.run_tasks.values()) | self.chat_tasks
         for task in pending:
             task.cancel()
@@ -395,15 +473,59 @@ class Engine:
         ).fetchall()
         return [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
 
+    def retry_last(self, pid: str) -> Awaitable[bool] | None:
+        """Ask again after a reply that failed: the message they sent before it, without logging it twice.
+        None when there's nothing to retry (Ken is busy, or the last reply didn't fail)."""
+        recent = self.messages(pid, limit=40)
+        if self.chat_busy(pid) or not recent or not (recent[-1].get("error") and recent[-1].get("action")):
+            return None
+        asked = next((m for m in reversed(recent) if m["role"] == "you"), None)
+        if asked is None:
+            return None
+        return self.send_message(pid, asked.get("text", ""), asked.get("files") or [], log_user=False, via="app")
+
+    def credits_low(self, used_pct: int) -> dict:
+        """Hosted Ken: its host says most of the Ken AI credits are used. One note in Home's chat, with the three ways on
+        (the web app shows them as buttons): their own Claude, their own ChatGPT, or a plan with more credits."""
+        text = (f"You've used {used_pct}% of your Ken AI credits. To keep going without a break, connect your own Claude "
+                "or ChatGPT, or pick a plan with more Ken AI credits.")
+        return self.log_message(HOME, "ken", text, action="credits", note=True)
+
+    async def app_connected(self, slug: str, name: str) -> str | None:
+        """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
+        recent Ken reply with that link, in the last hour) carries on with what they asked. Returns that chat."""
+        link = f"/account/apps/connect/{slug}"
+        since = time.time() - 3600
+        best = None
+        for pid in [HOME, *[a["id"] for a in self.list_agents()]]:
+            for m in reversed(self.messages(pid, limit=20)):
+                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since:
+                    if best is None or m["ts"] > best[1]:
+                        best = (pid, m["ts"])
+                    break
+        if best is None:
+            return None
+        pid = best[0]
+        self._bg.append(asyncio.create_task(self.send_message(
+            pid, "", log_user=False, via="app", steer=True, prompt=f"(They've just connected {name}. Carry on with what they asked.)")))
+        return pid
+
     async def first_contact(self) -> None:
         """A brand-new install's Home chat was opened: Ken speaks first, exactly as it does on Telegram."""
-        if not self.new_install() or HOME in self._greeting or self.chat_busy(HOME) or self.db.execute(
+        # Not put off by a busy chat: right after connecting, the app warms the session (which holds the chat for a
+        # moment), and giving up then meant Ken never spoke first. send_message waits its turn instead.
+        if not self.new_install() or HOME in self._greeting or self.db.execute(
                 "SELECT 1 FROM events WHERE project=? AND type='message' LIMIT 1", (HOME,)).fetchone():
+            return
+        # A hello that just failed isn't tried again for 10 minutes (each page load would otherwise retry it at once).
+        if time.time() - getattr(self, "_hello_failed_at", 0) < 600:
             return
         self._greeting.add(HOME)
         try:
-            await self.send_message(HOME, "", log_user=False, via="app",
-                                    prompt=first_contact_prompt("opened the Ken app on this computer for the first time"))
+            ok = await self.send_message(HOME, "", log_user=False, via="app",
+                                         prompt=first_contact_prompt("opened the Ken app on this computer for the first time"))
+            if ok is False:
+                self._hello_failed_at = time.time()
         finally:
             self._greeting.discard(HOME)
 
@@ -645,8 +767,11 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         background = "" if pid != HOME else (
-            "BACKGROUND JOBS: when something will take more than a few minutes (editing a video, long research, "
-            "building something), don't do it here, where it would keep them waiting. Hand it to a background job: write "
+            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than a minute or two (editing a video, "
+            "long research, building something) goes to a background job right away, before you start on it, never here "
+            "where it would keep them waiting. Before handing it off, take a quick look and tell them in a few short lines "
+            "what you found, what you'll do and roughly how long it'll take (no need to wait for a yes unless something's "
+            "unclear). Then hand it to a background job: write "
             f'{{"type": "run", "title": "a few words, maybe an emoji", "prompt": "the brief"}} into {self.requests_dir}/, '
             "then tell them in a line that it's running and they can keep talking to you. The job starts fresh and sees only "
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
@@ -1055,6 +1180,15 @@ class Engine:
         if said:
             self.kv_set(f"jobs:said:{pid}", "[]")
             parts.append("since your last turn your scheduled jobs sent them: " + " | ".join(said))
+        told = self.kv_get(f"onboarding:said:{pid}")
+        if told:
+            self.kv_set(f"onboarding:said:{pid}", "")
+            parts.append("while your computer was being set up they told the site (already in SOUL.md and memory/about-them.md; "
+                         "use it, don't ask again): " + told)
+        call = self.kv_get(f"voice:said:{pid}")
+        if call:
+            self.kv_set(f"voice:said:{pid}", "")
+            parts.append("since your last turn they talked with your voice side on a call: " + call)
         if jobs:
             parts.append("background jobs running: " + ", ".join(
                 f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
@@ -1086,15 +1220,31 @@ class Engine:
         except OSError:
             return ""
 
+    def credits_choice(self) -> str:
+        """The model picked for Ken AI credits (Haiku or Sonnet), kept apart from the model picked for their own
+        Claude or ChatGPT, so switching between the two never mixes them up. "" until they pick."""
+        try:
+            chosen = (self.home / "model-credits").read_text().strip()
+        except OSError:
+            return ""
+        return chosen if chosen in CREDIT_MODELS else ""
+
     def model_for(self, pid: str) -> str:
+        # On Ken AI credits only the credits models run: Haiku by default, Sonnet if they picked it (paid plans).
+        if self.credits_model and (credits := self.credits_model(self.backend(pid))):
+            return self.credits_choice() or credits
         return self.model_choice(pid) or getattr(self.brain_for(pid), "model_fn", lambda: "")()
 
     async def runtime(self, pid: str) -> dict:
+        """The chat's brain and model, and what the model menu may offer: only the AI Ken can run on now (never models
+        from an account that isn't connected), and on Ken AI credits only their model ("credits": true)."""
         backend = self.backend(pid)
-        current = self.model_choice(pid)
-        choices = await self.model_choices(backend) if self.model_choices else []
+        credits = self.credits_model(backend) if self.credits_model else ""
+        current = (self.credits_choice() or credits) if credits else self.model_choice(pid)
+        choices = list(CREDIT_MODELS) if credits else await self.model_choices(backend) if self.model_choices else []
+        usable = self.usable_brains() if self.usable_brains else list(self.brains)
         return {"backend": backend, "current": current, "choices": choices,
-                "providers": list(self.brains)}
+                "providers": [b for b in self.brains if b in usable] or [backend], "credits": bool(credits)}
 
     async def set_runtime(self, pid: str, *, backend=None, model=None) -> None:
         if pid != HOME:
@@ -1104,6 +1254,13 @@ class Engine:
             raise ValueError("Choose Claude or Codex.")
         if model is not None and (not isinstance(model, str) or len(model) > 500):
             raise ValueError("Invalid model.")
+        on_credits = bool(self.credits_model and self.credits_model(backend))
+        if on_credits and model is not None:
+            if model and model not in CREDIT_MODELS:
+                raise ValueError("On Ken AI credits Ken picks the model. Connect your own Claude or ChatGPT in Settings for other models.")
+            (self.home / "model-credits").write_text(model.strip() + "\n")  # their own account's pick is left as it was
+            self.broadcast("chat.runtime", pid, backend=backend)
+            return
         if model and self.model_choices and model not in await self.model_choices(backend):
             raise ValueError("Choose a model available for this account.")
         if self.chat_busy(pid) or self.list_runs(project=pid, active=True):
@@ -1176,8 +1333,10 @@ class Engine:
                     f.write(json.dumps({"ts": round(time.time()), "kind": kind, "brain": brain, **extra, **r}) + "\n")
         except OSError:
             pass
+        # On Ken AI credits (the host pays): marked, so the cost of the credits per person can be summed.
+        paid_by_host = {"credits": True} if self.credits_model and self.credits_model(self.backend(pid)) else {}
         for r in rows:
-            crash.track("ai_usage", kind=kind, brain=brain, agent=pid != HOME, **extra, **r)
+            crash.track("ai_usage", kind=kind, brain=brain, agent=pid != HOME, **extra, **paid_by_host, **r)
 
     def chat_busy(self, pid: str) -> bool:
         lock = self.chat_locks.get(pid)
@@ -1234,6 +1393,7 @@ class Engine:
             if pid == HOME:
                 self.chat_origin = origin
             body = f"{await self.state(pid, via)}\n{body}"
+            self._turn_started(pid, text or prompt or "", via, job)
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
             backend = self.backend(pid)
@@ -1275,8 +1435,17 @@ class Engine:
                 log.warning("chat %s failed: %s", pid, e)
                 await session.close()
                 self.chats.pop(pid, None)
-                msg = "Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up." if isinstance(e, asyncio.TimeoutError) else friendly_error(e, self.backend(pid).capitalize())
-                self.log_message(pid, "ken", msg, error=True, **({"via": via} if via else {}))
+                quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
+                msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
+                               if quiet else explain_failure(e, self.backend(pid)))
+                # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
+                # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
+                # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
+                # say it once with its button; that message also stops the hello being tried again and again.
+                if not text.strip() and not job and not log_user and action == "retry":
+                    return False
+                self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
+                                 **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(msg)
             finally:
@@ -1286,6 +1455,8 @@ class Engine:
                 if session.session_id:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
+                if outcome != "stopped" or not self.stopping:
+                    self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
                 self.broadcast("chat.busy", pid, busy=False)
             return outcome == 'ok'
         finally:
@@ -1293,6 +1464,64 @@ class Engine:
                 self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
+
+    # ---- a reply cut off by a restart (the computer restarted, Ken updated, or crashed) ----
+    # While a chat turn runs, a small note on disk says so; it's cleared when the turn ends. A note still there when Ken
+    # starts means the turn was cut off: Ken says so in one line and carries on in the same conversation.
+    @property
+    def _turns_file(self) -> Path:
+        return self.home / "turns-in-progress.json"
+
+    def _turns(self) -> dict:
+        try:
+            data = json.loads(self._turns_file.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_turns(self, turns: dict) -> None:
+        try:
+            if turns:
+                self._turns_file.write_text(json.dumps(turns))
+            else:
+                self._turns_file.unlink(missing_ok=True)
+        except OSError:
+            log.warning("couldn't keep the turn-in-progress note", exc_info=True)
+
+    def _turn_started(self, pid: str, asked: str, via: str | None, job: dict | None) -> None:
+        turns = self._turns()
+        turns[pid] = {"since": time.time(), "asked": asked.strip()[:1500], "via": via or "", "job": bool(job)}
+        self._write_turns(turns)
+
+    def _turn_ended(self, pid: str) -> None:
+        turns = self._turns()
+        if turns.pop(pid, None) is not None:
+            self._write_turns(turns)
+
+    async def resume_interrupted(self) -> list[str]:
+        """On start: carry on with every chat whose last turn was cut off. Returns those chats."""
+        turns = self._turns()
+        self._write_turns({})
+        resumed = []
+        for pid, turn in turns.items():
+            if pid != HOME and pid not in {a["id"] for a in self.list_agents()}:
+                continue
+            if time.time() - float(turn.get("since", 0)) > 6 * 3600:
+                continue  # long ago: picking it up now would surprise them more than help
+            via = turn.get("via") or None
+            asked = turn.get("asked") or "(their last message in this chat)"
+            prompt = (
+                "(Your last reply was cut off: the computer you run on restarted in the middle of it. First say exactly "
+                "this one short line: \"Sorry, I was interrupted. Picking up where I left off.\" Then finish what they "
+                f"asked, in this same conversation: \"{asked}\". Check what's already done before redoing anything. If "
+                "what's left would send, post, publish, pay, delete or change something for them (an email, a post, a "
+                "message to someone, a purchase, a file they care about) and you can't be sure it didn't already happen "
+                "before the restart, ask them before doing it again instead of repeating it.)")
+            listener = self.resume_listener(via) if self.resume_listener else None
+            self._bg.append(asyncio.create_task(self.send_message(pid, "", log_user=False, via=via, prompt=prompt, listener=listener)))
+            resumed.append(pid)
+            log.info("resuming %s after a cut-off reply", pid)
+        return resumed
 
     async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
                       listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:
@@ -1551,11 +1780,11 @@ class Engine:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
-                if isinstance(e, asyncio.TimeoutError):
+                if isinstance(e, NoAnswer) or not isinstance(e, asyncio.TimeoutError):
+                    summary = f"Failed: {friendly_error(e, self.backend(pid))}"
+                else:
                     summary = ("Stopped: it hit the one-hour limit." if time.monotonic() - began >= RUN_LIMIT - 60
                                else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
-                else:
-                    summary = f"Failed: {e}"
             finally:
                 self.run_sessions.pop(rid, None)
                 self.record_usage(session, pid, "background")
@@ -1700,6 +1929,139 @@ class Engine:
             "home": self.messages(HOME, 30),
             "home_busy": self.chat_busy(HOME),
         }
+
+    # ------------------------------------------------------------------ voice
+
+    # Voice mode: a fast talker (a voice service the hosting site connects) speaks for Ken, and hands real work to
+    # Ken itself. What it knows at the start of each call comes from here: small, so it stays fast, and only things
+    # fit to say out loud (no keys, tokens or file paths).
+    def voice_context(self) -> dict:
+        def part(text: str, limit: int) -> str:
+            text = speakable(text).strip()
+            return text if len(text) <= limit else text[:limit].rsplit("\n", 1)[0].rstrip() + " …"
+
+        try:
+            soul = self.context_file(HOME).read_text(errors="replace")
+        except OSError:
+            soul = ""
+        title = next((ln for ln in soul.splitlines() if ln.strip()), "")
+        name = m.group(1).strip().rstrip(",.") or "Ken" if (m := re.match(r"#\s*You are\s+([^(\n]+)", title)) else "Ken"
+        # About them: the notes that look like they're about the person, then what each other note is about.
+        about, d = [], self.memory_dir(HOME)
+        notes = sorted(d.glob("*.md")) if d.is_dir() else []
+        personal = [f for f in notes if re.search(r"about|profile|people|family|person|me\b|work|voice", f.stem, re.I)]
+        for f in personal[:3]:
+            about.append(f.read_text(errors="replace").strip())
+        listing = [next((ln.strip().lstrip("#").strip() for ln in f.read_text(errors="replace").splitlines() if ln.strip()), "")
+                   for f in notes if f not in personal]
+        if listing := [ln for ln in listing if ln]:
+            about.append("Other things in memory: " + "; ".join(listing[:15]))
+        # Today: this morning's brief, if Ken sent one today.
+        recent = self.messages(HOME, 60)
+        start_of_day = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        brief = next((m["text"] for m in reversed(recent) if m.get("role") == "ken" and m.get("ts", 0) >= start_of_day
+                      and (m.get("job") or {}).get("name") == "morning-brief" and m.get("text")), "")
+        chat = [f"{'Them' if m['role'] == 'you' else name}: {' '.join(str(m['text']).split())[:280]}"
+                for m in recent if m.get("role") in ("you", "ken") and m.get("text") and not m.get("call")][-8:]
+        return {
+            "ken_name": name[:40],
+            "soul": part(soul, 3000),
+            "about_you": part("\n\n".join(about), 1500),
+            "today": part(brief, 1000),
+            "recent_chat": part("\n".join(chat), 1800),
+            "now": _day_and_time(),
+        }
+
+    ONBOARDING_KEYS = ("call_name", "work", "busy", "apps", "brief", "ken_name", "style")
+
+    def apply_onboarding(self, facts: dict) -> list[str]:
+        """What they told the hosting site about themselves while their computer was set up (each a few plain words):
+        into the soul file and memory, where Ken keeps such things. Returns the getting-to-know items it answers."""
+        def clean(key: str, limit: int = 300) -> str:
+            value = facts.get(key)
+            value = ", ".join(map(str, value)) if isinstance(value, list) else str(value or "")
+            return " ".join(speakable(value).split())[:limit].strip()
+
+        call, work, busy, apps, brief, style = (clean(k) for k in ("call_name", "work", "busy", "apps", "brief", "style"))
+        ken = re.sub(r"[^\w .'-]", "", clean("ken_name", 40)).strip()
+        covered = []
+        f = self.context_file(HOME)
+        try:
+            soul = f.read_text()
+        except OSError:
+            soul = "# You are Ken\n\nYou are their personal assistant.\n"
+        if call:
+            soul = soul.replace("my human", call)
+        lines = soul.rstrip("\n").splitlines() or ["# You are Ken"]
+        if ken:
+            lines[0] = f"# You are {ken}"
+            covered.append("ken-name")
+
+        def add(heading_prefix: str, new: list[str], heading: str) -> None:
+            at = next((i for i, ln in enumerate(lines) if ln.startswith(heading_prefix)), None)
+            if at is None:
+                lines.extend(["", heading, *new])
+                return
+            end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+            body = [ln for ln in lines[at + 1:end] if ln.strip() not in ("(Nothing yet.)",)]
+            while body and not body[-1].strip():
+                body.pop()
+            lines[at + 1:end] = [*body, *new, ""]
+
+        about = [f"- Call them {call}." if call else "", f"- Work: {work}" if work else ""]
+        if any(about):
+            add("## About", [a for a in about if a], f"## About {call or 'them'}")
+        if style:
+            add("## Style", [f"- How they like to be talked to: {style}"], "## Style")
+            covered.append("style")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("\n".join(lines).rstrip() + "\n")
+        covered += [item for item, value in (("call-you", call), ("work", work), ("tools", apps), ("brief-time", brief)) if value]
+        # The rest goes into memory, dated, where Ken looks things up.
+        notes = [f"- Work: {work}" if work else "", f"- Eating their time this week: {busy}" if busy else "",
+                 f"- Apps they live in: {apps}" if apps else "",
+                 f"- Morning brief: {'none' if brief == 'no' else brief}" if brief else ""]
+        if any(notes):
+            m = self.memory_dir(HOME) / "about-them.md"
+            m.parent.mkdir(parents=True, exist_ok=True)
+            head = "" if m.exists() else "About them: work, what's on their plate, the apps they use\n\n"
+            with m.open("a") as out:
+                out.write(head + f"From setting Ken up ({_short_date()}):\n" + "\n".join(n for n in notes if n) + "\n\n")
+        # A Home chat already open keeps the soul it started with: reopen it (it resumes the same conversation) so
+        # the next reply uses the new one, and tell that reply what changed.
+        said = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
+                         ("this week", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
+        if said:
+            self.kv_set(f"onboarding:said:{HOME}", said)
+        s = self.chats.get(HOME)
+        if s is not None and not s.busy:
+            self.chats.pop(HOME)
+            self._bg.append(asyncio.create_task(s.close()))
+        self.emit("project.updated", project=HOME)
+        return covered
+
+    def remember(self, fact: str) -> str:
+        """Something said on a voice call that's worth keeping, into Ken's memory (the nightly review files it)."""
+        fact = " ".join(speakable(fact).split())[:300]
+        if not fact:
+            raise ValueError("Nothing to remember.")
+        f = self.memory_dir(HOME) / "voice.md"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if not f.exists():
+            f.write_text("Things they told me on voice calls (to file into the right notes)\n\n")
+        with f.open("a") as out:
+            out.write(f"- {fact} ({_short_date()})\n")
+        return fact
+
+    def voice_call_done(self, lines: list[dict], seconds: float) -> dict | None:
+        """After a voice call, its words go into the Home chat, so voice and text are one history."""
+        said = [(str(x.get("role")), " ".join(str(x.get("text", "")).split())[:1000]) for x in lines[:200]
+                if isinstance(x, dict) and x.get("role") in ("you", "ken") and str(x.get("text", "")).strip()]
+        if not said:
+            return None
+        text = "\n".join(f"{'You' if role == 'you' else 'Ken'}: {words}" for role, words in said)
+        self.kv_set(f"voice:said:{HOME}", " | ".join(f"{'they' if role == 'you' else 'you'}: {words}" for role, words in said)[-3000:])
+        return self.log_message(HOME, "ken", text[:20000], call={"seconds": round(seconds)}, via="voice")
 
     def agent_view(self, pid: str) -> dict:
         p = self.get_agent(pid)

@@ -1,4 +1,5 @@
 """Scheduled jobs: on time, caught up after sleep, once a day."""
+import json
 import os
 import tempfile
 import time
@@ -199,3 +200,23 @@ def test_a_caught_up_job_says_it_is_late():
 def test_an_on_time_job_says_nothing_extra():
     assert bot.late_notice(BRIEF, at("07:00")) == ""
     assert bot.late_notice(BRIEF, at("07:01")) == ""  # a slow minute is not "late"
+
+
+def test_untouched_nightly_review_gets_the_disk_check():
+    """Any earlier shipped ending is upgraded; one they wrote themselves is left alone."""
+    start = "Nightly review. File the day. "
+    for old in bot.OLD_NIGHTLY_TAILS:
+        bot.JOBS_FILE.write_text(json.dumps([{"name": "nightly-review", "time": "21:00", "prompt": start + old}]))
+        bot.refresh_default_jobs()
+        prompt = json.loads(bot.JOBS_FILE.read_text())[0]["prompt"]
+        assert prompt == start + bot.NEW_NIGHTLY_TAIL
+        assert "check disk space" in prompt and "Never delete anything yourself" in prompt
+    mine = [{"name": "nightly-review", "time": "21:00", "prompt": "My own review."}]
+    bot.JOBS_FILE.write_text(json.dumps(mine))
+    bot.refresh_default_jobs()
+    assert json.loads(bot.JOBS_FILE.read_text()) == mine
+
+
+def test_shipped_nightly_review_ends_with_the_current_wording():
+    shipped = json.loads((bot.SOURCE / "jobs.default.json").read_text())
+    assert next(j for j in shipped if j["name"] == "nightly-review")["prompt"].endswith(bot.NEW_NIGHTLY_TAIL)

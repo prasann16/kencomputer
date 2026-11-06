@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 
 import runtimes
-from brains import Brain, Session, describe_tool
+from brains import AIUnavailable, Brain, Session, describe_tool, give_up
+
+log = logging.getLogger("ken")
 
 def codex_client(*, cwd=None, env=None):
     from openai_codex import AsyncCodex, CodexConfig
@@ -76,6 +79,21 @@ def mcp_config(servers: dict) -> dict:
     return result
 
 
+ERROR_STATUS = {"unauthorized": 401, "badRequest": 400, "usageLimitExceeded": 429, "rateLimitExceeded": 429,
+                "serverOverloaded": 529, "internalServerError": 500}
+
+
+def error_status(info) -> int | None:
+    """The HTTP status in a Codex error ("unauthorized", or {"httpConnectionFailed": {"httpStatusCode": 503}})."""
+    if isinstance(info, str):
+        return ERROR_STATUS.get(info)
+    if isinstance(info, dict):
+        for detail in info.values():
+            if isinstance(detail, dict) and detail.get("httpStatusCode"):
+                return detail["httpStatusCode"]
+    return None
+
+
 class CodexSession(Session):
     def __init__(self, brain, cwd, system, resume, model_fn=None, mcp_fn=None, env_fn=None):
         self.brain, self.cwd, self.system = brain, cwd, system
@@ -136,13 +154,24 @@ class CodexSession(Session):
         final = None
         completed = False
         self.usage, tokens = [], []  # Codex's token counts as they come in, for what this turn used
+        self.heard, retrying = False, None
         try:
             self.turn = await self.thread.turn(prompt, model=self._model())
             async for event in self.turn.stream():
-                self.last_activity = time.monotonic()
                 if not hasattr(event.payload, "model_dump"):
                     continue
                 payload = event.payload.model_dump(mode="json", by_alias=True)
+                if event.method == "error" and payload.get("willRetry"):
+                    # The AI service failed and Codex is about to try again: none of this is progress.
+                    error = payload.get("error") or {}
+                    status = error_status(error.get("codexErrorInfo"))
+                    retrying = retrying or time.monotonic()
+                    if give_up(status, "", time.monotonic() - retrying, 0):
+                        log.warning("Codex request failed (%s); stopping instead of retrying", error.get("message"))
+                        await self.interrupt()
+                        raise AIUnavailable(status, error.get("message") or "")
+                    continue
+                self.heard, self.last_activity = True, time.monotonic()
                 if event.method == "item/agentMessage/delta":
                     key = payload["itemId"]
                     partial[key] = partial.get(key, "") + payload["delta"]

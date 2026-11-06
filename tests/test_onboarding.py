@@ -11,7 +11,7 @@ from onboarding import Onboarding
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the sign-in helper is for the Mac app")
 
 URL = "https://claude.com/cai/oauth/authorize?code=true&client_id=x"
-TOKEN = "sk-ant-oat01-abc_DEF-123"
+TOKEN = "sk-ant-oat01-" + "abc_DEF-123" * 5  # the real shape: sk-ant-oat, two digits, 40+ characters
 
 
 def fake_cli(tmp_path, monkeypatch, script: str):
@@ -56,6 +56,22 @@ async def test_pasted_code_still_works(tmp_path, monkeypatch):
     await setup.start()
     assert (await setup.submit("the-code"))["claude"]
     assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in (tmp_path / ".env").read_text()
+    assert calls == [1]
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+
+async def test_a_token_missing_its_o_is_saved_whole(tmp_path, monkeypatch):
+    # The CLI's terminal codes can eat the "o" of "oat"; what's saved is the real token.
+    eaten = TOKEN.replace("sk-ant-oat", "sk-ant-at")
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 0.3\necho "Your token: {eaten}"\n')
+    setup, calls = make(tmp_path)
+    await setup.start()
+    for _ in range(50):
+        if setup.status()["claude"]:
+            break
+        await asyncio.sleep(0.1)
+    env = (tmp_path / ".env").read_text()
+    assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in env and f"={eaten}" not in env
     assert calls == [1]
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
 
@@ -112,3 +128,48 @@ async def test_a_rejected_code_says_so_at_once(tmp_path, monkeypatch):
         await setup.submit("bad-code")
     assert asyncio.get_running_loop().time() - started < 5
     assert calls == []
+
+
+async def test_connecting_claude_while_on_ken_ai_credits_sends_the_code(tmp_path, monkeypatch):
+    # Ken AI credits count as "connected", but someone on them pasting a code is connecting their own Claude: the code
+    # must reach the sign-in, and their own token is saved.
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://host.example/ai/")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "person-token")
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "got $code" >> "{tmp_path}/codes"\necho "Your token: {TOKEN}"\n')
+    calls = []
+
+    async def on_connected():
+        calls.append(1)
+
+    setup = Onboarding(tmp_path, lambda: True, on_connected, lambda: True)  # Ken AI credits: already "connected"
+    await setup.start()
+    assert (await setup.submit("the-code"))["claude"]
+    assert (tmp_path / "codes").read_text() == "got the-code\n"
+    assert f"CLAUDE_CODE_OAUTH_TOKEN={TOKEN}" in (tmp_path / ".env").read_text()
+    assert calls == [1]
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+
+async def test_a_code_after_their_own_claude_is_in_changes_nothing(tmp_path, monkeypatch):
+    for k in ("KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "got $code" >> "{tmp_path}/codes"\n')
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)  # their own Claude, already connected
+    setup = Onboarding(tmp_path, lambda: True, lambda: None, lambda: True)
+    await setup.start()
+    await setup.submit("late-code")
+    await asyncio.sleep(0.3)
+    assert not (tmp_path / "codes").exists()
+
+
+async def test_a_code_for_a_sign_in_that_went_away_opens_a_new_one_and_says_so(tmp_path, monkeypatch):
+    # Connect shows this error (web/app.js shows r.error with the new sign-in link): never a dead end.
+    for k in ("KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 5\n')
+    setup = Onboarding(tmp_path, lambda: False, lambda: None, lambda: True)
+    r = await setup.submit("a-code")  # never started
+    assert r["url"] == URL
+    assert r["error"] == "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."

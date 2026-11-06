@@ -1,5 +1,6 @@
 // The whole reel: the cut video with punch-ins, whip pans and push-ins, graphics, a hook headline and captions.
-// Everything comes from props.json, so most reels need no code. For something new, add a graphic in src/graphics/.
+// The look is the reel's own (props.style, from design.md): nothing here imposes one. Graphics float over the video
+// unless a graphic asks for a panel ("sheet" under the speaker, "full" over everything).
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { type ReactNode, useMemo } from "react";
 import { AbsoluteFill, Freeze, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
@@ -7,13 +8,14 @@ import { AbsoluteFill, Freeze, interpolate, OffthreadVideo, Sequence, staticFile
 import { useExit } from "./anim";
 import { GRAPHICS, type Placement } from "./graphics";
 import { accentType, type AreaBox, AreaContext, paperStyle, Rich } from "./graphics/layout";
+import { FootageContext } from "./kit/tools";
 import { SAFE, SHEET_LIFT, SHEET_TOP, softShadow, type Style, ThemeContext, themeFrom, useTheme } from "./theme";
 
 export interface Word {
   text: string;
   start: number; // seconds on the cut's timeline
   end: number;
-  emph?: boolean; // set in the accent serif italic (about one word per sentence)
+  emph?: boolean; // set larger in the accent (about one word per sentence)
 }
 
 export interface GraphicSpec {
@@ -21,7 +23,7 @@ export interface GraphicSpec {
   start: number;
   end: number;
   props?: Record<string, unknown>;
-  placement?: Placement; // override the graphic's default
+  placement?: Placement; // "over" (default), "sheet" or "full"
   hideCaptions?: boolean; // default: true for sheet and full graphics, false for ones over the video
 }
 
@@ -31,7 +33,7 @@ export interface ReelProps {
   words: Word[];
   cuts?: number[]; // jump-cut times, written by cut.py
   framing?: { at: number; scale: number }[]; // each part's framing from that time on, written by cut.py
-  hook?: string; // the headline over the first seconds; *starred words* in the accent serif
+  hook?: string; // the headline over the first seconds; *starred words* in the accent
   hookSeconds?: number;
   title?: string; // older name for hook
   titleSeconds?: number;
@@ -53,7 +55,7 @@ export function presence(g: { start: number; end: number }, t: number, inS = 0.4
 
 const placedGraphics = (props: ReelProps) =>
   (props.graphics ?? []).map((g) => ({ ...g, placement: g.placement ?? GRAPHICS[g.type]?.placement ?? "over" }));
-// Captions step aside while paper covers the lower half; the voice keeps playing.
+// Captions step aside while a panel covers the lower half; the voice keeps playing.
 const hiddenFor = (placed: ReturnType<typeof placedGraphics>) =>
   placed.filter((g) => g.hideCaptions ?? g.placement !== "over").map((g) => [g.start, g.end] as const);
 
@@ -68,7 +70,7 @@ export const Reel = (props: ReelProps) => {
         <Graphics {...props} />
         {props.style?.captions !== false && <Captions words={props.words} hidden={hiddenFor(placed)} style={props.style ?? {}} />}
         <HookLayer {...props} />
-        {props.style?.grain !== false && <Grain />}
+        {props.style?.grain === true && <Grain />}
       </AbsoluteFill>
     </ThemeContext.Provider>
   );
@@ -110,9 +112,11 @@ const Graphics = (props: ReelProps) => {
         const Component = entry.component;
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
-            <GraphicFrame placement={g.placement} spec={g}>
-              <Component {...(g.props ?? {})} />
-            </GraphicFrame>
+            <FootageContext.Provider value={{ video: props.video, start: g.start }}>
+              <GraphicFrame placement={g.placement} spec={g}>
+                <Component {...(g.props ?? {})} durationSeconds={g.end - g.start} />
+              </GraphicFrame>
+            </FootageContext.Provider>
           </Sequence>
         );
       })}
@@ -127,13 +131,13 @@ const HookLayer = (props: ReelProps) => {
   if (!hook) return null;
   return (
     <Sequence durationInFrames={duration} layout="none">
-      <Hook text={hook} duration={duration} size={props.style?.hookSize ?? 128} />
+      <Hook text={hook} duration={duration} size={props.style?.hookSize ?? 112} />
     </Sequence>
   );
 };
 
 // The speaker. Every other jump cut is a hard punch-in, the way an editor hides a jump cut; a chapter
-// change is a whip pan; a zoom is a slow push-in; and when paper slides up, the video lifts to keep the face in view.
+// change is a whip pan; a zoom is a slow push-in; and when a sheet panel slides up, the video lifts to keep the face in view.
 const Speaker = (props: ReelProps & { sheets: GraphicSpec[] }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -190,7 +194,7 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
 
   if (placement === "over") {
     return (
-      <AreaContext.Provider value={{ top: 0, bottom: 0, side: SAFE.side, kind: "over" }}>
+      <AreaContext.Provider value={{ top: SAFE.top, bottom: 480, side: SAFE.side, kind: "over" }}>
         <AbsoluteFill style={{ opacity: exit, fontFamily: theme.font }}>{children}</AbsoluteFill>
       </AreaContext.Provider>
     );
@@ -202,15 +206,14 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
     return (
       <AreaContext.Provider value={area}>
         <AbsoluteFill style={{ transform: `translateY(${(1 - p) * (1920 - SHEET_TOP + 60)}px)` }}>
-          <div style={{ position: "absolute", top: SHEET_TOP, left: 0, right: 0, bottom: -60, ...paperStyle(theme.paper, theme.paperTexture), borderRadius: "44px 44px 0 0", boxShadow: "0 -20px 60px rgba(0,0,0,0.35)" }} />
-          <div style={{ position: "absolute", top: SHEET_TOP + 22, left: "50%", width: 90, height: 8, marginLeft: -45, borderRadius: 4, background: `${theme.ink}22` }} />
+          <div style={{ position: "absolute", top: SHEET_TOP, left: 0, right: 0, bottom: -60, ...paperStyle(theme.paper, theme.paperTexture) }} />
           <AbsoluteFill style={{ opacity: clamp01(p * 1.6 - 0.4) }}>{children}</AbsoluteFill>
         </AbsoluteFill>
       </AreaContext.Provider>
     );
   }
 
-  // Full: paper wipes up over everything, with a thin accent edge leading it.
+  // Full: a panel wipes up over everything.
   const area: AreaBox = { top: SAFE.top + 20, bottom: SAFE.bottom + 40, side: SAFE.side, kind: "full" };
   const cover = (1 - p) * 100;
   return (
@@ -219,12 +222,11 @@ const GraphicFrame = ({ placement, spec, children }: { placement: Placement; spe
         <AbsoluteFill style={paperStyle(theme.paper, theme.paperTexture)} />
         <AbsoluteFill style={{ opacity: clamp01(p * 1.6 - 0.4) }}>{children}</AbsoluteFill>
       </AbsoluteFill>
-      {p > 0 && p < 1 && <div style={{ position: "absolute", left: 0, right: 0, top: `${cover}%`, height: 10, marginTop: -5, background: theme.accent }} />}
     </AreaContext.Provider>
   );
 };
 
-// The hook: a big headline in the open space above the speaker, word by word (in the accent font, the serif by default).
+// The hook: a big headline in the open space above the speaker, word by word, in the accent font.
 const Hook = ({ text, duration, size }: { text: string; duration: number; size: number }) => {
   const theme = useTheme();
   const frame = useCurrentFrame();
@@ -232,7 +234,7 @@ const Hook = ({ text, duration, size }: { text: string; duration: number; size: 
   const words = text.split(/(\*[^*]+\*|\s+)/g).filter((w) => w && !/^\s+$/.test(w));
   return (
     <AbsoluteFill style={{ padding: `${SAFE.top + 10}px ${SAFE.side}px 0`, opacity: exit, transform: `translateY(${(1 - exit) * -30}px)` }}>
-      <div style={{ ...accentType(theme), fontSize: size, lineHeight: 0.98, letterSpacing: -2, color: "#fff", textShadow: softShadow, display: "flex", flexWrap: "wrap", columnGap: 26 }}>
+      <div style={{ ...accentType(theme), fontSize: size, lineHeight: 0.98, letterSpacing: -2, color: theme.text, textShadow: softShadow, display: "flex", flexWrap: "wrap", columnGap: 26 }}>
         {words.map((w, i) => {
           const k = ease((frame - i * 3) / 7);
           return (
@@ -277,7 +279,7 @@ const Captions = ({ words, hidden, style }: { words: Word[]; hidden: (readonly [
   );
 };
 
-// Words appear as they're said; an emphasized one is set larger in the accent (the serif italic by default).
+// Words appear as they're said; an emphasized one is set larger in the accent.
 const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style: Style; offsetMs: number; emphasized: Set<number> }) => {
   const theme = useTheme();
   const frame = useCurrentFrame();
@@ -285,8 +287,8 @@ const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style:
   const nowMs = page.startMs + offsetMs + (frame / fps) * 1000;
   const size = style.captionSize ?? 62;
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 610 }}>
-      <div style={{ fontFamily: theme.font, fontSize: size, fontWeight: style.captionWeight ?? 650, lineHeight: 1.12, textAlign: "center", maxWidth: 900, textShadow: softShadow, color: theme.text, textTransform: style.uppercase ? "uppercase" : "none" }}>
+    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: style.captionY ?? 610 }}>
+      <div style={{ fontFamily: theme.font, fontSize: size, fontWeight: theme.captionWeight, lineHeight: 1.12, textAlign: "center", maxWidth: 900, textShadow: softShadow, color: theme.text, textTransform: style.uppercase ? "uppercase" : "none" }}>
         {page.tokens.map((token, i) => {
           const k = ease((nowMs - token.fromMs) / 120);
           const emph = emphasized.has(Math.round(token.fromMs));
@@ -311,7 +313,7 @@ const CaptionPage = ({ page, style, offsetMs, emphasized }: { page: Page; style:
   );
 };
 
-// Fine moving grain and a soft vignette, so footage and paper feel like one film.
+// Fine moving grain and a soft vignette, for a reel whose design is filmic (style.grain).
 const Grain = () => {
   const frame = useCurrentFrame();
   return (
