@@ -186,3 +186,28 @@ async def test_the_page_hears_why_a_code_went_nowhere(tmp_path, monkeypatch):
     assert r["url"] == URL
     assert "expired" in r["error"]
     claude.stop()
+
+
+def test_the_browser_opener_never_calls_itself(tmp_path):
+    """On Linux, open and xdg-open hand the link to $BROWSER, which was the opener itself: a fork bomb that restarted
+    every Ken in the cloud a minute or two after Connect Claude. Here a fake xdg-open does just that."""
+    import subprocess
+    import onboarding
+    opener, calls = tmp_path / "signin-browser", tmp_path / "calls"
+    opener.write_text(onboarding.OPENER)
+    opener.chmod(0o700)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for name in ("open", "xdg-open"):  # what Debian has: both end up in $BROWSER
+        (bin_ / name).write_text(f'#!/bin/sh\necho {name} >> "{calls}"\n[ -n "$BROWSER" ] && exec "$BROWSER" "$1"\nexit 0\n')
+        (bin_ / name).chmod(0o700)
+    link = "https://claude.com/cai/oauth/authorize?code=true"
+    env = {"PATH": f"{bin_}:/usr/bin:/bin", "BROWSER": str(opener)}
+    subprocess.run([str(opener), link], env=env, timeout=10, check=True)
+    assert (tmp_path / "signin-browser.url").read_text() == link
+    if sys.platform == "darwin":  # a Mac's open, once, and it can't come back
+        assert calls.read_text().split() == ["open"]
+        return
+    assert not calls.exists()  # Linux with no screen (a computer in the cloud): nothing opens
+    subprocess.run([str(opener), link], env={**env, "DISPLAY": ":0"}, timeout=10, check=True)
+    assert calls.read_text().split() == ["xdg-open"]  # with a screen: xdg-open once, and it can't come back

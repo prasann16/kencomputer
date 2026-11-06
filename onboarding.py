@@ -26,6 +26,17 @@ CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
 # Colours and cursor moves, links (ended by BEL or by ESC \\), and character-set switches like ESC ( B.
 ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
+# How the CLI opens the browser (it runs $BROWSER with the link): note the link for the app, then open it on a Mac,
+# or on Linux only with a screen. Never with $BROWSER still set: Linux's open and xdg-open hand the link to $BROWSER,
+# which is this script again, so each copy started another until the computer fell over and restarted (every Ken in
+# the cloud, every time someone pressed Connect Claude).
+OPENER = """#!/bin/sh
+printf %s "$1" > "$0.url"
+unset BROWSER
+if [ "$(uname)" = Darwin ]; then exec open "$1"; fi
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null; then exec xdg-open "$1"; fi
+exit 0
+"""
 # The CLI draws its screen with terminal codes; a stray one can eat the "o" (seen as "sk-ant-at01-…"), so accept that
 # and put it back (_token).
 TOKEN = re.compile(r"sk-ant-o?at\d{2}-[A-Za-z0-9_-]{40,}")
@@ -222,9 +233,7 @@ class Onboarding:
         # The CLI opens the browser through this, so Ken learns the link it opened: that one finishes
         # the sign-in by itself, unlike the code-to-paste link the CLI prints for other computers.
         opener = self.env_file.parent / "signin-browser"
-        opener.write_text('#!/bin/sh\nprintf %s "$1" > "$0.url"\n'
-                          'if command -v open >/dev/null; then exec open "$1"; elif command -v xdg-open >/dev/null; then exec xdg-open "$1"; fi\n'
-                          'exit 0\n')  # no browser here (a computer in the cloud): the link to sign in shows in the app
+        opener.write_text(OPENER)
         opener.chmod(0o700)
         Path(str(opener) + ".url").unlink(missing_ok=True)
         pid, fd = pty.fork()
