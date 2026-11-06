@@ -104,6 +104,17 @@ async def test_the_api_the_talker_uses(engine, aiohttp_client, hosted):  # noqa:
     assert (await client.post("/api/voice/remember", json={"fact": " "})).status == 400
     r = await (await client.post("/api/voice/done", json={"lines": [{"role": "you", "text": "bye"}], "seconds": 61})).json()
     assert r["message"]["call"] == {"seconds": 61}
+    # Then Ken goes through the call, with the call in front of it.
+    for _ in range(50):
+        if "From our call" in engine.brain.asks[-1]["prompt"]:
+            break
+        await asyncio.sleep(0.02)
+    assert "From our call" in engine.brain.asks[-1]["prompt"] and "You: bye" in engine.brain.asks[-1]["prompt"]
+    # A call where they said nothing has nothing to go through.
+    asks = len(engine.brain.asks)
+    await client.post("/api/voice/done", json={"lines": [{"role": "ken", "text": "hello?"}], "seconds": 5})
+    await asyncio.sleep(0.1)
+    assert len(engine.brain.asks) == asks
     page = await client.get("/")
     assert "wss://api.elevenlabs.io" in page.headers["Content-Security-Policy"]
 
