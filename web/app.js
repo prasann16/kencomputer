@@ -950,7 +950,7 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
 // it's linked. linked: true / false, or null while unknown (then it isn't shown).
 function PhoneButton({ linked, onOpen }) {
   const label = linked ? 'Phone connected' : 'Connect your phone';
-  return html`<button class=${'phone-link' + (linked ? ' on' : '')} aria-label=${label} title=${linked ? `${label}. Talk to Ken there too.` : `Talk to Ken from ${what}`} onClick=${onOpen}>
+  return html`<button class=${'phone-link' + (linked ? ' on' : '')} aria-label=${label} title=${linked ? `${label}. Talk to Ken there too.` : 'Talk to Ken from your phone'} onClick=${onOpen}>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
 }
 
