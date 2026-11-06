@@ -517,3 +517,5 @@ ol.conn-steps li { margin: 2px 0; }
 /* The update bar sits above the header on the Mac: it drags the window, its button and link don't. */
 .update-ready { -webkit-app-region: drag; }
 .update-ready .btn, .update-failed a { -webkit-app-region: no-drag; }
+/* The stand-in message box (only if the real one broke) has no + button: keep the text off the rounded edge. */
+.plain-composer textarea { padding-left: 14px; }

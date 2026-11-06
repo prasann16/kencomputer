@@ -40,7 +40,7 @@ function Safe({ where, fallback = null, children }) {
 function PlainComposer({ onSend }) {
   const [text, setText] = useState(''), [busy, setBusy] = useState(false);
   const go = async () => { const t = text.trim(); if (!t || busy) return; setBusy(true); try { await onSend(t); setText(''); } catch {} setBusy(false); };
-  return html`<div class="composer-wrap"><div class="composer"><textarea rows="1" placeholder="Tell Ken what you need…" value=${text} onInput=${(e) => setText(e.target.value)}
+  return html`<div class="composer-wrap"><div class="composer plain-composer"><textarea rows="1" placeholder="Tell Ken what you need…" value=${text} onInput=${(e) => setText(e.target.value)}
     onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } }}/>${text.trim() && html`<button class="icon-btn hot" aria-label="Send" disabled=${busy} onClick=${go}>${Icon.send}</button>`}</div></div>`;
 }
 // An overlay (Settings, a preview, …) that broke: say so, and close it.
