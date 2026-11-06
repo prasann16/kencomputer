@@ -92,3 +92,24 @@ def test_captions_write_subtitles_next_to_the_file(tmp_path, monkeypatch):
     assert json.loads((tmp_path / "podcast.words.json").read_text()) == [{"w": "This", "s": 0.0, "e": 0.31}, {"w": "Bye.", "s": 3725.5, "e": 3726.0}]
     with pytest.raises(ValueError, match="No file"):
         voice.captions(str(tmp_path / "missing.mp4"))
+
+
+def test_caption_words_split_by_whisper_join_back(tmp_path, monkeypatch):
+    """ "24-7", "follow-up", "kencomputer.dev": Whisper hands back pieces, and captions showed "24 -7"."""
+    import json
+    from types import SimpleNamespace as NS
+
+    import voice
+
+    video = tmp_path / "launch.mp4"
+    video.write_bytes(b"")
+    said = [(" on", 0.0, 0.2), (" 24", 0.2, 0.5), ("-7.", 0.5, 0.9), (" follow", 1.0, 1.3), ("-up", 1.3, 1.5),
+            (" go", 2.0, 2.2), (" to", 2.2, 2.3), (" kencomputer", 2.3, 2.9), (".dev", 2.9, 3.3), (" it", 3.4, 3.5), ("'s", 3.5, 3.6),
+            (" 50", 3.7, 3.9), ("%", 3.9, 4.0), (" off.", 4.0, 4.3)]
+    segs = [NS(start=0.0, end=4.3, text="".join(w for w, _, _ in said), words=[NS(word=w, start=s, end=e) for w, s, e in said]),
+            NS(start=5.0, end=6.0, text=" ...and then.", words=[NS(word="...and", start=5.0, end=5.4), NS(word=" then.", start=5.4, end=6.0)])]
+    monkeypatch.setattr(voice, "_segments", lambda path, words=False: (segs, NS(duration=6.0)))
+    voice.captions(str(video))
+    words = json.loads((tmp_path / "launch.words.json").read_text())
+    assert [w["w"] for w in words] == ["on", "24-7.", "follow-up", "go", "to", "kencomputer.dev", "it's", "50%", "off.", "...and", "then."]
+    assert words[1] == {"w": "24-7.", "s": 0.2, "e": 0.9}
