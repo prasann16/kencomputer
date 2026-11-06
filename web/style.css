@@ -78,10 +78,12 @@
 .bubble code { background: color-mix(in srgb, currentColor 16%, transparent); }
 .txt pre { max-width: 100%; margin: var(--s2) 0; padding: var(--s4) var(--s5); overflow-x: auto; border-radius: var(--r-md); background: var(--well); font: var(--text-sm)/1.65 var(--mono); white-space: pre; }
 .txt pre code { padding: 0; background: none; font-size: inherit; }
-.table { max-width: 100%; margin: var(--s1) 0; overflow-x: auto; white-space: normal; }
+/* Tables wrap only between words (not letter by letter on a phone) and scroll sideways when too wide. */
+.table { max-width: 100%; margin: var(--s1) 0; overflow-x: auto; white-space: normal; overflow-wrap: normal; }
 .table table { border-collapse: collapse; font-size: var(--text-md); }
 .table th, .table td { padding: var(--s2) var(--s5) var(--s2) 0; border-bottom: 1px solid var(--line); text-align: left; }
-.table th { font-weight: 600; }
+.table th { font-weight: 600; white-space: nowrap; }
+.table td { min-width: 4em; }
 .file-link { color: inherit; text-decoration: underline; text-decoration-color: var(--disabled); text-underline-offset: 3px; cursor: pointer; }
 .file-link:hover { text-decoration-color: currentColor; }
 .file-link code { text-decoration: inherit; }
