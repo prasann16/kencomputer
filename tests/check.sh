@@ -8,3 +8,4 @@ PY="${1:-.venv/bin/python}"
 "$PY" -m pytest tests -q --asyncio-mode=auto
 "$PY" desktop/checks/parts.py
 node --test tests/*.test.cjs
+npx -y eslint@9.39.5 web/*.js  # every name the chat page uses exists (eslint.config.mjs)
