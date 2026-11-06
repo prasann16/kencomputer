@@ -173,3 +173,16 @@ async def test_a_code_for_a_sign_in_that_went_away_opens_a_new_one_and_says_so(t
     r = await setup.submit("a-code")  # never started
     assert r["url"] == URL
     assert r["error"] == "That sign-in had expired, so a new one just opened. Approve it, then paste the new code."
+    setup.stop()
+
+
+async def test_the_page_hears_why_a_code_went_nowhere(tmp_path, monkeypatch):
+    # Through BrainOnboarding, as /api/setup calls it: the computer restarted between Connect and the pasted code.
+    for k in ("KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 5\n')
+    claude = Onboarding(tmp_path, lambda: False, lambda: None, lambda: True)
+    r = await onboarding.BrainOnboarding({"claude": claude}, lambda: "claude").submit("a-code")
+    assert r["url"] == URL
+    assert "expired" in r["error"]
+    claude.stop()

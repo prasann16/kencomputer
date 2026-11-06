@@ -310,6 +310,15 @@ class WebApp:
             return _json({"error": "Couldn't send it from this Ken. Try again later."}, 400)
         return _json({"ok": True})
 
+    async def ui_error(self, request):
+        """A part of the chat page broke and hid itself: {where, message}. Reported like any error, when reports are on."""
+        import crash
+
+        b = await self._body(request)
+        where = str(b.get("where", ""))[:40]
+        crash.report(None, f"Chat page ({where}): {str(b.get('message', ''))[:4000]}", handled=True, where=f"web.{where}")
+        return _json({"ok": True})
+
     async def privacy_settings(self, request):
         """Share anonymous crash reports and usage counts: read it, or {share: bool} to change it."""
         if not self.privacy:
@@ -1086,6 +1095,7 @@ class WebApp:
         r.add_get("/api/jobs", self.jobs_list)
         r.add_patch("/api/jobs/{name}", self.jobs_change)
         r.add_post("/api/feedback", self.send_feedback)
+        r.add_post("/api/ui-error", self.ui_error)
         r.add_get("/api/privacy", self.privacy_settings)
         r.add_put("/api/privacy", self.privacy_settings)
         r.add_get("/api/phone", self.phone_status)

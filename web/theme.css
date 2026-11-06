@@ -113,6 +113,8 @@ a { color: inherit; text-underline-offset: 3px; }
 h1, h2, h3 { font-family: var(--sans); margin: 0; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 button:focus:not(:focus-visible), select:focus:not(:focus-visible), a:focus:not(:focus-visible), summary:focus:not(:focus-visible) { outline: none; }
+/* No pressed look, ever: a clicked menu (Chrome counts it as keyboard focus) shows only its hover colour. */
+select:focus, select:focus-visible { outline: none; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row { display: flex; align-items: center; gap: var(--s2); }
@@ -136,7 +138,6 @@ button:focus:not(:focus-visible), select:focus:not(:focus-visible), a:focus:not(
   border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink);
   font: 500 var(--text-md)/1.2 var(--sans); white-space: nowrap; text-decoration: none; transition: opacity .15s, background .15s, transform .15s; }
 .btn:hover { opacity: .8; }
-.btn:active:not(:disabled) { transform: scale(.98); }
 .btn:disabled { opacity: .4; }
 .btn.primary { background: var(--primary); color: var(--primary-ink); box-shadow: none; }
 .btn.ghost { box-shadow: none; color: var(--muted); }
