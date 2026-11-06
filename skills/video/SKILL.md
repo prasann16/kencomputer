@@ -130,8 +130,8 @@ Craft rules, whatever the look:
 - **Timed to the words**: it comes in as they say the thing it shows.
 - **Their face for what matters most**: the hook and the most personal moment stay on their face.
 - **Readable**: enough contrast with what's behind it (a soft shadow, a box, or a quieter spot of the frame).
-- **The real thing**: when they mention a tool, app or site, show its real icon or interface (a screenshot, or a Mac
-  app's icon from `sips -s format png /Applications/<App>.app/Contents/Resources/<icon>.icns --out icon.png`).
+- **The real thing**: when they mention a tool, app or site, show its real icon or interface (a screenshot, or on a
+  Mac an app's icon from `sips -s format png /Applications/<App>.app/Contents/Resources/<icon>.icns --out icon.png`).
 - **Never**: stock icons, emojis as decoration, gradient boxes, typewriter text, neon, shaking or bouncing text.
 - **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px.
 

@@ -455,7 +455,7 @@ def test_apps_server_from_the_host(monkeypatch):
 def test_hosted_prompt_is_for_the_browser(monkeypatch, hosted):
     import bot
     system = bot.build_system()
-    assert "IN THE CLOUD" in system and "only through Telegram" not in system
+    assert "The Ken app, in their web browser" in system and "only through Telegram" not in system
 
 
 def test_phone_step_skipped_in_the_cloud(tmp_path, monkeypatch, hosted):
@@ -651,4 +651,5 @@ def test_a_cloud_ken_is_never_told_to_keep_a_mac_awake(monkeypatch):
     cloud = bot.build_system()
     assert "COFFEE" not in cloud and "keeps this Mac awake" not in cloud and "wakes by itself" in cloud
     monkeypatch.delenv("KEN_PLATFORM")
+    monkeypatch.setattr("sys.platform", "darwin")
     assert "COFFEE keeps this" in bot.build_system()  # the Mac still has its coffee cup

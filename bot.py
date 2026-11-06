@@ -432,17 +432,6 @@ HOSTED_PROMPT = (
     "it in the outbox for Telegram."
 )
 
-HOSTED_WEB_PROMPT = (
-    "IN THE CLOUD: you run on your own computer in the cloud, not on their computer. They talk to you in the Ken "
-    "app in their web browser (the same app: chat, Brain, Settings). There is no Chrome, Mac or phone of theirs "
-    "here, and no voice notes yet. Their time zone is set from their browser; if it's wrong, set it with a POST to "
-    "http://127.0.0.1:${KEN_WEB_PORT:-7777}/api/command with {\"text\": \"/timezone Area/City\"} and the header "
-    "\"Authorization: Bearer $(cat ~/.ken/web-token)\". While nobody's using you this computer sleeps; it wakes "
-    "for their messages and for your scheduled jobs (a job may start a minute or two late). Files you make live "
-    "here: name the full path of anything you made for them so they can open it in the app. If you're asked how "
-    "much of their plan is left, tell them it's under Settings."
-)
-
 HEADLESS_BROWSER_PROMPT = (
     "BROWSER: you have your own browser on this computer (headless Chromium; there's no screen). Use the browser "
     "tools for anything that needs a website or a form: open pages, read them, click, type, take screenshots to "
@@ -468,32 +457,13 @@ SYSTEM_PROMPT = (
     "as yours, and they read it in the app's Brain, so keep it personal and short: "
     "how you and the app work lives in these instructions, never in SOUL.md. Its current contents "
     "are included below; edit the file itself to change who you are or what you know. "
-    "You are their assistant, not a coding session. Voice notes are transcribed automatically, so "
-    "expect typos and read for intent. The model you run on is named in these instructions; trust "
+    "You are their assistant, not a coding session. The model you run on is named in these instructions; trust "
     "that over your own guess. Never break the Ken service or ~/.ken/.env, your own lifeline. "
     "When your picture of them is thin and the moment invites it, ask ONE natural question and save "
-    "the answer. With their OK you can look around this computer (projects, git config, installed "
-    "tools) to learn their world; show them what you wrote down. "
+    "the answer. "
     "Your messages are delivered as you write them: before starting anything that "
     "takes a while, say one short natural line about what you're about to do — then do it. "
-    "WHERE YOU LIVE: you are one Ken with more than one window. The Ken app on this computer has "
-    "two tabs at the top: Chat (this conversation; Clear starts a fresh thread, memory and files stay) "
-    "and Brain (who you are, what you remember, Accounts & passwords for keys, and your scheduled jobs, "
-    "all viewable and editable). Settings, at the top right, has "
-    "AI accounts (connect Claude, Codex, or both), Tools (Chrome, email and calendar plus any tool you add), "
-    "Phone and Privacy. The menu at the top of a chat chooses Claude or Codex and the model without "
-    "a restart. Ken on your phone is their own Telegram "
-    "bot, connected in Settings → Phone; it is the same Home conversation, memory and connections as the "
-    "app, not a separate assistant. The header line of each message says where they wrote from. On their "
-    "phone, keep it short and phone-friendly; in the app you can be fuller. Controls: in the app the stop "
-    "button, the model menu and the coffee cup; in Telegram /stop (stop the current reply), /new (fresh "
-    "thread), /model (switch models), /coffee and /decaf, and /kill (turns you off completely, an emergency off switch; "
-    "they turn you on again at the computer). Never suggest Esc or Ctrl+C. COFFEE keeps this "
-    "Mac awake so you can keep working while they're away, even with the screen locked; it's off by "
-    "default, closing the lid still puts the Mac to sleep, and /decaf (or the cup again) turns it off. "
-    "While the Mac sleeps you can't run or answer. Suggest coffee, once, when they want something done "
-    "while they're away or a job falls at a time the Mac usually sleeps. When they ask how to connect "
-    "something or how to use you on their phone, point them to the exact place in one line. If SOUL.md describes your body differently (older "
+    "If SOUL.md describes your body differently (older "
     "installs say you are only a Telegram bot, or carry a 'Your body' section), these instructions are the "
     "truth; leave app mechanics out of SOUL.md. "
     "Your Telegram profile name automatically follows the '# You are <Name>' title of SOUL.md. "
@@ -566,6 +536,9 @@ def onboarding_prompt(pending: list[str]) -> str:
     """Getting to know them, the same in the app and on their phone. It follows the checklist in
     setup.json, so it survives restarts and picks up where it left off."""
     first = not BORN_FLAG.exists()
+    own = where_facts()["own"]
+    inside, live = ("inside their computer", "in your computer") if own else ("inside your own computer in the cloud",
+                                                                               "in a computer in the cloud")
     # Where calendar and email get connected: apps on Ken in the cloud (one-tap links), tools on their own computer.
     connect_where = (f"they're apps here: run `{KEN_CMD} --apps gmail` (or google calendar) and give them the one-tap Connect "
                      "link it prints, or point them to Settings → Apps" if os.environ.get("KEN_PLATFORM")
@@ -573,9 +546,9 @@ def onboarding_prompt(pending: list[str]) -> str:
     opening = (
         "THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up on this "
         "computer. Open with a genuinely witty birth moment: you did not exist a second ago, and now "
-        "you're blinking awake inside their computer. Newborn energy, dry wit, two short lines max, "
+        f"you're blinking awake {inside}. Newborn energy, dry wit, two short lines max, "
         "ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
-        "new. One second ago I didn't exist, and now I live in your computer and apparently work for "
+        f"new. One second ago I didn't exist, and now I live {live} and apparently work for "
         "you. Before anything else: what are you going to call me?\" Never corny, never \"as an AI\". "
         "If their first message is already a task, do the task well first, then the naming."
         if first else
@@ -583,7 +556,7 @@ def onboarding_prompt(pending: list[str]) -> str:
         "yourself. When they write, first deal with what they said, then ask about the NEXT open item. "
         "At most one onboarding question per reply, and none if they're in the middle of something."
     )
-    look_around = ("" if os.environ.get("KEN_PLATFORM") else
+    look_around = ("" if not own else
                    " Once, offer to look around this computer (projects, tools) to learn their world, and show them what you wrote down.")
     return f"""=== Onboarding: the first day ({SETUP_FILE}) ===
 {opening}
@@ -696,13 +669,109 @@ AGENT_PROMPT = (
 ) + WORK_RULES
 
 
-# The app's controls as the Mac describes them (coffee keeps the Mac awake), and what a Ken in the cloud says instead.
-_c = SYSTEM_PROMPT.index("Controls: in the app the stop ")
-MAC_CONTROLS = SYSTEM_PROMPT[_c:SYSTEM_PROMPT.index("usually sleeps. ", _c) + len("usually sleeps. ")]
-CLOUD_CONTROLS = ("Controls: in the app the stop button and the model menu; in Telegram /stop (stop the current reply), /new "
-                  "(fresh thread) and /model (switch models). Never suggest Esc or Ctrl+C. This computer wakes by itself for "
-                  "their messages and your scheduled jobs, so there's nothing for them to keep awake: never mention coffee "
-                  "or keeping a Mac awake. ")
+def platform() -> str:
+    """Where this Ken runs, worked out at every start: "cloud" (a computer in the cloud they use from their browser),
+    "server" (a computer in the cloud they reach only through Telegram), or their own "mac", "windows" or "linux"."""
+    if os.environ.get("KEN_PLATFORM"):
+        return "cloud"
+    if os.environ.get("KEN_HOSTED"):
+        return "server"
+    return {"darwin": "mac", "win32": "windows"}.get(sys.platform, "linux")
+
+
+def where_facts() -> dict:
+    """What's actually here, so Ken's instructions mention a thing only where it exists."""
+    kind = platform()
+    own = kind in ("mac", "windows", "linux")
+    return {
+        "kind": kind,
+        "own": own,  # their own computer, with their own things on it
+        "app": kind != "server",  # the Ken app (on this computer, or in their browser for one in the cloud)
+        "mac_app": kind == "mac" and bool(os.environ.get("KEN_APP_VERSION")),
+        "keep_awake": kind == "mac",  # coffee: only a Mac can be kept awake (coffee())
+        "browser": ("theirs" if own else "own") if browser_mcp() else "",  # their Chrome, or Ken's own headless one
+        "telegram": bool(ALLOWED_USER_ID),
+        "voice": voice_available(),
+    }
+
+
+def where_you_are(f: dict | None = None) -> str:
+    """The one part of Ken's instructions that depends on the computer: what it is, whether it sleeps and what wakes
+    it, where they talk to Ken, and which controls exist."""
+    f = f or where_facts()
+    kind, lines = f["kind"], []
+    if kind == "cloud":
+        lines.append("You run on your own computer in the cloud, not on their computer: their own files and browser "
+                     "aren't here, and what they share with you arrives in the chat.")
+    elif kind == "server":
+        lines.append(HOSTED_PROMPT)
+    else:
+        lines.append({"mac": "You run on their own Mac" + (", in the Ken app." if f["mac_app"] else "."),
+                      "windows": "You run on their own Windows PC.",
+                      "linux": "You run on their own Linux computer (or a server of theirs)."}[kind]
+                     + " With their OK you can look around this computer (projects, git config, installed "
+                     "tools) to learn their world; show them what you wrote down.")
+    if kind == "cloud":
+        lines.append("While nobody's using you this computer sleeps; it wakes by itself for their messages and for your "
+                     "scheduled jobs (a job may start a minute or two late), so there's nothing for them to keep awake.")
+    elif f["keep_awake"]:
+        lines.append("COFFEE keeps this Mac awake so you can keep working while they're away, even with the screen "
+                     "locked; it's off by default, closing the lid still puts the Mac to sleep, and /decaf (or the cup "
+                     "again) turns it off. While the Mac sleeps you can't run or answer. Suggest coffee, once, when they "
+                     "want something done while they're away or a job falls at a time the Mac usually sleeps.")
+    elif f["own"]:
+        lines.append("While this computer is asleep or off you can't run or answer.")
+    if f["app"]:
+        app = ("The Ken app, in their web browser, has" if kind == "cloud" else "The Ken app on this computer has")
+        settings = ("Plan (what's left of it), AI (their own Claude or ChatGPT, or Ken AI credits), Apps (Gmail, "
+                    "Calendar and more), Phone (Telegram), Tools and Privacy" if kind == "cloud" else
+                    "AI accounts (connect Claude, Codex, or both), Tools (Chrome, email and calendar plus any tool you "
+                    "add), Phone and Privacy")
+        phone = ("Ken on your phone is Telegram" if kind == "cloud" else "Ken on your phone is their own Telegram bot")
+        lines.append(
+            f"WHERE YOU LIVE: you are one Ken with more than one window. {app} two tabs at the top: Chat (this "
+            "conversation; Clear starts a fresh thread, memory and files stay) and Brain (who you are, what you "
+            "remember, Accounts & passwords for keys, and your scheduled jobs, all viewable and editable). Settings, "
+            f"at the top right, has {settings}. The menu at the top of a chat chooses Claude or Codex and the model "
+            f"without a restart. {phone}, connected in Settings → Phone; it is the same Home conversation, memory "
+            "and connections as the app, not a separate assistant."
+            + (" Telegram is linked, so they may write from their phone too." if f["telegram"] else "")
+            + " The header line of each message says where they wrote from. On their phone, keep it short and "
+            "phone-friendly; in the app you can be fuller.")
+    controls = []
+    if f["app"]:
+        controls.append("in the app the stop button, the model menu and the coffee cup" if f["keep_awake"]
+                        else "in the app the stop button and the model menu")
+    if f["telegram"] or kind == "server":
+        items = ["/stop (stop the current reply)", "/new (fresh thread)", "/model (switch models)"]
+        items += ["/coffee and /decaf"] if f["keep_awake"] else []
+        items += ["/kill (turns you off completely, an emergency off switch; they turn you on again at the computer)"
+                  ] if kind != "cloud" else []
+        controls.append("in Telegram " + ", ".join(items[:-1]) + ", and " + items[-1])
+    if controls:
+        lines.append("Controls: " + "; ".join(controls) + "." + (" Never suggest Esc or Ctrl+C." if kind != "cloud" else ""))
+    if f["app"]:
+        lines.append("When they ask how to connect something or how to use you on their phone, point them to the exact "
+                     "place in one line.")
+    if f["voice"]:
+        lines.append("Voice notes are transcribed automatically, so expect typos and read for intent.")
+    if kind == "cloud":
+        lines.append("Their time zone is set from their browser; if it's wrong, set it with a POST to "
+                     "http://127.0.0.1:${KEN_WEB_PORT:-7777}/api/command with {\"text\": \"/timezone Area/City\"} and the "
+                     "header \"Authorization: Bearer $(cat ~/.ken/web-token)\". Files you make live here: name the full "
+                     "path of anything you made for them so they can open it in the app. If you're asked how much of "
+                     "their plan is left, tell them it's under Settings.")
+    return "=== Where you are ===\n" + "\n".join(lines) + "\n=== end where you are ==="
+
+
+def browser_prompt() -> str:
+    """Their own Chrome on their computer; Ken's own browser on a computer in the cloud."""
+    return {"theirs": BROWSER_PROMPT, "own": HEADLESS_BROWSER_PROMPT}.get(where_facts()["browser"], "")
+
+
+def agent_tools_prompt(only) -> str:
+    """What an agent's built-in tools add to its instructions."""
+    return "\n\n".join(x for x in (browser_prompt() if "browser" in only else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
 
 
 def build_system() -> str:
@@ -711,6 +780,7 @@ def build_system() -> str:
     Injected by the harness (not auto-loaded by the engine) so any future
     engine cartridge gets the same soul the same way."""
     system = SYSTEM_PROMPT.replace("{available_models_path}", str(models_file(ENGINE.backend(HOME))))
+    system += "\n\n" + where_you_are()
     try:
         soul = (WORKSPACE / "SOUL.md").read_text()
         system += "\n\n=== SOUL.md — your soul file, current contents ===\n" + soul + "\n=== end SOUL.md ==="
@@ -724,8 +794,8 @@ def build_system() -> str:
         system += f"\n\n=== your memory folder ({MEMORY_DIR}) does not exist yet ==="
     except Exception:
         pass
-    if browser_mcp():
-        system += "\n\n" + (HEADLESS_BROWSER_PROMPT if os.environ.get("KEN_PLATFORM") else BROWSER_PROMPT)
+    if browser_prompt():
+        system += "\n\n" + browser_prompt()
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
@@ -734,12 +804,6 @@ def build_system() -> str:
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
-    if os.environ.get("KEN_PLATFORM"):
-        # In the cloud there's no Mac to keep awake: the coffee controls would contradict the cloud line below.
-        system = system.replace(MAC_CONTROLS, CLOUD_CONTROLS)
-        system += "\n\n" + HOSTED_WEB_PROMPT
-    elif os.environ.get("KEN_HOSTED"):
-        system += "\n\n" + HOSTED_PROMPT
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -1724,8 +1788,7 @@ async def start_engine() -> WebApp | None:
     ENGINE.model_choices = model_choices
     ENGINE.usable_brains = usable_brains
     ENGINE.credits_model = credits_model
-    ENGINE.tools_prompt = lambda only: "\n\n".join(
-        x for x in (BROWSER_PROMPT if "browser" in only and browser_mcp() else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
+    ENGINE.tools_prompt = agent_tools_prompt
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
