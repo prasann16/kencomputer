@@ -67,9 +67,9 @@ APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
 NO_ANSWER_LIMIT = 2 * 60
-# Ken AI credits run on these only: Haiku by default (about 14x cheaper, and good at real tasks), Sonnet if a paid
-# plan picks it. The site keeps free trials on Haiku whatever is asked.
-CREDIT_MODELS = ("claude-haiku-5-5", "claude-sonnet-5-5")
+# Ken AI credits run on Haiku only (about 14x cheaper than Sonnet, and it did every real task in testing). Ken picks it;
+# there's no menu on credits. The site enforces it too.
+CREDIT_MODELS = ("claude-haiku-5-5",)
 # Background jobs share the subscription with the chat: two at a time, an hour at most each.
 RUN_SLOTS = 2
 RUN_LIMIT = 60 * 60
@@ -1245,7 +1245,7 @@ class Engine:
         on_credits = bool(self.credits_model and self.credits_model(backend))
         if on_credits and model is not None:
             if model and model not in CREDIT_MODELS:
-                raise ValueError("Ken AI credits run on Haiku or Sonnet.")
+                raise ValueError("On Ken AI credits Ken picks the model. Connect your own Claude or ChatGPT in Settings for other models.")
             (self.home / "model-credits").write_text(model.strip() + "\n")  # their own account's pick is left as it was
             self.broadcast("chat.runtime", pid, backend=backend)
             return

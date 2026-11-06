@@ -2059,8 +2059,8 @@ def set_model(name: str, backend=None) -> None:
     crash.track("model_changed", model=name)
 
 
-# What Ken AI credits run on by default: Haiku (about 14x cheaper than Sonnet and good at real tasks). A paid plan can
-# pick Sonnet in the model menu (engine.credits_choice). ChatGPT models can't run on credits.
+# What Ken AI credits run on: Haiku, always (about 14x cheaper than Sonnet and good at real tasks). No menu on credits.
+# ChatGPT models can't run on credits.
 CREDITS_MODEL = "claude-haiku-5-5"
 
 
@@ -2099,8 +2099,7 @@ def available_models(backend=None) -> list[str]:
 
 
 async def model_choices(backend):
-    # On Ken AI credits: Haiku or Sonnet (the site keeps a free trial on Haiku). An account that isn't connected:
-    # nothing (never its models).
+    # On Ken AI credits: Ken picks (Haiku), nothing to choose. An account that isn't connected: nothing (never its models).
     if credits_model(backend):
         return list(CREDIT_MODELS)
     if ACCOUNTS is not None and backend not in usable_brains():
@@ -2119,14 +2118,8 @@ async def model(arg: str = "") -> dict:
     models = await model_choices(backend)
     want = arg.strip().lower()
     if credits_model(backend):
-        match = next((m for m in models if want and want in m), None)
-        if not want or not match:
-            return {"reply": f"Ken AI credits run on {'Haiku or Sonnet' if not want else 'Haiku or Sonnet, not ' + want}: now "
-                             f"{active_model(backend)}. For other models, connect your own Claude or ChatGPT in Settings.",
-                    "choices": models, "current": active_model(backend)}
-        (ENGINE.home / "model-credits").write_text(match + "\n")  # engine.credits_choice; their own pick is untouched
-        ENGINE.broadcast("chat.runtime", HOME, backend=backend)
-        return {"reply": f"✓ Ken AI credits on {match} — from the next task."}
+        return {"reply": "On Ken AI credits Ken picks the model for you. For other models, connect your own Claude or ChatGPT in Settings.",
+                "choices": [], "current": ""}
     if not want:
         return {"reply": f"Model — current: {active_model(backend) or 'default'}", "choices": models, "current": active_model(backend)}
     match = next((m for m in models if m == want), None) or next((m for m in models if want in m), None)
