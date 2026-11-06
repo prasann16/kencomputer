@@ -1307,6 +1307,23 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("Nothing is running.")
 
 
+async def stop_all_work() -> None:
+    """Stop every reply and background job now (the disk is nearly full: see Usage.watch_disk)."""
+    for pid in list(ENGINE.chats):
+        await ENGINE.stop_chat(pid)
+    for run in ENGINE.list_runs(active=True):
+        await ENGINE.stop_run(run["id"], by="Ken")
+
+
+def more_space() -> str:
+    """How to get a bigger disk: a Ken in the cloud's plan page on its site, else clearing some room."""
+    site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
+    account = os.environ.get("KEN_ACCOUNT_URL", "")
+    if site.startswith("https://") and account:
+        return f"get more space with a bigger plan: {account if account.startswith('https://') else site + account}"
+    return "free up some space on it"
+
+
 # /kill is the off switch for when Ken misbehaves and they're away: it stops all work and turns
 # the engine off until they turn it on again at the computer (the app, or `ken start`). The note
 # keeps whatever normally restarts Ken (launchd, systemd, winrun.py) from bringing it back.
@@ -1677,6 +1694,8 @@ async def scheduler() -> None:
                     remove_job(job)  # its day passed while Ken was off
                     continue
                 if _job_due(job, now, state):
+                    if USAGE.disk_full:
+                        continue  # the disk is nearly full: nothing runs until they've said what to do (see Usage.disk_check)
                     if asking_ai():
                         continue  # a brand-new Ken still waiting to be told how to think: nothing runs (or spends) yet
                     if job.get("date"):
@@ -2663,7 +2682,8 @@ async def run() -> None:
     # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
     ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
-                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(keep_awake()),
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space())),
+                  asyncio.create_task(keep_awake()),
                   asyncio.create_task(runtimes.update(signed_in()))]
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))

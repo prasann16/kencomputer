@@ -163,3 +163,61 @@ def test_app_names_people_know():
     assert usage.app_name("/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine") == "VirtualMachine"
     assert usage.app_name("/usr/bin/python3") == "python3" and usage.app_name("firefox") == "firefox"
     assert usage.app_name("C:\\Program Files\\chrome.exe".replace("\\", "/")) == "chrome"
+
+
+# -- the disk filling up (5 GB, a small computer in the cloud)
+GB = 1024 ** 3
+
+
+def test_disk_says_each_level_once():
+    u, _ = fresh()
+    assert u.disk_check(5 * GB, int(2 * GB)) == ""          # 60% full
+    assert u.disk_check(5 * GB, int(0.9 * GB)) == "warn"    # 82%
+    assert u.disk_check(5 * GB, int(0.8 * GB)) == ""        # still over 80%: said already
+    assert not u.disk_full
+    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"    # 92%: stop the work
+    assert u.disk_full
+    assert u.disk_check(5 * GB, int(0.3 * GB)) == ""
+
+
+def test_disk_hovering_at_the_line_says_nothing_new():
+    u, _ = fresh()
+    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"
+    assert u.disk_check(5 * GB, int(0.55 * GB)) == ""       # 89%: just under, still stopped
+    assert u.disk_full
+    assert u.disk_check(5 * GB, int(0.9 * GB)) == ""        # 82%: back to the heads-up level, already said
+    assert not u.disk_full
+    assert u.disk_check(5 * GB, int(1.5 * GB)) == ""        # 70%: room again
+    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"    # full again later: said again
+
+
+def test_a_big_disk_with_room_left_is_fine():
+    u, _ = fresh()
+    assert u.disk_check(1000 * GB, 100 * GB) == ""          # 90% full but 100 GB left
+
+
+def test_disk_texts():
+    u, _ = fresh()
+    stop = u.disk_text("stop", 5 * GB, int(0.4 * GB), "get more space with a bigger plan: https://kencomputer.dev/account")
+    assert stop.startswith("Your ") and "92% full" in stop and "stopped what I was doing" in stop and "/account" in stop
+    warn = u.disk_text("warn", 5 * GB, int(0.9 * GB), "free up some space on it")
+    assert warn.startswith("Heads-up: your ") and "82% full" in warn
+
+
+def test_watch_disk_stops_work_before_saying_so(monkeypatch):
+    import asyncio
+    import shutil
+    from collections import namedtuple
+    u, said = fresh()
+    order = []
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: namedtuple("D", "total used free")(5 * GB, 0, int(0.4 * GB)))
+
+    async def stop():
+        order.append("stopped")
+
+    async def go():
+        task = asyncio.create_task(u.watch_disk(stop, "more", every=0.01))
+        await asyncio.sleep(0.05)
+        task.cancel()
+    asyncio.run(go())
+    assert order == ["stopped"] and len(said) == 1 and "stopped what I was doing" in said[0]
