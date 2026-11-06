@@ -1,5 +1,5 @@
 """Usage: how much of the AI plan is used, and how much of this computer's memory, for /usage, a
-heads-up before the plan runs out, and one when the computer is running out of memory.
+heads-up before the plan runs out, and one when the computer is running out of memory or disk.
 
 Claude Code reports the plan's usage windows (5 hour, weekly) as rate limit events, only when they
 change; Codex reports the ChatGPT plan's after each turn. Ken keeps the latest reading of each window
@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,11 @@ WINDOW_NAMES = {"five_hour": "5 hour", "seven_day": "weekly", "monthly": "monthl
 PLAN_NAMES = {"claude": "Claude", "codex": "ChatGPT"}
 WARN_AT = 80  # % of a window used when Ken gives the heads-up
 LOW_MEMORY_FOR = 120  # seconds memory must stay critical before Ken says so (a short spike isn't news)
+# The disk: at DISK_WARN % full Ken tells them; at DISK_STOP % it stops all work and pauses scheduled jobs until
+# they say what to do. Only while little is left (DISK_LEFT_GB): a big Mac at 80% still has plenty of room.
+DISK_WARN, DISK_STOP = 80, 90
+DISK_LEFT_GB = {DISK_WARN: 20, DISK_STOP: 5}
+DISK_EASE = 5  # % below a level before it counts as over, so hovering at the line doesn't repeat the message
 
 
 # ------------------------------------------------------------------ the plan
@@ -223,6 +229,7 @@ class Usage:
         self.say = say  # one message to them, in the app and on the phone
         self.jobs = jobs  # Ken's background jobs running now, by name
         self._low_since: float | None = None  # when memory went critical, while it is
+        self.disk_full = False  # the disk is past DISK_STOP: no scheduled jobs until there's room
 
     def load(self) -> dict:
         try:
@@ -318,6 +325,45 @@ class Usage:
                     "Say stop if you want me to stop.")
         return (f"Your {computer} is running out of memory. {app[0]} is using {gb(app[1])}. "
                 "Closing it, or some of its windows, will help.")
+
+    # -- the disk filling up
+
+    def disk_check(self, total: int, free: int) -> str:
+        """Which level the disk just reached ("warn" or "stop"), once each time it gets there; else ""."""
+        pct, state = 100 * (total - free) / total, self.load()
+        said = state.get("disk_level", 0)
+        level = max((n for n in (DISK_WARN, DISK_STOP) if pct >= n and free < DISK_LEFT_GB[n] * 1024 ** 3), default=0)
+        if level < said and pct >= said - DISK_EASE and free < DISK_LEFT_GB[said] * 1024 ** 3:
+            level = said  # just under the line: still there
+        self.disk_full = level == DISK_STOP
+        if level != said:
+            state["disk_level"] = level
+            self.save(state)
+        return {DISK_WARN: "warn", DISK_STOP: "stop"}.get(level, "") if level > said else ""
+
+    def disk_text(self, what: str, total: int, free: int, more: str) -> str:
+        computer = "Mac" if sys.platform == "darwin" else "computer"
+        full = f"your {computer}'s disk is {100 * (total - free) / total:.0f}% full ({gb(free)} left)"
+        if what == "stop":
+            return (f"{full[0].upper()}{full[1:]}, so I stopped what I was doing and paused scheduled jobs before it fills up. "
+                    f"Tell me what to do: I can list the biggest files to clear, or {more}")
+        return f"Heads-up: {full}. Ask me to clear old files, or {more}"
+
+    async def watch_disk(self, stop_work: Callable, more: str, every: float = 60) -> None:
+        """Once a minute: tell them as the disk fills, and at DISK_STOP stop all work first."""
+        while True:
+            try:
+                d = shutil.disk_usage(self.path.parent)
+                what = self.disk_check(d.total, d.free)
+                if what == "stop":
+                    await stop_work()
+                if what:
+                    text = self.disk_text(what, d.total, d.free, more)
+                    log.warning("%s", text)
+                    self.say(text)
+            except Exception as e:
+                log.warning("disk check failed: %s", e)
+            await asyncio.sleep(every)
 
     async def watch_memory(self, every: float = 60) -> None:
         """Once a minute, a microsecond check; the slower look at who's using memory only when it's needed."""
