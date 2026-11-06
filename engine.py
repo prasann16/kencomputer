@@ -293,6 +293,18 @@ def memory_listing(folder: Path) -> str:
     return "\n".join(lines) or "  (empty)"
 
 
+
+# Dates without a leading zero ("March 5", "9:05 AM") on every platform: "%-d" works on Mac and Linux but not Windows.
+def _short_date(t=None) -> str:
+    t = t or time.localtime()
+    return f"{time.strftime('%b', t)} {t.tm_mday}"
+
+
+def _day_and_time(t=None) -> str:
+    t = t or time.localtime()
+    hour = t.tm_hour % 12 or 12
+    return f"{time.strftime('%A, %B', t)} {t.tm_mday}, {hour}:{time.strftime('%M %p', t)}"
+
 class Engine:
     def __init__(self, home: Path, brain: Brain, *, brains: dict[str, Brain] | None = None) -> None:
         self.home = Path(home)
@@ -1957,7 +1969,7 @@ class Engine:
             "about_you": part("\n\n".join(about), 1500),
             "today": part(brief, 1000),
             "recent_chat": part("\n".join(chat), 1800),
-            "now": time.strftime("%A, %B %-d, %-I:%M %p"),
+            "now": _day_and_time(),
         }
 
     ONBOARDING_KEYS = ("call_name", "work", "busy", "apps", "brief", "ken_name", "style")
@@ -2014,7 +2026,7 @@ class Engine:
             m.parent.mkdir(parents=True, exist_ok=True)
             head = "" if m.exists() else "About them: work, what's on their plate, the apps they use\n\n"
             with m.open("a") as out:
-                out.write(head + f"From setting Ken up ({time.strftime('%b %-d')}):\n" + "\n".join(n for n in notes if n) + "\n\n")
+                out.write(head + f"From setting Ken up ({_short_date()}):\n" + "\n".join(n for n in notes if n) + "\n\n")
         # A Home chat already open keeps the soul it started with: reopen it (it resumes the same conversation) so
         # the next reply uses the new one, and tell that reply what changed.
         said = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
@@ -2038,7 +2050,7 @@ class Engine:
         if not f.exists():
             f.write_text("Things they told me on voice calls (to file into the right notes)\n\n")
         with f.open("a") as out:
-            out.write(f"- {fact} ({time.strftime('%b %-d')})\n")
+            out.write(f"- {fact} ({_short_date()})\n")
         return fact
 
     def voice_call_done(self, lines: list[dict], seconds: float) -> dict | None:
