@@ -34,7 +34,8 @@ def test_sweep_keeps_the_brain_and_clears_old_work(tmp_path):
     link = home / "work" / "videos" / "porto" / "node_modules"
     link.symlink_to(target.parent)
     old = time.time() - 9 * DAY
-    os.utime(link, (old, old), follow_symlinks=False)
+    if os.utime in os.supports_follow_symlinks:  # not on Windows; the sweep then goes by the folder's own time
+        os.utime(link, (old, old), follow_symlinks=False)
 
     did = sweep(home)
 

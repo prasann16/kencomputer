@@ -11,6 +11,7 @@ os.environ["KEN_HOME"] = tempfile.mkdtemp()  # never a live Ken (see conftest.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import HOME, speakable  # noqa: E402
+import engine as engine_mod  # noqa: E402
 from test_hosted import engine, hosted, signed_in  # noqa: E402,F401
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -39,7 +40,7 @@ def test_the_context_pack_has_their_ken_their_life_today_and_where_the_chat_left
     assert "Runs Rise Bakery" in c["about_you"] and "Other things in memory: The new sourdough line" in c["about_you"]
     assert c["today"] == "☀️ Morning: dentist at 15:00, supplier call at 10:00."
     assert c["recent_chat"].splitlines()[:2] == ["Them: can you draft the weekend specials post?", "Juno: Done, it's in the chat for you to check."]
-    assert c["now"] == time.strftime("%A, %B %-d, %-I:%M %p")
+    assert c["now"] == engine_mod._day_and_time()
     assert set(c) == {"ken_name", "soul", "about_you", "today", "recent_chat", "now"}
 
 
@@ -69,7 +70,7 @@ def test_remember_puts_what_they_said_into_kens_real_memory(engine):
     f = engine.memory_dir(HOME) / "voice.md"
     lines = f.read_text().splitlines()
     assert lines[0] == "Things they told me on voice calls (to file into the right notes)"
-    assert lines[2] == f"- Off work this Friday, Nov 7. ({time.strftime('%b %-d')})"
+    assert lines[2] == f"- Off work this Friday, Nov 7. ({engine_mod._short_date()})"
     assert len(lines) == 4
     assert "Off work this Friday" in engine.voice_context()["about_you"]  # and the next call knows it
 

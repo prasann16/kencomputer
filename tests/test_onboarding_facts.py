@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import bot  # noqa: E402
 from engine import HOME  # noqa: E402
+import engine as engine_mod  # noqa: E402
 from test_hosted import engine, signed_in  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parent.parent
@@ -38,7 +39,7 @@ def test_soul_and_memory(engine):
     assert "- How they like to be talked to: short and direct, a bit of humour" in soul.split("## Style")[1]
     note = (engine.memory_dir(HOME) / "about-them.md").read_text()
     assert note.startswith("About them: work, what's on their plate, the apps they use\n")
-    assert f"From setting Ken up ({time.strftime('%b %-d')}):" in note
+    assert f"From setting Ken up ({engine_mod._short_date()}):" in note
     for line in ("- Eating their time this week: a rebrand for a bakery, due Friday", "- Apps they live in: Gmail, Slack, Notion", "- Morning brief: 08:00"):
         assert line in note
     c = engine.voice_context()
