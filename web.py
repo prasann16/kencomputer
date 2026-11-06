@@ -117,10 +117,10 @@ def _json(data, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, default=str))
 
 
-
 # After a voice call: one more turn for Ken, so nothing said on the call falls through.
 VOICE_FOLLOW_UP = (
-    "(A voice call with them just ended; the call is below. Go through it now:\n"
+    "(A voice call with them just ended; the call is below. Go through it now, quietly: no progress messages, your "
+    "only message is the last one.\n"
     "1. Save to memory anything worth keeping that isn't saved yet.\n"
     "2. Do whatever they asked for that didn't get done on the call. What you already did for them during the call "
     "(their requests from it are in this chat) is done: don't do it twice. Anything that goes out to other people or "
