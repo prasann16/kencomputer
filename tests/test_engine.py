@@ -617,3 +617,37 @@ def test_skills_ken_ships_with_update_unless_made_their_own_or_removed(engine, t
     engine.remove_skill("video")
     prepare_skills(engine.home, shipped)
     assert engine.list_skills() == []  # removed stays removed
+
+
+async def test_a_new_message_while_ken_is_busy_is_answered_at_once(engine):
+    class Busy(FakeSession):  # the chat, stuck on a long piece of work
+        steered = []
+
+        async def steer(self, prompt):
+            self.steered.append(prompt)
+            return True
+
+    busy = Busy(engine.brain, str(engine.home_cwd), lambda: "", None)
+    busy.busy = True
+    engine.chats[HOME] = busy
+    lock = engine.chat_locks.setdefault(HOME, asyncio.Lock())
+    await lock.acquire()
+    try:
+        assert await engine.send_message(HOME, "what's 2+2?", steer=True)
+        side = engine.brain.asks[-1]
+        assert "You're busy in the main chat" in side["system"] and "what's 2+2?" in side["prompt"]
+        assert engine.messages(HOME)[-1]["text"] == "did it" and not busy.steered  # answered, the work left alone
+
+        async def about_the_work(prompt, on_text, on_tool=None, on_delta=None):
+            await on_text("STEER")
+        FakeSession.ask, real = about_the_work, FakeSession.ask
+        try:
+            assert await engine.send_message(HOME, "actually make it blue", steer=True)
+        finally:
+            FakeSession.ask = real
+        assert busy.steered and "make it blue" in busy.steered[0]  # a change to the work joins the work
+    finally:
+        lock.release()
+    engine.chats.pop(HOME, None)
+    await engine.send_message(HOME, "thanks")
+    assert "you also answered these on the side" in engine.brain.asks[-1]["prompt"] and "2+2" in engine.brain.asks[-1]["prompt"]
