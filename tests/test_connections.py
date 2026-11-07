@@ -127,3 +127,17 @@ def test_chrome_counts_as_connected_only_while_it_listens(tmp_path, monkeypatch)
     assert connections.chrome_connected() and Connections(tmp_path).status()["chrome"]
     server.close()  # Chrome restarted with the setting off: the file stays behind
     assert not connections.chrome_connected()
+
+
+def test_ken_knows_who_runs_an_email_and_how_to_make_its_password(monkeypatch):
+    import connections
+    monkeypatch.setattr(connections, "mail_servers", lambda domain: {"bakery.com": ["aspmx.l.google.com"],
+                                                                     "firm.com": ["firm-com.mail.protection.outlook.com"]}.get(domain, []))
+    gmail = connections.email_provider("me@gmail.com")
+    assert gmail["app_password"] and gmail["link"].startswith("https://myaccount.google.com") and gmail["steps"]
+    work = connections.email_provider("hello@bakery.com")  # a business on Google Workspace
+    assert work["key"] == "google" and work["hosts"][0] == "imap.gmail.com"
+    assert "Outlook" in connections.email_provider("ana@firm.com")["blocked"]  # Microsoft 365: use the Outlook app
+    assert "Outlook" in connections.email_provider("me@hotmail.com")["blocked"]
+    own = connections.email_provider("me@tiny-host.net")
+    assert own["key"] == "" and own["hosts"][0] == "imap.tiny-host.net" and "steps" not in own

@@ -1079,13 +1079,22 @@ function FirstThink({ usage, onPick, onConnected, onCredits }) {
     <p class="first-connect-note">You can switch any time in Settings → AI.</p></div>`;
 }
 
-const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords', 'googlemail.com': 'https://myaccount.google.com/apppasswords', 'icloud.com': 'https://account.apple.com/account/manage', 'me.com': 'https://account.apple.com/account/manage', 'mac.com': 'https://account.apple.com/account/manage' };
 
 // What Ken can use, connected right here: Chrome, email, calendar, plus any tool Ken adds itself.
 // A connected tool has a switch (does Ken use it); one that isn't connected has Connect.
 function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
+  // Who runs the email they typed (found from the address, or a business domain's mail records): the steps to make
+  // the password Ken signs in with, and a button to the page that makes it.
+  const [provider, setProvider] = useState(null);
+  useEffect(() => {
+    setProvider(null);
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(address.trim())) return;
+    let alive = true;
+    const t = setTimeout(() => api('/api/connections/email-provider', { json: { address: address.trim() } }).then((r) => alive && setProvider(r)).catch(() => {}), 400);
+    return () => { alive = false; clearTimeout(t); };
+  }, [address]);
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
   // Connecting or disconnecting Chrome happens in Chrome, so watch until it actually changes.
   const waitingChrome = state && ((open === 'chrome' && !state.chrome) || (open === 'chrome-off' && state.chrome));
@@ -1099,8 +1108,6 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
     try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
     finally { setBusy(false); }
   };
-  const domain = (address.split('@')[1] || '').toLowerCase();
-  const help = APP_PASSWORD[domain];
   if (!state) return html`<p class="np-note">${error || 'Loading…'}</p>`;
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
@@ -1108,16 +1115,20 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
   const use = (t, connected, connect) => connected
     ? switches && html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
     : connect;
-  const emailRow = row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), only ? 'Other email' : 'Email',
-      only ? 'Any mailbox, like your work email. Ken reads and drafts; it sends only when you say so.' : 'Search, read and draft replies. Sends only when you say so.',
+  const emailRow = row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), only ? 'Email (any provider)' : 'Email',
+      only ? 'Work email or any other inbox, with its password.' : 'Search, read and draft replies. Sends only when you say so.',
       use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
       html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
       ${open === 'email' && html`<div class="conn-form">
         <input class="np-input" autofocus type="email" autocomplete="email" placeholder="Email address" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
-        <input class="np-input" type="password" autocomplete="off" placeholder="Password" value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && address && password && !busy && e.currentTarget.closest('.conn-form').querySelector('.btn.primary').click()}/>
-        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
-        <p class="conn-steps">${domain.match(/gmail|googlemail|icloud|me\.com|mac\.com/) ? html`This one needs an app password, not your normal one: ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">create one</a>` : ''} and paste it here.${domain.match(/gmail/) ? ' (Google asks you to turn on 2-Step Verification first.)' : ''}` : 'Your email password. If your account has 2-step sign-in, use an app password from its security settings.'}</p>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
+        ${provider?.blocked ? html`<p class="conn-steps">${provider.blocked}</p>` : html`
+          ${provider?.steps ? html`<div class="conn-walk"><p class="conn-steps">${provider.app_password ? `${provider.name} needs an app password for Ken, not your normal one:` : `${provider.name}:`}</p>
+            <ol class="conn-steps">${provider.steps.map((step) => html`<li>${step}</li>`)}</ol>
+            ${provider.link && html`<a class="btn sm" href=${provider.link} target="_blank" rel="noopener">${provider.link_label} ↗</a>`}</div>`
+          : provider && html`<p class="conn-steps">Use your ${provider.name ? provider.name + ' ' : ''}email password.</p>`}
+          <input class="np-input" type="password" autocomplete="off" placeholder=${provider?.app_password ? 'Paste the app password' : 'Password'} value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && address && password && !busy && e.currentTarget.closest('.conn-form').querySelector('.btn.primary').click()}/>
+          ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}`}
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password || provider?.blocked} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
       </div>`}`);
   // Apps on hosted Ken shows only the email part: any mailbox, over IMAP, for what Apps' one-click list doesn't cover.
   if (only === 'email') return html`<div class="tool-list">${emailRow}${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`;
@@ -1288,8 +1299,8 @@ function HostedApps() {
       <button class="app-add" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
     </div>`)}</div>`}
     ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
-    <${ToolList} only="email" switches=${false}/>
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
+    ${(!q.trim() || /mail|imap|smtp|inbox/i.test(q)) && html`<div class="apps-imap"><${ToolList} only="email" switches=${false}/></div>`}
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
       : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
           ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`

@@ -27,13 +27,75 @@ HOSTS = {
     "icloud.com": ("imap.mail.me.com", "smtp.mail.me.com", 587),
     "me.com": ("imap.mail.me.com", "smtp.mail.me.com", 587),
     "mac.com": ("imap.mail.me.com", "smtp.mail.me.com", 587),
-    "outlook.com": ("outlook.office365.com", "smtp.office365.com", 587),
-    "hotmail.com": ("outlook.office365.com", "smtp.office365.com", 587),
-    "live.com": ("outlook.office365.com", "smtp.office365.com", 587),
     "yahoo.com": ("imap.mail.yahoo.com", "smtp.mail.yahoo.com", 465),
     "fastmail.com": ("imap.fastmail.com", "smtp.fastmail.com", 465),
 }
 SMTP_FOR = {"imap.gmail.com": ("smtp.gmail.com", 465)}  # an explicit IMAP host we know the SMTP side of
+
+# Who runs a mailbox, and how to make the password Ken signs in with. Found from the address's domain, or for a domain
+# of its own (a business's email), from where its mail goes (its MX records). Providers that need an app password get
+# the steps and a link to the page that makes one; Microsoft turned password sign-in off, so it says to use Outlook.
+PROVIDERS = {
+    "google": {"name": "Google", "app_password": True, "mx": ("google.com", "googlemail.com"), "hosts": ("imap.gmail.com", "smtp.gmail.com", 465),
+               "link": "https://myaccount.google.com/apppasswords", "link_label": "Open Google's App passwords",
+               "steps": ["Open Google's App passwords page. If it says it isn't available, turn on 2-Step Verification "
+                         "first (Google shows you how), then open the page again.",
+                         "Type Ken as the name and press Create.", "Copy the 16-letter password and paste it below."]},
+    "icloud": {"name": "iCloud", "app_password": True, "mx": ("icloud.com",), "hosts": ("imap.mail.me.com", "smtp.mail.me.com", 587),
+               "link": "https://account.apple.com/account/manage", "link_label": "Open your Apple Account",
+               "steps": ["Open your Apple Account and sign in.",
+                         "Go to Sign-In and Security, then App-Specific Passwords, and make one named Ken.",
+                         "Copy it and paste it below."]},
+    "yahoo": {"name": "Yahoo", "app_password": True, "mx": ("yahoodns.net",), "hosts": ("imap.mail.yahoo.com", "smtp.mail.yahoo.com", 465),
+              "link": "https://login.yahoo.com/myaccount/security/app-password", "link_label": "Open Yahoo's App passwords",
+              "steps": ["Open Yahoo's App passwords page.", "Type Ken as the name and press Generate password.",
+                        "Copy it and paste it below."]},
+    "fastmail": {"name": "Fastmail", "app_password": True, "mx": ("messagingengine.com",), "hosts": ("imap.fastmail.com", "smtp.fastmail.com", 465),
+                 "link": "https://app.fastmail.com/settings/security/integrations", "link_label": "Open Fastmail's settings",
+                 "steps": ["Open Fastmail's Privacy & Security settings.",
+                           "Under App passwords, make a new one named Ken that can use IMAP and SMTP.",
+                           "Copy it and paste it below."]},
+    "zoho": {"name": "Zoho", "mx": ("zoho.com", "zoho.eu", "zoho.in", "zoho.com.au"), "hosts": ("imap.zoho.com", "smtp.zoho.com", 465),
+             "link": "https://accounts.zoho.com/home#security/app_password", "link_label": "Open Zoho's App passwords",
+             "steps": ["Your normal Zoho password works.",
+                       "If you sign in with a code from your phone too, make an app password named Ken instead and paste that."]},
+    "microsoft": {"name": "Microsoft", "mx": ("outlook.com",), "blocked":
+                  "Microsoft turned off password sign-in for Outlook and Microsoft 365 email. Connect Outlook from the list instead."},
+    "godaddy": {"name": "GoDaddy", "mx": ("secureserver.net",), "hosts": ("imap.secureserver.net", "smtp.secureserver.net", 465)},
+    "hostinger": {"name": "Hostinger", "mx": ("hostinger.com",), "hosts": ("imap.hostinger.com", "smtp.hostinger.com", 465)},
+}
+DOMAIN_PROVIDER = {"gmail.com": "google", "googlemail.com": "google", "icloud.com": "icloud", "me.com": "icloud",
+                   "mac.com": "icloud", "yahoo.com": "yahoo", "ymail.com": "yahoo", "fastmail.com": "fastmail",
+                   "zoho.com": "zoho", "zohomail.com": "zoho", "outlook.com": "microsoft", "hotmail.com": "microsoft",
+                   "live.com": "microsoft", "msn.com": "microsoft"}
+
+
+def mail_servers(domain: str) -> list[str]:
+    """Where a domain's email goes (its MX records), asked of Cloudflare's public DNS. Empty when unknown."""
+    import urllib.parse
+    import urllib.request
+    try:
+        req = urllib.request.Request("https://cloudflare-dns.com/dns-query?" + urllib.parse.urlencode({"name": domain, "type": "MX"}),
+                                     headers={"accept": "application/dns-json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            answers = json.load(r).get("Answer") or []
+        return [a["data"].split()[-1].rstrip(".").lower() for a in answers if a.get("type") == 15]
+    except Exception:
+        return []
+
+
+def email_provider(address: str) -> dict:
+    """Who runs this mailbox: {key, name, hosts, and for an app password: link, link_label, steps; or blocked}.
+    Unknown: its own mail server at imap.<domain>, with its normal password."""
+    domain = address.strip().rsplit("@", 1)[-1].lower()
+    key = DOMAIN_PROVIDER.get(domain)
+    if not key:
+        mx = mail_servers(domain)
+        key = next((k for k, p in PROVIDERS.items() for m in mx if any(m == d or m.endswith("." + d) for d in p["mx"])), None)
+    if not key:
+        return {"key": "", "name": "", "hosts": (f"imap.{domain}", f"smtp.{domain}", 587)}
+    p = PROVIDERS[key]
+    return {"key": key, **{k: v for k, v in p.items() if k != "mx"}}
 
 
 def _text(value) -> str:
@@ -295,19 +357,24 @@ class Connections:
 
         address, password = address.strip(), password.replace(" ", "").strip()
         if "@" not in address or not password:
-            raise ValueError("Enter your email address and app password.")
+            raise ValueError("Enter your email address and password.")
         domain = address.rsplit("@", 1)[1].lower()
         imap_host = imap_host.strip().lower()
         if imap_host:
             smtp_host, smtp_port = SMTP_FOR.get(imap_host, (imap_host.replace("imap", "smtp", 1), 587))
+        elif domain in HOSTS:
+            imap_host, smtp_host, smtp_port = HOSTS[domain]
         else:
-            imap_host, smtp_host, smtp_port = HOSTS.get(domain, (f"imap.{domain}", f"smtp.{domain}", 587))
+            found = await asyncio.to_thread(email_provider, address)
+            if found.get("blocked"):
+                raise ValueError(found["blocked"])
+            imap_host, smtp_host, smtp_port = found["hosts"]
         cfg = {"address": address, "password": password, "imap_host": imap_host, "smtp_host": smtp_host, "smtp_port": smtp_port}
         try:
             await asyncio.to_thread(lambda: Email(cfg).imap().logout())
         except imaplib.IMAP4.error:
             crash.track("connect_failed", tool="email", reason="login", gmail=domain.endswith("gmail.com"))
-            raise ValueError("That email and app password didn't work. Check both and try again.") from None
+            raise ValueError("That email and password didn't work. Check both and try again.") from None
         except OSError:
             crash.track("connect_failed", tool="email", reason="server")
             raise ValueError(f"Couldn't reach a mail server for {domain}. If your email is hosted by Google, enter imap.gmail.com as the server.") from None

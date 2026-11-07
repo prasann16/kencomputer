@@ -386,6 +386,9 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .conn-form { display: flex; flex-direction: column; gap: var(--s2); margin: var(--s3) 0 0 50px; }
 .conn-steps { margin: var(--s1) 0 0 50px; font-size: var(--text-sm); line-height: 1.5; color: var(--muted); }
 .conn-form .conn-steps { margin-left: 0; }
+.conn-walk { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); }
+.conn-walk p, .conn-walk ol { margin: 0; }
+.conn-walk ol { padding-left: 20px; }
 ol.conn-steps { padding-left: 1.3em; }
 ol.conn-steps li { margin: 2px 0; }
 .tool-add-btn { align-self: flex-start; margin-top: var(--s1); }
@@ -393,6 +396,7 @@ ol.conn-steps li { margin: 2px 0; }
 .privacy-more { margin: var(--s3) 0 0 var(--s5); }
 /* Apps (hosted): search, then a tile per app. */
 .apps-search { margin: var(--s1) 0 var(--s3); }
+.apps-imap { margin-bottom: 10px; }
 .apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 1px; }
 .apps-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 14px; border-radius: var(--r-card); background: var(--well); font-size: var(--text-md); font-weight: 500; }
 .apps-row img { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; }
