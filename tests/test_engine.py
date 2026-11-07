@@ -703,3 +703,42 @@ async def test_the_off_switch_stops_everything_and_keeps_it_off(engine, monkeypa
     assert len(engine.brain.asks) == asks
     await engine.switch(True)
     assert not engine.is_off() and await engine.send_message(HOME, "hello")
+
+
+async def test_a_session_that_never_answers_starts_over_fresh_with_the_last_messages(engine, monkeypatch):
+    import engine as engine_module
+    engine.log_message(HOME, "you", "plan my Lisbon trip")
+    engine.log_message(HOME, "ken", "Booked the hotel.")
+    engine.kv_set(f"session:{HOME}", "huge-old-session")
+    calls = []
+    real = FakeSession.ask
+
+    async def hangs_once(self, prompt, on_text, on_tool=None, on_delta=None):
+        calls.append(self.session_id)
+        if len(calls) == 1:
+            raise engine_module.NoAnswer
+        return await real(self, prompt, on_text, on_tool, on_delta)
+    monkeypatch.setattr(FakeSession, "ask", hangs_once)
+    assert await engine.send_message(HOME, "and the flights?")
+    assert calls[:2] == ["huge-old-session", None]  # the second try didn't resume the session that hung
+    prompt = next(a["prompt"] for a in engine.brain.asks if "and the flights?" in a["prompt"])
+    assert "fresh session" in prompt and "Booked the hotel." in prompt and prompt.count("and the flights?") == 1
+    assert engine.messages(HOME)[-1]["text"] == "did it"
+
+
+async def test_a_heavy_conversation_rolls_over_into_memory_and_a_fresh_session(engine, monkeypatch):
+    real = FakeSession.ask
+
+    async def heavy(self, prompt, on_text, on_tool=None, on_delta=None):
+        self.context_tokens, self.context_window = 150_000, 200_000
+        return await real(self, prompt, on_text, on_tool, on_delta)
+    monkeypatch.setattr(FakeSession, "ask", heavy)
+    await engine.send_message(HOME, "remember I moved to Porto")
+    await asyncio.gather(*engine._bg)
+    assert engine.kv_get(f"session:{HOME}") is None  # the next message starts fresh
+    assert any("Porto" in a["prompt"] and str(engine.memory_dir(HOME)) in a["prompt"] for a in engine.brain.asks)  # saved
+    monkeypatch.setattr(FakeSession, "ask", real)
+    await engine.send_message(HOME, "what's next?")
+    assert "fresh session" in engine.brain.asks[-1]["prompt"] and "Porto" in engine.brain.asks[-1]["prompt"]
+    await engine.send_message(HOME, "ok")
+    assert "fresh session" not in engine.brain.asks[-1]["prompt"]  # once

@@ -51,6 +51,8 @@ class Session:
     busy: bool = False
     last_activity: float = 0.0  # monotonic time the brain was last heard from; the engine stops a silent one
     heard: bool = False  # whether this ask got anything from the AI yet; the engine stops one that never answers
+    context_tokens: int = 0  # how much the conversation sent to the AI on its last call (0: the brain doesn't say)
+    context_window: int = 0  # how much the model can take at once (0: unknown)
     # What the last ask used, one row per model: model, cost_usd (None when the brain can't price it)
     # and token counts. Empty when the brain didn't say.
     usage: list[dict] = []
@@ -308,8 +310,11 @@ class ClaudeSession(Session):
                         failed = AIUnavailable(status, error)
                         await self.client.interrupt()
                     continue
-                if not (isinstance(msg, SystemMessage) and msg.subtype in ("init", "status")):
+                # Only the AI itself counts as an answer: a message of theirs echoed back (sent while it waited) or
+                # Claude Code's own notices don't, or a request that never got an answer would look alive.
+                if isinstance(msg, (StreamEvent, AssistantMessage, ResultMessage)):
                     self._heard = self.heard = True
+                if not (isinstance(msg, SystemMessage) and msg.subtype in ("init", "status")):
                     self.last_activity = time.monotonic()
                 # Save the session as soon as it exists, not only when a long
                 # task finishes. An interrupted attempt can then resume too.
@@ -326,6 +331,8 @@ class ClaudeSession(Session):
                     ev = msg.event or {}
                     if ev.get("type") == "message_start":
                         partial = ""
+                        u = (ev.get("message") or {}).get("usage") or {}
+                        self.context_tokens = sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
                     elif ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
                         partial += ev["delta"].get("text", "")
                         if on_delta is not None and msg.parent_tool_use_id is None:
@@ -358,6 +365,7 @@ class ClaudeSession(Session):
                     if msg.session_id:
                         self.session_id = msg.session_id
                     if msg.model_usage is not None:
+                        self.context_window = max([(u or {}).get("contextWindow") or 0 for u in msg.model_usage.values()] + [self.context_window])
                         if self.spent is not None:
                             self.usage += spent_since(msg.model_usage, self.spent)
                         self.spent = msg.model_usage

@@ -69,6 +69,7 @@ APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
 IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
 NO_ANSWER_LIMIT = 2 * 60
+DEFAULT_WINDOW = 200_000  # tokens a model takes at once, when the AI doesn't say
 # Ken AI credits run on Haiku only (about 14x cheaper than Sonnet, and it did every real task in testing). Ken picks it;
 # there's no menu on credits. The site enforces it too.
 CREDIT_MODELS = ("claude-haiku-5-5",)
@@ -1459,7 +1460,7 @@ class Engine:
             self.chat_tasks.add(asyncio.current_task())
             if pid == HOME:
                 self.chat_origin = origin
-            body = f"{await self.state(pid, via)}\n{body}"
+            body = f"{await self.state(pid, via)}\n{self._primer(pid, skip_last=log_user)}{body}"
             if self._aside.get(pid):
                 body = ("(While you were busy, you also answered these on the side; they've seen the answers:)\n"
                         + "\n\n".join(self._aside.pop(pid)) + "\n\n" + body)
@@ -1494,7 +1495,15 @@ class Engine:
 
             started, outcome = time.monotonic(), "ok"
             try:
-                await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
+                try:
+                    await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
+                except NoAnswer:
+                    # The AI never answered (after a restart, a very long session can hang): once more, fresh.
+                    log.warning("chat %s got no answer; trying again in a fresh session", pid)
+                    self._roll_over(pid, session)
+                    session = self._chat_session(pid)
+                    body = self._primer(pid, skip_last=log_user) + body
+                    await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
             except asyncio.CancelledError:
                 outcome = "stopped"
                 raise
@@ -1525,6 +1534,8 @@ class Engine:
                 if session.session_id:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
+                if outcome == "ok" and session.context_tokens > (session.context_window or DEFAULT_WINDOW) / 2:
+                    self._roll_over(pid, session)  # heavy: slower and dearer every message, and slow to pick up again
                 if outcome != "stopped" or not self.stopping:
                     self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
                 self.broadcast("chat.busy", pid, busy=False)
@@ -1701,6 +1712,36 @@ class Engine:
                 await s.close()
             self.broadcast("chat.reset", pid)
         return saving
+
+    # A conversation that has grown heavy, or a session the AI stopped answering, starts over: what mattered goes into
+    # memory (as Clear does), the AI gets a fresh session, and the next message carries the last few for context. The
+    # chat on screen doesn't change.
+    def _roll_over(self, pid: str, session=None) -> None:
+        after = max(json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0), int(self.kv_get(f"rolled:{pid}") or 0))
+        thread = [m for m in self.messages(pid) if m["id"] > after]
+        if any(m["role"] == "you" and str(m.get("text", "")).strip() for m in thread):
+            self._bg.append(asyncio.create_task(self._save_thread(pid, thread)))
+        if thread:
+            self.kv_set(f"rolled:{pid}", str(thread[-1]["id"]))
+        self.db.execute("DELETE FROM kv WHERE k IN (?, ?)", (f"session:{pid}", f"session:codex:{pid}"))
+        self.kv_set(f"primer:{pid}", "1")
+        old = session or self.chats.get(pid)
+        self.chats.pop(pid, None)
+        if old is not None:
+            self._bg.append(asyncio.create_task(old.close()))
+        log.info("chat %s starts a fresh session", pid)
+
+    def _primer(self, pid: str, skip_last: bool) -> str:
+        """The last few messages, for a fresh session, once."""
+        if not self.kv_get(f"primer:{pid}"):
+            return ""
+        self.db.execute("DELETE FROM kv WHERE k=?", (f"primer:{pid}",))
+        boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+        recent = [m for m in self.messages(pid, limit=21) if m["id"] > boundary][: -1 if skip_last else None][-20:]
+        if not recent:
+            return ""
+        return ("(This conversation continues in a fresh session; what mattered earlier is in your memory. The last few "
+                "messages, for context:)\n" + "\n".join(f"{'they' if m['role'] == 'you' else 'you'}: {str(m.get('text', ''))[:2000]}" for m in recent) + "\n\n")
 
     # The off switch: everything Ken is doing stops at once, mid-action (a reply deleting emails stops now, not after
     # its next step), and nothing starts again (no reply, brief, job or background work) until they turn it back on.

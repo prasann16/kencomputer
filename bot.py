@@ -996,6 +996,22 @@ async def sync_identity(update: Update) -> None:
         log.warning("telegram rename failed: %s", e)
 
 
+# What a running Ken doesn't need restarting for: the screens (read from disk on every load, and in the cloud served by
+# the website anyway), tests and docs.
+NO_RESTART = ("web/", "tests/", "docs/", ".github/")
+
+
+async def engine_changed(app_dir: Path, old: str, new: str) -> bool:
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", str(app_dir), "diff", "--name-only", old, new,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    out, _ = await proc.communicate()
+    files = out.decode().split()
+    if proc.returncode != 0 or not files:
+        return True  # can't tell: restart, as before
+    return any(not f.startswith(NO_RESTART) and not f.endswith(".md") for f in files)
+
+
 async def self_update() -> None:
     """Pull-based updates: check the repo hourly, restart into the new version.
 
@@ -1019,7 +1035,9 @@ async def self_update() -> None:
             )
             out, _ = await head.communicate()
             new_rev = out.decode().strip()
-            if new_rev and new_rev != RUNNING_REV:
+            if new_rev and new_rev != RUNNING_REV and not await engine_changed(app_dir, RUNNING_REV, new_rev):
+                log.info("update %s only changes screens, tests or docs: no restart", new_rev[:8])  # read from disk
+            elif new_rev and new_rev != RUNNING_REV:
                 if ENGINE.busy():
                     log.info("update available but a task is running — waiting")
                 else:
