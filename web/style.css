@@ -479,11 +479,11 @@ ol.conn-steps li { margin: 2px 0; }
 @media (max-width: 600px) {
   .chat-header { flex-wrap: wrap; height: auto; min-height: 60px; padding: var(--s3) var(--s4) var(--s2); padding-top: max(var(--s3), env(safe-area-inset-top)); row-gap: var(--s2); }
   .chat-header .top-tabs { order: 0; }
-  .chat-header .settings-link { order: 1; margin-left: auto; }
-  .chat-header .header-actions { order: 3; width: 100%; justify-content: flex-end; margin: 0 -8px 0 0; }
+  .chat-header .settings-link, .chat-header > .header-actions + .settings-link { order: 1; margin: 0 -8px 0 auto; }
+  .chat-header .header-actions { order: 3; width: 100%; margin: 0 -8px 0 -14px; }
   .chat-header .ken-status { order: 4; width: 100%; }
-  .header-actions .model-select { max-width: 200px; }
-  .header-actions .model-select:first-child { margin-right: auto; margin-left: -12px; }
+  /* The model on the left, as wide as its name; phone and Clear on the right. */
+  .header-actions .model-select { order: -1; margin-right: auto; max-width: 62vw; field-sizing: content; }
   .conversation-thread { padding: var(--s4) var(--s4) var(--s6); gap: var(--s6); }
   .chat-bottom { padding: var(--s2) var(--s3); padding-bottom: max(var(--s3), env(safe-area-inset-bottom)); }
   .msg.you .stack { max-width: 90%; }
