@@ -119,3 +119,17 @@ def test_an_engine_turned_off_with_kill_doesnt_start(monkeypatch, tmp_path):
     with pytest.raises(SystemExit):
         bot.main()
     assert not lock.called
+
+
+async def test_screen_only_updates_dont_restart_ken(tmp_path):
+    import subprocess
+    import bot
+    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True, text=True).stdout.strip()
+    run("init", "-q"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    (tmp_path / "web").mkdir(); (tmp_path / "web" / "app.js").write_text("1"); (tmp_path / "engine.py").write_text("1")
+    run("add", "."); run("commit", "-qm", "a"); first = run("rev-parse", "HEAD")
+    (tmp_path / "web" / "app.js").write_text("2"); (tmp_path / "README.md").write_text("x")
+    run("add", "."); run("commit", "-qm", "b"); screens = run("rev-parse", "HEAD")
+    assert not await bot.engine_changed(tmp_path, first, screens)
+    (tmp_path / "engine.py").write_text("2"); run("add", "."); run("commit", "-qm", "c")
+    assert await bot.engine_changed(tmp_path, first, run("rev-parse", "HEAD"))
