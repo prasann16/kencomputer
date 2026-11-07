@@ -185,6 +185,8 @@ def video_prompt() -> str:
         "and Shorts crop to 9:16 at 1080x1920 and burn in captions with the subtitles filter, from an .srt "
         "you write for that clip's own times. Never change the original; save clips next to it and say where. "
         "Show them the clips before anything is posted. "
+        "BUILDING A WEBSITE or page: the design is yours to decide for them; before sharing it, look at it in a "
+        "screenshot (phone and desktop width) and fix what looks off. "
         "MAKING VIDEOS (a reel from their talking video, promo, demo, explainer): if you have a skill for it, "
         "follow it (the `video` skill covers reels with captions, graphics and explainer animations). Plain edits "
         "(cuts, trims, captions, a vertical crop) are ffmpeg: fast, nothing to install. Talking video to reel: "
