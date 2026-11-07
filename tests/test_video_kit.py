@@ -137,11 +137,8 @@ def test_the_kit_has_no_house_look():
     assert 'grain === true' in (KIT / "src" / "Reel.tsx").read_text()
     assert 'style.grain === true' in (KIT / "compose.mjs").read_text()
     assert 'marks: style.marks ?? "none"' in theme
-    # The example graphics take colours from the reel's design, never built-in paper colours.
-    for name in ("basics.tsx", "explainers.tsx"):
-        code = (KIT / "src" / "graphics" / name).read_text()
-        for house in ("#FBFAF7", "#ECE7DC", "#F1EEE7", "rgba(255,240,200", "rgba(40,30,10", "@remotion/rough-notation"):
-            assert house not in code, (name, house)
+    # No ready-made graphics to fall back on: every reel's are made for it.
+    assert sorted(p.name for p in (KIT / "src" / "graphics").iterdir()) == ["design.tsx", "index.ts", "layout.tsx"]
 
 
 def test_graphics_float_over_the_video_unless_asked():
@@ -160,18 +157,9 @@ def test_any_google_font_by_name():
     assert 'Serif: "Instrument Serif"' in theme  # older saved styles still get the face they meant
 
 
-def test_the_skill_asks_for_a_design_brief_and_no_house_look():
+def test_the_skill_leaves_the_design_to_ken():
     import re
     skill = re.sub(r"\s+", " ", (v.SOURCE.parent.parent / "skills" / "video" / "SKILL.md").read_text())
-    assert "design.md" in skill and "There is no house look" in skill
-    assert "**examples**" in skill and "Prefer graphics that sit on the video" in skill
-
-
-def test_stills_and_render_nudge_for_a_design_brief(tmp_path):
-    said = []
-    v._design_note(tmp_path, said.append)
-    assert said and "design.md" in said[0]
-    (tmp_path / "design.md").write_text("Mood: calm")
-    said.clear()
-    v._design_note(tmp_path, said.append)
-    assert said == []
+    assert "Every reel gets infographics" in skill and "your call" in skill
+    for gone in ("design.md", "Craft rules", "Restraint", "basics.tsx"):
+        assert gone not in skill, gone
