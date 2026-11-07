@@ -165,7 +165,14 @@ function inline(text) {
   });
 }
 const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+// Quoted lines (> ...) show as a quote, without the marks: Ken quotes drafts that way, ready to copy and paste.
 function prose(text) {
+  const parts = text.split(/((?:^[ \t]*>.*(?:\n|$))+)/m);  // the quote is its own block: no line break either side
+  return parts.map((part, i) => i % 2
+    ? html`<blockquote>${prose(part.replace(/^[ \t]*> ?/gm, '').replace(/\n$/, ''))}</blockquote>`
+    : tables(parts.length > 1 ? part.replace(i ? /^\n/ : /$^/, '').replace(i < parts.length - 1 ? /\n$/ : /$^/, '') : part));
+}
+function tables(text) {
   return text.split(/((?:^\|.*\|[ \t]*(?:\n|$)){2,})/m).map((part, i) => {
     const lines = part.trim().split('\n');
     if (i % 2 === 0 || !/^\|[\s:|-]+\|$/.test(lines[1] || '')) return inline(part.replace(/^([ \t]*)[-*][ \t]+(?=\S)/gm, '$1• '));
