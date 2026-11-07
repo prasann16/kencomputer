@@ -1092,7 +1092,7 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
     setProvider(null);
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(address.trim())) return;
     let alive = true;
-    const t = setTimeout(() => api('/api/connections/email-provider', { json: { address: address.trim() } }).then((r) => alive && setProvider(r)).catch(() => {}), 400);
+    const t = setTimeout(() => api('/api/connections/email-provider', { json: { address: address.trim() } }).then((r) => alive && setProvider(r)).catch(() => alive && setProvider({})), 400);
     return () => { alive = false; clearTimeout(t); };
   }, [address]);
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
@@ -1121,14 +1121,15 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
       html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
       ${open === 'email' && html`<div class="conn-form">
         <input class="np-input" autofocus type="email" autocomplete="email" placeholder="Email address" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
-        ${provider?.blocked ? html`<p class="conn-steps">${provider.blocked}</p>` : html`
+        ${!provider ? html`<p class="conn-steps">Type your email first. Ken then shows you which password to use and how to get it.</p>`
+        : provider.blocked ? html`<p class="conn-steps">${provider.blocked}</p>` : html`
           ${provider?.steps ? html`<div class="conn-walk"><p class="conn-steps">${provider.app_password ? `${provider.name} needs an app password for Ken, not your normal one:` : `${provider.name}:`}</p>
             <ol class="conn-steps">${provider.steps.map((step) => html`<li>${step}</li>`)}</ol>
             ${provider.link && html`<a class="btn sm" href=${provider.link} target="_blank" rel="noopener">${provider.link_label} ↗</a>`}</div>`
-          : provider && html`<p class="conn-steps">Use your ${provider.name ? provider.name + ' ' : ''}email password.</p>`}
+          : html`<p class="conn-steps">Use your ${provider.name ? provider.name + ' ' : ''}email password, the one you sign in to your email with.</p>`}
           <input class="np-input" type="password" autocomplete="off" placeholder=${provider?.app_password ? 'Paste the app password' : 'Password'} value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && address && password && !busy && e.currentTarget.closest('.conn-form').querySelector('.btn.primary').click()}/>
           ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}`}
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password || provider?.blocked} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${provider && !provider.blocked && html`<button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button>`}</div>
       </div>`}`);
   // Apps on hosted Ken shows only the email part: any mailbox, over IMAP, for what Apps' one-click list doesn't cover.
   if (only === 'email') return html`<div class="tool-list">${emailRow}${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`;
