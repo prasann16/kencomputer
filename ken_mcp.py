@@ -109,7 +109,13 @@ async def serve(kind, home, only):
     from mcp.server.stdio import stdio_server
     from connections import Connections
 
-    config = media_server() if kind == "media" else Connections(Path(home)).mcp(set(only)).get("ken")
+    if kind == "media":
+        config = media_server()
+    elif kind == "captcha":
+        from captcha import external_server_from_env
+        config = external_server_from_env(Path(home))
+    else:
+        config = Connections(Path(home)).mcp(set(only)).get("ken")
     if config is None:
         raise RuntimeError("No connected tools are enabled")
     server = config["instance"]
@@ -119,6 +125,6 @@ async def serve(kind, home, only):
 
 def main():
     kind, home, *only = sys.argv[sys.argv.index("--ken-mcp") + 1:]
-    if kind not in ("media", "connections"):
+    if kind not in ("media", "connections", "captcha"):
         raise ValueError("Unknown Ken MCP server")
     asyncio.run(serve(kind, home, only))

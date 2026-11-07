@@ -58,6 +58,7 @@ from connections import Connections
 from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
                         included_ai_model, save_env, use_included_ai, voice_installed)
 from ken_mcp import SharedServer, external_server, media_server
+import captcha
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
@@ -172,6 +173,23 @@ def media_mcp(backend="claude") -> dict:
     if not voice_available():
         return {}
     return {"media": external_server("media", KEN_HOME) if backend == "codex" else media_server()}
+
+
+def captcha_mcp(backend="claude") -> dict:
+    """`solve_captcha` for captchas in Ken's browser: only when turned on (KEN_CAPTCHA=1, see captcha.py) and the
+    browser is the one every chat shares, so the tool works on the same pages Ken browses."""
+    if not captcha.enabled() or "browser" not in SHARED_MCP:
+        return {}
+    if backend == "codex":
+        return {"captcha": {**external_server("captcha", KEN_HOME), "env": {
+            "KEN_CAPTCHA_BROWSER": json.dumps(SHARED_MCP["browser"]), "KEN_CAPTCHA_DIR": str(WORKSPACE / "captchas")}}}
+    return {"captcha": captcha.server(SHARED_MCP["browser"], WORKSPACE / "captchas")}
+
+
+CAPTCHA_PROMPT = (
+    " CAPTCHAS: when a page shows a captcha or an \"I'm not a robot\" check, call `solve_captcha` with the page's id "
+    "before giving up; if it can't get past it, tell them in one line which site needs them, as it says."
+)
 
 
 def video_prompt() -> str:
@@ -770,7 +788,8 @@ def where_you_are(f: dict | None = None) -> str:
 
 def browser_prompt() -> str:
     """Their own Chrome on their computer; Ken's own browser on a computer in the cloud."""
-    return {"theirs": BROWSER_PROMPT, "own": HEADLESS_BROWSER_PROMPT}.get(where_facts()["browser"], "")
+    prompt = {"theirs": BROWSER_PROMPT, "own": HEADLESS_BROWSER_PROMPT}.get(where_facts()["browser"], "")
+    return prompt + CAPTCHA_PROMPT if prompt and captcha.enabled() else prompt
 
 
 def agent_tools_prompt(only) -> str:
@@ -1815,7 +1834,8 @@ async def brain_connected(backend=None) -> None:
 
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
+    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}),
+                                          **(captcha_mcp(backend) if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
                                           **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.usable_brains = usable_brains
