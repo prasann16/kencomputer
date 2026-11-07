@@ -1018,6 +1018,7 @@ async def self_update() -> None:
     requirements.txt pins exact versions, so new parts (a newer Claude Code) arrive
     with the code. The service manager (systemd/launchd) restarts us, so exiting is
     the update. Never interrupts a task in flight."""
+    global RUNNING_REV
     if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
     app_dir = KEN_HOME / "app"
@@ -1037,6 +1038,7 @@ async def self_update() -> None:
             new_rev = out.decode().strip()
             if new_rev and new_rev != RUNNING_REV and not await engine_changed(app_dir, RUNNING_REV, new_rev):
                 log.info("update %s only changes screens, tests or docs: no restart", new_rev[:8])  # read from disk
+                RUNNING_REV = new_rev  # the same engine: say the new version, so the website doesn't count Ken as behind
             elif new_rev and new_rev != RUNNING_REV:
                 if ENGINE.busy():
                     log.info("update available but a task is running — waiting")

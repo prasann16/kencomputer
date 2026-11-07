@@ -133,3 +133,31 @@ async def test_screen_only_updates_dont_restart_ken(tmp_path):
     assert not await bot.engine_changed(tmp_path, first, screens)
     (tmp_path / "engine.py").write_text("2"); run("add", "."); run("commit", "-qm", "c")
     assert await bot.engine_changed(tmp_path, first, run("rev-parse", "HEAD"))
+
+
+async def test_a_screen_only_update_reports_the_new_version(tmp_path, monkeypatch):
+    import asyncio
+    import subprocess
+    import bot
+    app = tmp_path / "app"; app.mkdir()
+    run = lambda *a: subprocess.run(["git", "-C", str(app), *a], check=True, capture_output=True, text=True).stdout.strip()
+    run("init", "-q"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    (app / "web").mkdir(); (app / "web" / "app.js").write_text("1"); (app / "engine.py").write_text("1")
+    run("add", "."); run("commit", "-qm", "a"); first = run("rev-parse", "HEAD")
+    (app / "web" / "app.js").write_text("2"); run("add", "."); run("commit", "-qm", "b"); screens = run("rev-parse", "HEAD")
+    monkeypatch.setattr(bot, "KEN_HOME", tmp_path); monkeypatch.setattr(bot, "RUNNING_REV", first)
+    monkeypatch.setattr(bot, "FROZEN", False); monkeypatch.delenv("KEN_NO_AUTOUPDATE", raising=False)
+    sleeps = []
+
+    async def sleep(s):
+        sleeps.append(s)
+        if len(sleeps) > 1:
+            raise asyncio.CancelledError  # one check is enough
+    monkeypatch.setattr(bot.asyncio, "sleep", sleep)
+    exits = []
+    monkeypatch.setattr(bot.os, "_exit", exits.append)
+    try:
+        await bot.self_update()
+    except asyncio.CancelledError:
+        pass
+    assert not exits and bot.RUNNING_REV == screens  # no restart, and check-ins say the new version
