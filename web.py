@@ -286,6 +286,9 @@ class WebApp:
             return _json({"error": "Connections aren't available here."}, 400)
         kind, b = request.match_info["kind"], (await self._body(request) if request.method == "POST" else {})
         try:
+            if kind == "email-provider":  # who runs their email, and how to make the password Ken signs in with
+                from connections import email_provider
+                return _json(await asyncio.to_thread(email_provider, str(b.get("address", ""))))
             if kind == "email":
                 if request.method == "DELETE":
                     return _json(await self.connections.disconnect_email(request.query.get("address", "")))
