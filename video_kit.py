@@ -433,7 +433,6 @@ def render(home: Path, folder: Path, say=print, plan: bool = False) -> Path:
     """reel.mp4, ready to post. The fast way checks its own result; if that fails, or the reel has whip pans
     (chapters), which only the slow way does, Chrome draws the whole reel instead: slower, always right."""
     props = _props(folder)
-    _design_note(folder, say)
     _project(home, folder, say)
     out = folder / "reel.mp4"
     extra = ["--plan"] if plan else []
@@ -458,7 +457,7 @@ def _hsl(rgb) -> str:
 def colors(folder: Path, say=print) -> dict:
     """The colours of what's on camera (their clothes, the room, plants, sky), so each reel's palette comes from its
     own footage: its colours, most present first, a brighter version of each for text over the video, and a light and
-    a dark tinted by the room. Raw material for design.md, not a palette: Ken picks."""
+    a dark tinted by the room. Raw material, not a palette: Ken picks."""
     import colorsys
 
     import numpy as np
@@ -502,23 +501,15 @@ def colors(folder: Path, say=print) -> dict:
     result = {"colors": found_colors, "room": {"light": _hsl((room, 0.94, 0.22)), "dark": _hsl((room, 0.11, 0.2))},
               "overall": {"lightness": round(float(light.mean()), 2), "saturation": round(float(sat.mean()), 2)}}
     say(json.dumps(result, indent=1))
-    say("Raw material for this reel's palette (design.md): pick from it, mix it, or go against it when the brief says so.")
+    say("The footage's own colours, if you want them: use them or not, your call.")
     if not found_colors:
         say("The footage is mostly neutral (greys, whites, skin): the palette can come from their brand or the topic.")
     return result
 
 
-def _design_note(folder: Path, say) -> None:
-    """Every reel's look is designed for it: say so when there's no design brief yet."""
-    if not (folder / "design.md").exists():
-        say("No design.md in this folder yet: write this reel's design brief first (mood, palette, type, where graphics "
-            "live), then build the graphics for it. There's no house look to fall back on.")
-
-
 def stills(home: Path, folder: Path, times: list[str], say=print) -> None:
     """A few frames of the reel without rendering it, side by side in checks/sheet.jpg."""
     _props(folder)
-    _design_note(folder, say)
     _project(home, folder, say)
     if not times or _node(home, folder, ["stills.mjs", str(folder), *times]):
         raise SystemExit("Usage: --video-stills <folder> <seconds...>")

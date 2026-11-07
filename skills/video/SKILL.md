@@ -28,8 +28,7 @@ rendered on a guess. In the chat:
      "cut the retake of 'it's super cheap'"), in their order.
    - **Every graphic**: the second it comes in, the words it lands on (quoted), what it shows and where on screen.
      The first 20 seconds need something to see too, not only captions.
-   - **Captions**: their exact words, and the look (font, colour, where).
-   - **The look**: the brief from step 3 in one line, and their style note if they have one.
+   - **Captions**: their exact words.
 4. **Send them the plan** in plain words, short: a list they can read in thirty seconds, then "Shall I go ahead? Tell
    me anything to change." **Then stop and wait.** Don't cut, design or render anything before their yes.
 5. On their yes (with any changes written into `plan.md`), hand the whole job off as a background job: the folder,
@@ -49,7 +48,7 @@ Read your memory for their video style (a note like `memory/video-style.md`). If
 their first video: ask ONE question before you start, "Any style you want? Send a reel you like, your brand
 colours or logo, or say 'surprise me'." If they send a reel, grab a few frames of it with ffmpeg and match its
 look (fonts, colours, captions, how graphics look and move). If they say "surprise me", or your instructions
-say not to ask, design the look from their video (the brief in step 3). The style note holds only what they
+say not to ask, decide the look yourself for this video. The style note holds only what they
 asked for: a reel or brand they want matched, their colours or fonts, "keep this look", and every rule they gave
 you ("no emojis", "keep my jokes"). Every correction they make on any video goes into it right away, so they never
 say it twice. Never save a look you chose yourself as their style: each new reel gets its own look.
@@ -112,51 +111,16 @@ a warning survives two tries, accept it.
 
 ## 3. Design it
 
-There is no house look. The kit gives you tools, not a style: every choice below is yours, made for **this** footage,
-this topic and this person. Two reels should never look alike unless they asked to keep a style (their style note
-always wins: use what it asks for and design the rest).
+Every reel gets infographics: that's what makes it more than captions over a talking head. What kind, how many,
+and how they look and move is your call, decided on the fly for this video and what they're saying (their style
+note wins where it says something). Show the real thing when they mention an app, tool or site (its real icon or
+screen).
 
-**First, the brief.** Look at a few stills of the cut and run `<ken> --video-colors <folder>` (the footage's own
-colours, most present first, with a brighter version of each for text over the video, and a light and a dark tinted
-by the room). Then write `design.md` in the folder, five or six short lines:
+Also available: a hook over the first seconds (`hook`, star the word that matters), emphasized caption words
+(`words[i].emph = true`), a push-in on a line (`zooms`: `{start, end}`).
 
-- **Mood**: what this video feels like (a calm walk in an old city, a fast tech take, a warm kitchen chat).
-- **Palette**: 2 to 4 colours taken from this footage (a jacket, a wall, the sky, a brand colour they showed), and
-  which is for what. Or against it, on purpose, when the brief says so.
-- **Type**: the fonts, from the whole Google Fonts library by name (a grotesk, a condensed, a mono, a slab, a
-  display serif, a hand-written face…), the weights, and case. Chosen for this person and topic, not a favourite.
-- **Where graphics live**: over the video (in the open space, lower thirds, a corner), full-screen type for one big
-  line, a split screen with a crop of the footage, a picture-in-picture, a panel only when it truly helps. Prefer
-  graphics that sit on the video to panels covering it.
-- **Motion**: how things come in and leave (a wipe, a slide, a soft fade, a cut on the beat), one way for the reel.
-- **Texture**: none, or grain, or paper, only if the brief calls for it.
-
-Then build the graphics for that brief. If you remember a reel you made before, check its `design.md` and change
-what would make them look alike.
-
-**Plan the moments.** Read the cut words in order and decide what the viewer should *see*:
-
-- **Hook** (`hook`): over the first 2.5 to 3.5 s, from `plan.md`, in your hook type. Star the one word that matters.
-  Or design your own hook graphic for those seconds and leave `hook` out.
-- **Emphasis** (`words[i].emph = true`): about one word per sentence, the word they'd stress out loud. Never two in a row.
-- **Push-in** (`zooms`): `{start, end}` on the one line that carries the reel, at most one.
-- **End note**: over the last 2 to 2.5 s, while they say their last line (never an extra end screen). Skip it if they
-  already end on a call to action.
-- **Graphics**, where a picture says it better than a face: a number, a list of steps, before and after, the real
-  thing they mention (its icon, a screenshot), a detail of the footage itself. Each one designed for this reel.
-
-Craft rules, whatever the look:
-
-- **Restraint.** Calm beats busy. A graphic every 8 to 15 seconds where it genuinely helps; a 45-second reel usually
-  has 2 to 4. More minimal than you think.
-- **One idea on screen at a time**, never two moves at once. Readable in two seconds. Up 2 to 5 s.
-- **Timed to the words**: it comes in as they say the thing it shows.
-- **Their face for what matters most**: the hook and the most personal moment stay on their face.
-- **Readable**: enough contrast with what's behind it (a soft shadow, a box, or a quieter spot of the frame).
-- **The real thing**: when they mention a tool, app or site, show its real icon or interface (a screenshot, or on a
-  Mac an app's icon from `sips -s format png /Applications/<App>.app/Contents/Resources/<icon>.icns --out icon.png`).
-- **Never**: stock icons, emojis as decoration, gradient boxes, typewriter text, neon, shaking or bouncing text.
-- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px.
+**Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
+text and graphics out of them.
 
 **The toolbox.** `src/kit/tools.tsx` (it appears in the folder with the first `--video-stills`) has parts with no
 look of their own: `Place` (a spot in the safe zones, or x/y), `Text` (any Google font by name, any size, weight,
@@ -185,16 +149,14 @@ Two ways to use it:
 2. **Your own component** in `src/graphics/` built from the toolbox, registered in `src/graphics/index.ts`, used in
    props.json by name, for anything the items can't say (a moving explainer, a custom chart).
 
-`src/graphics/basics.tsx` and `explainers.tsx` (`title`, `stat`, `list`, `compare`, `bars`, `quote`, `chat`,
-`picture`, `nameTag`, `callout`, `punch`, `eaten`, `obsolete`, `focus`, `flow`, `timeline`, `browser`) are
-**examples** of the toolbox in use. They take every visual choice from your `style`, but each has a fixed layout:
-dropped in as they are, reels start to look alike. Read one for ideas, then make this reel's own.
+There are no ready-made graphics: make each reel's own. Lay a graphic out as one flexbox column or row rather than
+many items at fixed x/y, so nothing overlaps.
 
 Every graphic floats over the video. `"placement": "sheet"` puts it on a panel that slides up under the speaker (who
 lifts to stay in view) and `"full"` on a panel over the whole screen, in `paper` / `ink`; captions step aside for
 panels (`hideCaptions` changes that).
 
-`style` in props.json carries the brief's choices (nothing is chosen for you; unset is plain Inter on white):
+`style` in props.json carries your choices (nothing is chosen for you; unset is plain Inter on white):
 `font` (captions and body), `headingFont`, `accentFont` (hook, emphasis, starred words, numbers), any Google Fonts
 family by name; `fonts` (more families your graphics use); `captionWeight`, `headingWeight`, `accentWeight`,
 `accentItalic`; `textColor` (captions and text over the video), `accent` (emphasis, numbers, marks), `paper` / `ink`
@@ -204,9 +166,6 @@ default true), `grain` (film grain and vignette, default off), `paperTexture` (f
 `marks` (`hand`, `clean` or `none`, default none: how the examples underline and circle).
 
 Keep `words`, `cuts` and `framing` from the cut in `props.json`, and fix misheard words in `words`.
-
-**Say what you chose** in a line when you send it ("the terracotta from the rooftops, a condensed sans in caps, type
-straight on the street, no panels"), so they can ask for another.
 
 **Writing a graphic.**
 
@@ -227,9 +186,7 @@ each opens Chrome and uses about a gigabyte):
 then look at `checks/sheet.jpg` (all of them side by side, the safe zones tinted red). Check the hook, each
 graphic and an emphasized caption. Look for: text that's cut off, too long or in a red zone, a graphic covering
 their face at the wrong moment, captions colliding with an over-the-video graphic (move it or set
-`hideCaptions`), colours that clash with the footage. Ask yourself: would a good editor be proud of this frame, or
-does it look like a template? Does it match `design.md`? If they've had a reel before, compare with its
-`design.md` and `props.json`: the same colours, fonts and graphics mean start the look again.
+`hideCaptions`). Ask yourself: would a good editor be proud of this frame?
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
