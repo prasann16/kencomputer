@@ -832,10 +832,10 @@ class WebApp:
     async def reset(self, request):
         pid = self._pid(request)
         try:
-            await self.engine.reset_chat(pid, clear=True)
+            saving = await self.engine.reset_chat(pid, clear=True)
         except ValueError as exc:
             return _json({"error": str(exc)}, 409)
-        return _json(self.engine.chat_view(pid))
+        return _json({**self.engine.chat_view(pid), "saving": saving})
 
     def _agent(self, request) -> str:
         pid = request.match_info["pid"]

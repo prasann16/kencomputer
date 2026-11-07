@@ -81,6 +81,7 @@ async def test_backends_keep_distinct_sessions_and_agent_models(engine):
 async def test_switching_from_legacy_claude_carries_recent_context_but_not_cleared_messages(engine):
     engine.log_message(HOME, "you", "old archived message")
     await engine.reset_chat(HOME, clear=True)
+    await asyncio.gather(*engine._bg)  # the old thread's save to memory
     engine.log_message(HOME, "you", "current context")
     engine.kv_set(f"session:{HOME}", "legacy-claude")
     engine.brain.name = "codex"
@@ -670,3 +671,17 @@ def test_room_for_one_more_job_is_read_from_the_computer(monkeypatch):
     monkeypatch.setattr(usage, "memory", lambda: {"total": 8 * gb, "available": 5 * gb})
     monkeypatch.setattr(usage.os, "getloadavg", lambda: (64.0, 0, 0))
     assert not usage.room_for_more(2)  # every processor busy
+
+
+async def test_clearing_a_chat_files_what_mattered_into_memory(engine):
+    engine.log_message(HOME, "you", "I moved to Porto last week")
+    engine.log_message(HOME, "ken", "Nice, noted.")
+    assert await engine.reset_chat(HOME, clear=True)
+    await asyncio.gather(*engine._bg)
+    ask = engine.brain.asks[-1]
+    assert "cleared this chat" in ask["prompt"] and "Porto" in ask["prompt"] and str(engine.memory_dir(HOME)) in ask["prompt"]
+    assert engine.chat_view(HOME)["messages"] == []
+    engine.log_message(HOME, "ken", "Morning!")
+    asks = len(engine.brain.asks)
+    assert not await engine.reset_chat(HOME, clear=True)  # nothing they said: nothing to save
+    assert len(engine.brain.asks) == asks
