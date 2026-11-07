@@ -1940,7 +1940,7 @@ function App() {
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
       setStream((s) => ({ ...s, [pid]: '' })); setActivity((a) => ({ ...a, [pid]: '' }));
-      toast('Thread cleared. Your memory and files are kept.');
+      toast(result.saving ? 'Cleared. Ken’s saving what mattered to memory.' : 'Cleared. Your memory and files are kept.');
       warm(pid);
     } catch (e) { toast(e.message); }
     finally { setClearing(false); }

@@ -1654,13 +1654,21 @@ class Engine:
             self.chats.pop(pid, None)
         return True
 
-    async def reset_chat(self, pid: str, *, clear: bool = False) -> None:
+    async def reset_chat(self, pid: str, *, clear: bool = False) -> bool:
+        """A fresh thread. Clearing also files what's worth keeping from the old one into memory, in the background;
+        True when that save started."""
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
         if lock.locked():
             raise ValueError("Ken is still working. Stop or finish the reply before clearing this thread.")
+        saving = False
         async with lock:
             # Archive by boundary, rather than deleting messages, transcripts or memory.
             if clear:
+                after = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                thread = [m for m in self.messages(pid) if m["id"] > after]
+                if any(m["role"] == "you" and str(m.get("text", "")).strip() for m in thread):
+                    self._bg.append(asyncio.create_task(self._save_thread(pid, thread)))
+                    saving = True
                 boundary = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE project=?", (pid,)).fetchone()[0]
                 self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time()}))
             s = self.chats.pop(pid, None)
@@ -1669,6 +1677,35 @@ class Engine:
             if s is not None:
                 await s.close()
             self.broadcast("chat.reset", pid)
+        return saving
+
+    async def _save_thread(self, pid: str, thread: list[dict]) -> None:
+        """A cleared thread, read once more in a session of its own: what's worth keeping goes into memory, the way the
+        nightly review files the day."""
+        text = "\n".join(f"{'they' if m['role'] == 'you' else 'you'}: {str(m.get('text', ''))[:3000]}" for m in thread)[-60000:]
+        cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
+        session = self.brain_for(pid).session(
+            cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+        async def ignore(_: str) -> None:
+            pass
+
+        try:
+            await until_idle(session, session.ask(
+                f"[{time.strftime('%a %d %b %H:%M')}] They just cleared this chat. Here is the thread they put away:\n\n"
+                f"{text}\n\nFile anything worth keeping from it into {self.memory_dir(pid)}: extend the topic file it "
+                "belongs to, or start one if nothing fits, with facts dated inline. Corrections and standing rules go where "
+                "you keep those. Skip small talk and anything already in memory. If nothing here is worth keeping, write "
+                "nothing. Reply with only NOTHING_TO_SAY; your reply is not shown.", ignore))
+        except Exception as e:
+            log.warning("saving the cleared thread for %s failed: %s", pid, e)
+        finally:
+            self.record_usage(session, pid, "job", job="custom")
+            try:
+                await session.close()
+            except Exception:
+                pass
+        self.emit("project.updated", project=pid)
 
 
     # ------------------------------------------------------------- requests
