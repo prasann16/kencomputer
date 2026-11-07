@@ -806,12 +806,12 @@ class WebApp:
             raise web.HTTPNotFound()
         if not path.is_file():
             raise web.HTTPNotFound()
-        return self._serve(path)
+        return self._serve(path, download="download" in request.query)
 
-    def _serve(self, path):
+    def _serve(self, path, download=False):
         from urllib.parse import quote
         # Active documents must not execute under Ken's authenticated origin.
-        inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf"}
+        inline = not download and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf"}
         return web.FileResponse(path, headers={
             "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(path.name)}",
             "X-Content-Type-Options": "nosniff",

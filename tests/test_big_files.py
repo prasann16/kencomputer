@@ -126,3 +126,15 @@ async def test_the_web_app_endpoints(engine, aiohttp_client, hosted):  # noqa: F
     r = await client.post(f"/api/telegram-files/{'a' * 24}", json={"file": "IMG_0042.MOV"})
     assert r.status == 200 and calls == [("a" * 24, engine.files_dir(HOME) / "IMG_0042.MOV")]
     assert (await client.post(f"/api/telegram-files/{'b' * 24}", json={"file": "IMG_0042.MOV"})).status == 404
+
+
+async def test_a_video_ken_shares_plays_in_the_chat_and_downloads_with_one_tap(engine, aiohttp_client, hosted):  # noqa: F811
+    app, client = await signed_in(engine, aiohttp_client)
+    reel = engine.home_cwd / "reel.mp4"
+    reel.parent.mkdir(parents=True, exist_ok=True)
+    reel.write_bytes(b"\0" * 10)
+    shown = await client.get("/api/file", params={"path": "reel.mp4"})
+    assert shown.status == 200 and shown.headers["Content-Disposition"].startswith("inline")
+    saved = await client.get("/api/file?path=reel.mp4&download")
+    assert saved.status == 200 and saved.headers["Content-Disposition"].startswith("attachment")
+    assert "media-save" in (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text()

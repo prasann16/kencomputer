@@ -487,9 +487,11 @@ function Media({ path }) {
   const [gone, setGone] = useState(false);
   if (gone) return null;
   const url = sharedUrl(path), name = path.split('/').pop();
+  // Saving it is one tap: the browser's own video menu has no Save in Safari, and a picture opens instead of downloading.
   return html`<div class="msg-media">${/\.(mp4|mov|webm|m4v)$/i.test(name)
     ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
-    : html`<img src=${url} alt=${name} loading="lazy" onClick=${() => openFile(path)} onError=${() => setGone(true)}/>`}</div>`;
+    : html`<img src=${url} alt=${name} loading="lazy" onClick=${() => openFile(path)} onError=${() => setGone(true)}/>`}
+    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download</a></div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
@@ -642,6 +644,7 @@ function Glyph(name) {
     settings: 'm9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3H9ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
     arrow: 'M5 12h14m-6-6 6 6-6 6',
     file: 'M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8M8 16h6',
+    download: 'M12 4v11m-5-5 5 5 5-5M5 20h14',
   };
   return html`<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[name] || paths.file}/></svg>`;
 }
