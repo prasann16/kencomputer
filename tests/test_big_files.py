@@ -46,7 +46,8 @@ async def test_too_big_replies_at_once_with_a_link_and_keeps_what_they_asked(hos
     [reply] = msg.replies
     token = re.fullmatch(rf"That video is too big for Telegram to pass on\. Send it here: {SITE}/send/([0-9a-f]{{24}})", reply).group(1)
     assert bot.waiting_big_file(token) | {"ts": 0} == {"chat_id": 777001, "message_id": 42, "caption": "make a reel of this",
-                                                       "kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB, "ts": 0}
+                                                       "kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB, "ts": 0,
+                                                       "replied": True}
     other = Msg("")
     assert await bot.too_big(other, SimpleNamespace(file_size=30 * MB), "a file", "notes.pdf")
     assert other.replies[0].startswith("That file is too big for Telegram to pass on.")
@@ -138,3 +139,19 @@ async def test_a_video_ken_shares_plays_in_the_chat_and_downloads_with_one_tap(e
     saved = await client.get("/api/file?path=reel.mp4&download")
     assert saved.status == 200 and saved.headers["Content-Disposition"].startswith("attachment")
     assert "media-save" in (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text()
+
+
+async def test_a_link_ken_never_sent_goes_out_when_it_starts_again(hosted):
+    token = bot.wait_for_big_file(chat_id=777001, message_id=343, caption="edit this for my insta", kind="a video",
+                                  name="IMG_5553.MOV", size=25 * MB)  # saved, then Ken stopped before replying
+    sent = []
+
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            sent.append((chat_id, text, kw["reply_parameters"].message_id))
+    await bot.resend_big_file_links(Bot())
+    assert sent == [(777001, f"Sorry, I restarted before I could answer. That video is too big for Telegram to pass on. "
+                             f"Send it here: {SITE}/send/{token}", 343)]
+    await bot.resend_big_file_links(Bot())
+    assert len(sent) == 1  # once
+    assert bot.waiting_big_file(token)["caption"] == "edit this for my insta"  # still waiting for the file

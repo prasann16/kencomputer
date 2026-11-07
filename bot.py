@@ -69,6 +69,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -1012,6 +1013,21 @@ async def engine_changed(app_dir: Path, old: str, new: str) -> bool:
     return any(not f.startswith(NO_RESTART) and not f.endswith(".md") for f in files)
 
 
+# When a Telegram message last came in (time.monotonic()). An update never restarts Ken within HEARD_WAIT seconds of
+# one, so a message it's still taking in (downloading a file, replying with a link) isn't cut off.
+LAST_INCOMING = 0.0
+HEARD_WAIT = 120
+
+
+async def heard(update: object, context: object) -> None:
+    global LAST_INCOMING
+    LAST_INCOMING = time.monotonic()
+
+
+def restart_would_cut_in() -> bool:
+    return ENGINE.busy() or time.monotonic() - LAST_INCOMING < HEARD_WAIT
+
+
 async def self_update() -> None:
     """Pull-based updates: check the repo hourly, restart into the new version.
 
@@ -1020,6 +1036,10 @@ async def self_update() -> None:
     the update. Never interrupts a task in flight."""
     global RUNNING_REV
     if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
+        return
+    if host_site():
+        # Hosted Ken updates as its computer wakes (ken-supervise pulls before Ken starts), and it sleeps whenever its
+        # person is away, so it never restarts itself mid-reply, mid-job or mid-file.
         return
     app_dir = KEN_HOME / "app"
     await asyncio.sleep(300)  # settle after boot
@@ -1040,8 +1060,8 @@ async def self_update() -> None:
                 log.info("update %s only changes screens, tests or docs: no restart", new_rev[:8])  # read from disk
                 RUNNING_REV = new_rev  # the same engine: say the new version, so the website doesn't count Ken as behind
             elif new_rev and new_rev != RUNNING_REV:
-                if ENGINE.busy():
-                    log.info("update available but a task is running — waiting")
+                if restart_would_cut_in():
+                    log.info("update available but Ken is busy or just got a message — waiting")
                 else:
                     log.info("updating: %s -> %s (restarting)", RUNNING_REV[:8], new_rev[:8])
                     pip = KEN_HOME / "venv" / "bin" / "pip"  # on Windows, winrun.py installs them
@@ -1179,16 +1199,46 @@ def take_big_file(token: str) -> dict | None:
     return info
 
 
+def _noun(kind: str) -> str:
+    return "video" if "video" in kind else "recording" if kind in ("a voice note", "a recording") else "file"
+
+
+def _replied(token: str) -> None:
+    waiting = _big_files()
+    if token in waiting:
+        waiting[token]["replied"] = True
+        _save_big_files(waiting)
+
+
+async def resend_big_file_links(bot) -> None:
+    """On start: a big file Ken saved but never answered (it stopped in between) gets its link now."""
+    site = host_site()
+    if not site:
+        return
+    for token, w in _big_files().items():
+        if w.get("replied") or not w.get("chat_id"):
+            continue
+        try:
+            await bot.send_message(
+                w["chat_id"], f"Sorry, I restarted before I could answer. That {_noun(w.get('kind', ''))} is too big for "
+                f"Telegram to pass on. Send it here: {site}/send/{token}",
+                reply_parameters=ReplyParameters(message_id=w["message_id"], allow_sending_without_reply=True))
+            _replied(token)
+        except TelegramError as e:
+            log.warning("couldn't resend a big file's link: %s", e)
+
+
 async def too_big(msg, item, kind: str, name: str) -> bool:
     """A file over Telegram's download limit: say so at once (True), with the link to send it in Ken's web app
     when Ken is hosted, so nothing waits on a download that can't happen."""
     if (item.file_size or 0) <= TELEGRAM_DOWNLOAD_LIMIT:
         return False
-    noun = "video" if "video" in kind else "recording" if kind in ("a voice note", "a recording") else "file"
+    noun = _noun(kind)
     if site := host_site():
         token = wait_for_big_file(chat_id=msg.chat_id, message_id=msg.message_id, caption=(msg.caption or "").strip(),
                                   kind=kind, name=name, size=item.file_size)
         await msg.reply_text(f"That {noun} is too big for Telegram to pass on. Send it here: {site}/send/{token}")
+        _replied(token)
         return True
     size = item.file_size / (1024 * 1024)
     await msg.reply_text(
@@ -2545,6 +2595,7 @@ class Phone:
         if api := os.environ.get("TELEGRAM_API_URL", "").rstrip("/"):
             builder = builder.base_url(f"{api}/bot").base_file_url(f"{api}/file/bot")
         app = builder.build()
+        app.add_handler(TypeHandler(Update, heard), group=-1)  # every message, before it's handled
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
                          ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill), ("usage", cmd_usage)):
             app.add_handler(CommandHandler(name, fn))
@@ -2574,6 +2625,7 @@ class Phone:
         except Exception as e:
             log.warning("set_my_commands failed: %s", e)
         log.info("ken is on Telegram as @%s", self.username)
+        await resend_big_file_links(app.bot)
 
     async def receive(self, data: dict) -> bool:
         """Hosted Ken: an update the host pushes (its computer sleeps, so it can't fetch them). The host only pushes
