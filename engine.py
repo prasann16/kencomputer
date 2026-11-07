@@ -338,6 +338,7 @@ class Engine:
         self._greeting: set[str] = set()
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
+        self._aside: dict[str, list[str]] = {}  # answered on the side while the chat was busy, for the chat to hear next
         self.run_slots = asyncio.Semaphore(RUN_SLOTS)
         self._bg: list[asyncio.Task] = []
         # The phone message behind the turn in progress, and behind each run/approval it started, so
@@ -1342,6 +1343,44 @@ class Engine:
         lock = self.chat_locks.get(pid)
         return bool(lock and lock.locked())
 
+    async def _reply_aside(self, pid: str, text: str, body: str, via: str | None, listener) -> bool:
+        """Answer a new message in a second session while the chat is busy; the work in progress carries on and reports
+        back as usual. False when the message is about that work (the chat then takes it) or no answer came."""
+        context = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in self.messages(pid, limit=12))
+        note = ("\n\n=== You're busy in the main chat ===\nYou are still working on an earlier request there; that work "
+                "carries on and reports back by itself. They've just written something new: answer it here, now, fully. "
+                "If it is about the work in progress (a change to it, a correction, stop, how it's going), reply with only "
+                "the word STEER and the main chat takes it. Don't redo or repeat the work in progress.")
+        cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
+        if self.brain_for(pid).name == "codex":
+            self._share_skills(cwd)
+        session = self.brain_for(pid).session(
+            cwd=str(cwd), system=lambda: self.system(pid) + note, model_fn=lambda: self.model_for(pid),
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+        said: list[str] = []
+
+        async def on_text(t: str) -> None:
+            t = self.mask(pid, t)
+            if t.strip() in ("STEER", "NOTHING_TO_SAY"):
+                return
+            said.append(t)
+            self.log_message(pid, "ken", t, **({"via": via} if via else {}))
+            if listener is not None:
+                await listener(t)
+
+        try:
+            await until_idle(session, session.ask(
+                f"Recent conversation (context):\n{context}\n\n{time.strftime('%a %d %b %H:%M')}, "
+                f"{WHERE.get(via, 'from them')}. Their new message:\n{body}", on_text))
+        except Exception as e:
+            log.warning("side reply for %s failed: %s", pid, e)
+        finally:
+            self.record_usage(session, pid, "chat", via=via or "app")
+            await session.close()
+        if said:
+            self._aside.setdefault(pid, []).append(f"they: {text[:2000]}\nyou: {' '.join(said)[:2000]}")
+        return bool(said)
+
     def _last_message_ts(self, pid: str) -> float:
         r = self.db.execute(
             "SELECT ts FROM events WHERE project=? AND type='message' ORDER BY id DESC LIMIT 1", (pid,)
@@ -1384,15 +1423,22 @@ class Engine:
             body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(files)})"
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
         session = self.chats.get(pid)
-        if steer and lock.locked() and session is not None and session.busy and await session.steer(
-                f"(Sent while you were working, {WHERE.get(via, 'from them')}.)\n{body}"):
-            return True
+        if steer and lock.locked() and session is not None and session.busy:
+            # Ken is busy with something: a new message is answered at once on the side, so the chat never makes them
+            # wait. One about the work in progress joins that work instead, the way Claude Code takes messages.
+            if text.strip() and await self._reply_aside(pid, text, body, via, listener):
+                return True
+            if await session.steer(f"(Sent while you were working, {WHERE.get(via, 'from them')}.)\n{body}"):
+                return True
         await lock.acquire()
         try:
             self.chat_tasks.add(asyncio.current_task())
             if pid == HOME:
                 self.chat_origin = origin
             body = f"{await self.state(pid, via)}\n{body}"
+            if self._aside.get(pid):
+                body = ("(While you were busy, you also answered these on the side; they've seen the answers:)\n"
+                        + "\n\n".join(self._aside.pop(pid)) + "\n\n" + body)
             self._turn_started(pid, text or prompt or "", via, job)
             self.broadcast("chat.busy", pid, busy=True)
             session = self._chat_session(pid)
