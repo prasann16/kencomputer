@@ -12,6 +12,7 @@ agent and can hand them work.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from typing import Awaitable, Callable
 
 from brains import AIUnavailable, Brain
 import crash
+import usage
 
 log = logging.getLogger("ken")
 
@@ -70,8 +72,9 @@ NO_ANSWER_LIMIT = 2 * 60
 # Ken AI credits run on Haiku only (about 14x cheaper than Sonnet, and it did every real task in testing). Ken picks it;
 # there's no menu on credits. The site enforces it too.
 CREDIT_MODELS = ("claude-haiku-5-5",)
-# Background jobs share the subscription with the chat: two at a time, an hour at most each.
-RUN_SLOTS = 2
+# Background jobs start when the computer has room for them (usage.room_for_more, looked at again every few
+# seconds while one waits), and stop after an hour at most each.
+ROOM_CHECK = 5
 RUN_LIMIT = 60 * 60
 
 
@@ -339,7 +342,7 @@ class Engine:
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
         self._aside: dict[str, list[str]] = {}  # answered on the side while the chat was busy, for the chat to hear next
-        self.run_slots = asyncio.Semaphore(RUN_SLOTS)
+        self._last_start = 0.0  # when the last background job started (monotonic)
         self._bg: list[asyncio.Task] = []
         # The phone message behind the turn in progress, and behind each run/approval it started, so
         # their results can quote it in Telegram instead of whatever the human said last.
@@ -777,7 +780,7 @@ class Engine:
             "then tell them in a line that it's running and they can keep talking to you. The job starts fresh and sees only "
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
             "conversation that matters. When it finishes, its report comes back to you as a message; tell them the result "
-            f"then. Up to {RUN_SLOTS} run at once and the rest wait their turn; each stops after an hour. Running jobs are "
+            "then. As many run at once as this computer has room for, and the rest wait their turn; each stops after an hour. Running jobs are "
             f'listed in the line at the top of each message; to stop one, write {{"type": "stop", "run": "<id>"}} there '
             "too. Quick things, and anything that needs their answers along the way, you do yourself, here.\n"
         )
@@ -1720,7 +1723,8 @@ class Engine:
             pid = self.find_agent(pid) or pid
             self.get_agent(pid)
         if kind == "run":
-            if pid == HOME and len(self.list_runs(project=HOME, active=True)) >= 2 * RUN_SLOTS:
+            waiting = sum(1 for r in self.list_runs(project=HOME, active=True) if r["status"] == "queued")
+            if pid == HOME and waiting >= 2 * (os.cpu_count() or 1):
                 raise ValueError("too many background jobs waiting already")
             self.start_run(pid, str(req.get("title") or "Task")[:120], str(req["prompt"]),
                            source="ken" if pid == HOME else "agent")
@@ -1774,10 +1778,24 @@ class Engine:
         cols = ", ".join(f"{k}=?" for k in fields)
         self.db.execute(f"UPDATE runs SET {cols} WHERE id=?", (*fields.values(), rid))
 
+    @contextlib.asynccontextmanager
+    async def _room(self, rid: str):
+        """Wait until the computer has room for this job, read just before it starts: light jobs run side by side, a
+        heavy one makes the next wait. The first always starts; after each start the next waits a moment, so its
+        reading includes the job just started."""
+        while True:
+            running = sum(1 for r in self.list_runs(active=True, limit=1000) if r["status"] == "running")
+            settled = time.monotonic() - self._last_start >= ROOM_CHECK
+            if self._run_row(rid)["status"] == "stopped" or not running or (settled and usage.room_for_more(running)):
+                break
+            await asyncio.sleep(ROOM_CHECK)
+        self._last_start = time.monotonic()
+        yield
+
     async def _execute(self, rid: str) -> None:
         run = self._run_row(rid)
         pid = run["project"]
-        async with self.run_slots:
+        async with self._room(rid):
             if self._run_row(rid)["status"] == "stopped":
                 return
             self._set_run(rid, status="running", started=time.time(), activity="starting")

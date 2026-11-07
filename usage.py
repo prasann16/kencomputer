@@ -179,6 +179,33 @@ def memory_critical() -> bool | None:
     return 100 * mem["available"] / mem["total"] < 5 if mem.get("total") else None
 
 
+def room_for_more(running: int) -> bool:
+    """Can this computer take on one more background job right now? Read now, not a set number:
+    the processors aren't already all busy, and on a Mac macOS's own memory pressure is normal (green); elsewhere
+    the free RAM holds another job the size of the work running now (Ken's RAM per piece of work, the chat counted),
+    with as much again to spare. A few milliseconds."""
+    try:
+        if hasattr(os, "getloadavg") and os.getloadavg()[0] >= (os.cpu_count() or 1):
+            return False
+    except OSError:
+        pass
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+            import ctypes.util
+
+            level, size = ctypes.c_int(), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            if libc.sysctlbyname(b"kern.memorystatus_vm_pressure_level", ctypes.byref(level), ctypes.byref(size), None, 0) == 0:
+                return level.value == 1
+        except (OSError, AttributeError):
+            pass
+    mem, per = memory(), ken_memory() / (running + 1)
+    if not mem.get("total") or not per:  # can't tell (Windows has no ps): only stop when memory is nearly gone
+        return not memory_critical()
+    return mem["available"] >= 2 * per
+
+
 def app_name(command: str) -> str:
     """The name someone would know a program by: the app it belongs to ('Google Chrome' for its
     helpers), else the program's name, without a reverse-DNS prefix ('VirtualMachine')."""
