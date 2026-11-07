@@ -1393,7 +1393,8 @@ function JobList({ jobs, change }) {
 }
 
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
-  const [offAsk, setOffAsk] = useState(false);
+  const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
+  useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
   const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
   useEffect(() => {
     const changed = () => setAppearance(window.kenTheme.preference);
@@ -1420,9 +1421,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['general', 'General']];
-  const wanted = tab && tab.startsWith('connect-') ? 'claude' : tab === 'privacy' || tab === 'appearance' ? 'general' : tab;
-  const current = wanted === 'feedback' || tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['account', 'Account']];
+  const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : tab;
+  const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
   if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
@@ -1449,30 +1450,33 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   ${section('phone', 'Phone', HOSTED ? html`<${HostedTelegram}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
   ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
-  ${section('general', 'General', html`<div class="tool-list">
+  ${tab !== 'feedback' && section('account', 'Account', html`<div class="tool-list">
+    ${me?.signedIn && row(icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'), me.name || 'Signed in', me.email,
+      meta.logout_url && html`<a class="btn sm light" href=${meta.logout_url}>Sign out</a>`)}
     ${row(icon('M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z'), 'Appearance', 'Light, dark, or the same as your computer.',
       html`<div class="segmented" role="radiogroup" aria-label="Appearance">${[['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div>`)}
     ${privacy && row(icon('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'), 'Share anonymous crash reports and usage',
       html`Helps fix bugs and shows which features get used: counts like “a job ran” and how much AI each one used. Never what you say, your files or your logins. <a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a>`,
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
+    ${row(icon('M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z'), 'Send feedback', 'A bug, an idea, something you’d love Ken to do. It goes straight to the people who make Ken.',
+      html`<button class="btn sm light" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Write</button>`)}
   </div>
   <div class="tool-list off-row">${row(icon('M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'), 'Turn Ken off', 'Stops everything Ken is doing right now, mid-step. No replies, briefs or jobs until you turn it back on.',
     !offAsk && html`<button class="btn sm off-btn" onClick=${() => setOffAsk(true)}>Turn off</button>`,
     offAsk && html`<div class="off-ask"><p>Your plan, memory and files are kept. Turn Ken on again from the app any time.</p>
       <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>`)}
-  ${tab === 'feedback' && section('feedback', 'Send feedback', sent
+  ${tab === 'feedback' && html`<section class="sp-section" id="set-feedback"><h2>Send feedback</h2>${sent
     ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.${HOSTED ? ' We reply to the email you signed in with.' : ''}</p>`
     : html`<p class="np-help">A bug, an idea, something you'd love Ken to do: it goes straight to the people who make Ken.</p>
       <textarea class="np-input feedback-text" placeholder="What's on your mind?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
       ${!HOSTED && html`<input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>`}
-      <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('claude')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
+      <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('account')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
       <p class="np-note">Anything urgent? Email <a class="text-action" href=${'mailto:' + HELP_EMAIL}>${HELP_EMAIL}</a>.</p>
-      ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`)}
+      ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`}</section>`}
   ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-  <footer class="sp-foot">${tab !== 'feedback' && html`<button class="text-action" onClick=${() => { setTab('feedback'); setError(''); setSent(false); setTimeout(() => document.getElementById('set-feedback')?.scrollIntoView({ behavior: 'smooth' }), 50); }}>Send feedback</button>`}
-    ${meta.logout_url && html`<a class="text-action" href=${meta.logout_url}>Sign out</a>`}${update && html`<span class="settings-version">Ken ${update.version} · ${update.ready
+  ${update && html`<footer class="sp-foot"><span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
-      : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span>`}</footer>
+      : html`<button class="text-action" onClick=${() => window.kenDesktop.checkForUpdates()}>Check for updates</button>`}</span></footer>`}
   </div></div>`;
 }
 // Waiting for Ken's computer (it's waking up or restarting into an update): say so, and never wait forever.
