@@ -532,7 +532,9 @@ ol.conn-steps li { margin: 2px 0; }
 /* The off switch */
 .ken-off h2 { margin: 0; font-size: var(--text-lg); }
 .ken-off .quiet-copy { max-width: 340px; text-align: center; }
-.off-ask { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--r-card); background: var(--well); }
+.off-ask { margin-bottom: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--r-card); background: var(--well); }
 .off-ask p { margin: 0 0 var(--s2); }
 .off-ask .btn.danger { background: var(--danger); color: var(--bg); box-shadow: none; }
 .ken-off img { animation: none; opacity: 0.55; filter: grayscale(1); }
+.sp-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin: var(--s7) 0 var(--s6); }
+.sp-title-row .sp-title { margin: 0; }
