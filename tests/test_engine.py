@@ -537,7 +537,11 @@ async def test_ken_hands_long_work_to_a_background_job_that_reports_back(engine)
     assert not [m for m in engine.messages(HOME) if m["role"] == "you"]
 
 
-async def test_two_background_jobs_at_a_time_and_ken_can_stop_one(engine):
+async def test_background_jobs_start_while_the_computer_has_room_and_ken_can_stop_one(engine, monkeypatch):
+    import engine as engine_module
+    import usage
+    monkeypatch.setattr(engine_module, "ROOM_CHECK", 0.01)
+    monkeypatch.setattr(usage, "room_for_more", lambda running: running < 2)  # room for two, this time
     gate = asyncio.Event()
     ask = FakeSession.ask
 
@@ -651,3 +655,18 @@ async def test_a_new_message_while_ken_is_busy_is_answered_at_once(engine):
     engine.chats.pop(HOME, None)
     await engine.send_message(HOME, "thanks")
     assert "you also answered these on the side" in engine.brain.asks[-1]["prompt"] and "2+2" in engine.brain.asks[-1]["prompt"]
+
+
+def test_room_for_one_more_job_is_read_from_the_computer(monkeypatch):
+    import usage
+    monkeypatch.setattr(usage.sys, "platform", "linux")
+    monkeypatch.setattr(usage.os, "getloadavg", lambda: (0.5, 0, 0))
+    gb = 2**30
+    monkeypatch.setattr(usage, "ken_memory", lambda root=None: 3 * gb)  # the chat and two jobs: 1 GB each
+    monkeypatch.setattr(usage, "memory", lambda: {"total": 8 * gb, "available": 5 * gb})
+    assert usage.room_for_more(2)
+    monkeypatch.setattr(usage, "memory", lambda: {"total": 8 * gb, "available": 1.5 * gb})
+    assert not usage.room_for_more(2)  # another 1 GB job would leave too little
+    monkeypatch.setattr(usage, "memory", lambda: {"total": 8 * gb, "available": 5 * gb})
+    monkeypatch.setattr(usage.os, "getloadavg", lambda: (64.0, 0, 0))
+    assert not usage.room_for_more(2)  # every processor busy
