@@ -393,7 +393,6 @@ ol.conn-steps { padding-left: 1.3em; }
 ol.conn-steps li { margin: 2px 0; }
 .tool-add-btn { align-self: flex-start; margin-top: var(--s1); }
 .conn-form.tool-add, .apps-imap .conn-form { margin-left: 0; }
-.privacy-more { margin: var(--s3) 0 0 var(--s5); }
 /* Apps (hosted): search, then a tile per app. */
 .apps-search { margin: var(--s1) 0 var(--s3); }
 .apps-imap { margin-bottom: 10px; padding: var(--s2) 14px var(--s3); border-radius: var(--r-card); background: var(--well); }
@@ -532,9 +531,10 @@ ol.conn-steps li { margin: 2px 0; }
 /* The off switch */
 .ken-off h2 { margin: 0; font-size: var(--text-lg); }
 .ken-off .quiet-copy { max-width: 340px; text-align: center; }
-.off-ask { margin-bottom: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--r-card); background: var(--well); }
-.off-ask p { margin: 0 0 var(--s2); }
-.off-ask .btn.danger { background: var(--danger); color: var(--bg); box-shadow: none; }
 .ken-off img { animation: none; opacity: 0.55; filter: grayscale(1); }
-.sp-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin: var(--s7) 0 var(--s6); }
-.sp-title-row .sp-title { margin: 0; }
+.off-row { margin-top: var(--s5); }
+.off-btn { border-color: var(--danger); color: var(--danger); }
+.off-ask { margin: var(--s3) 0 0 50px; }
+.off-ask p { margin: 0 0 var(--s2); color: var(--ink-2); font-size: var(--text-ui); }
+.off-ask .btn.danger { background: var(--danger); color: var(--bg); box-shadow: none; }
+@media (max-width: 560px) { .conn-row:has(.segmented) { flex-wrap: wrap; } .conn-row:has(.segmented) .conn-right { flex-basis: 100%; padding-left: 50px; } }
