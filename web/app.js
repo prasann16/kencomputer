@@ -645,6 +645,7 @@ function Modal({ title, children, onClose, wide, className, closeX }) {
 function Glyph(name) {
   const paths = {
     home: 'M3 10 12 3 21 10M5 9v11h5v-6h4v6h5V9',
+    mail: 'M4 6h16v12H4zM4 7l8 6 8-6',
     chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z',
     folder: 'M3 7V5h7l2 3h9v12H3V7Z',
     browser: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 6 5 12 0 18-5-6-5-12 0-18Z',
@@ -1082,12 +1083,12 @@ function FirstThink({ usage, onPick, onConnected, onCredits }) {
 
 // What Ken can use, connected right here: Chrome, email, calendar, plus any tool Ken adds itself.
 // A connected tool has a switch (does Ken use it); one that isn't connected has Connect.
-function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
-  const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
-  // Who runs the email they typed (found from the address, or a business domain's mail records): the steps to make
-  // the password Ken signs in with, and a button to the page that makes it.
-  const [provider, setProvider] = useState(null);
+// Connect any inbox over IMAP with its password. Ken finds who runs the email they typed (from the address, or a
+// business domain's mail records) and shows the steps to make the password it signs in with. onDone gets the new
+// connections (/api/connections).
+function EmailForm({ onDone, onCancel }) {
+  const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState('');
+  const [provider, setProvider] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   useEffect(() => {
     setProvider(null);
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(address.trim())) return;
@@ -1095,6 +1096,31 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
     const t = setTimeout(() => api('/api/connections/email-provider', { json: { address: address.trim() } }).then((r) => alive && setProvider(r)).catch(() => alive && setProvider({})), 400);
     return () => { alive = false; clearTimeout(t); };
   }, [address]);
+  const ready = provider && !provider.blocked && address && password && !busy;
+  const connect = async () => {
+    setBusy(true); setError('');
+    try { const r = await api('/api/connections/email', { json: { address, password, imap_host: server.trim() } }); setPassword(''); onDone(r); }
+    catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
+    finally { setBusy(false); }
+  };
+  return html`<div class="conn-form">
+    <input class="np-input" autofocus type="email" autocomplete="email" placeholder="Email address" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
+    ${!provider ? html`<p class="conn-steps">Type your email first. Ken then shows you which password to use and how to get it.</p>`
+    : provider.blocked ? html`<p class="conn-steps">${provider.blocked}</p>` : html`
+      ${provider.steps ? html`<div class="conn-walk"><p class="conn-steps">${provider.app_password ? `${provider.name} needs an app password for Ken, not your normal one:` : `${provider.name}:`}</p>
+        <ol class="conn-steps">${provider.steps.map((step) => html`<li>${step}</li>`)}</ol>
+        ${provider.link && html`<a class="btn sm" href=${provider.link} target="_blank" rel="noopener">${provider.link_label} ↗</a>`}</div>`
+      : html`<p class="conn-steps">Use your ${provider.name ? provider.name + ' ' : ''}email password, the one you sign in to your email with.</p>`}
+      <input class="np-input" type="password" autocomplete="off" placeholder=${provider.app_password ? 'Paste the app password' : 'Password'} value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && ready && connect()}/>
+      ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}`}
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    <div class="row np-actions"><button class="btn ghost" onClick=${onCancel}>Cancel</button>${provider && !provider.blocked && html`<button class="btn primary" disabled=${!ready} onClick=${connect}>${busy ? 'Checking…' : 'Connect'}</button>`}</div>
+  </div>`;
+}
+
+function ToolList({ tools, onUse, onAddTool, switches = true }) {
+  const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [url, setUrl] = useState(''), [want, setWant] = useState('');
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
   // Connecting or disconnecting Chrome happens in Chrome, so watch until it actually changes.
   const waitingChrome = state && ((open === 'chrome' && !state.chrome) || (open === 'chrome-off' && state.chrome));
@@ -1105,7 +1131,7 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
   }, [waitingChrome]);
   const act = async (path, opts, after) => {
     setBusy(true); setError('');
-    try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); if (/server/.test(e.message)) setServer(server || ' '); }
+    try { setState(await api(path, opts)); setOpen(''); after?.(); } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
   if (!state) return html`<p class="np-note">${error || 'Loading…'}</p>`;
@@ -1115,24 +1141,10 @@ function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
   const use = (t, connected, connect) => connected
     ? switches && html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
     : connect;
-  const emailRow = row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), only ? 'Email (any provider)' : 'Email',
-      only ? 'Work email or any other inbox, with its password.' : 'Search, read and draft replies. Sends only when you say so.',
-      use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
-      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
-      ${open === 'email' && html`<div class="conn-form">
-        <input class="np-input" autofocus type="email" autocomplete="email" placeholder="Email address" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
-        ${!provider ? html`<p class="conn-steps">Type your email first. Ken then shows you which password to use and how to get it.</p>`
-        : provider.blocked ? html`<p class="conn-steps">${provider.blocked}</p>` : html`
-          ${provider?.steps ? html`<div class="conn-walk"><p class="conn-steps">${provider.app_password ? `${provider.name} needs an app password for Ken, not your normal one:` : `${provider.name}:`}</p>
-            <ol class="conn-steps">${provider.steps.map((step) => html`<li>${step}</li>`)}</ol>
-            ${provider.link && html`<a class="btn sm" href=${provider.link} target="_blank" rel="noopener">${provider.link_label} ↗</a>`}</div>`
-          : html`<p class="conn-steps">Use your ${provider.name ? provider.name + ' ' : ''}email password, the one you sign in to your email with.</p>`}
-          <input class="np-input" type="password" autocomplete="off" placeholder=${provider?.app_password ? 'Paste the app password' : 'Password'} value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && address && password && !busy && e.currentTarget.closest('.conn-form').querySelector('.btn.primary').click()}/>
-          ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}`}
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${provider && !provider.blocked && html`<button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button>`}</div>
-      </div>`}`);
-  // Apps on hosted Ken shows only the email part: any mailbox, over IMAP, for what Apps' one-click list doesn't cover.
-  if (only === 'email') return html`<div class="tool-list">${emailRow}${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`;
+  const emailRow = row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
+      use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); }}>Connect</button>`),
+      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); }}>Add another</button></div>`}</div>`}
+      ${open === 'email' && html`<${EmailForm} onDone=${(r) => { setState(r); setOpen(''); }} onCancel=${() => setOpen('')}/>`}`);
   const globe = icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18');
   return html`<div class="tool-list">
     ${HOSTED ? row(globe, 'Browser', HOSTED_BROWSER ? 'Ken’s own browser on its computer: opens websites, reads them and fills in forms.' : 'Ken’s own browser isn’t part of your plan.',
@@ -1258,11 +1270,14 @@ function HostedApps() {
   // Each connected app's accounts, named by Ken's computer (it asks the apps themselves: /api/apps); the site's own
   // list (no names, its own ids) stands in when Ken can't be asked.
   const [mine, setMine] = useState(null), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
+  // IMAP: any inbox with its password, for technical users; Ken's computer holds these, not the app catalog.
+  const [mail, setMail] = useState(null), [imap, setImap] = useState(false);
+  const imapShown = !q.trim() || /imap|mail|inbox|smtp/i.test(q);
   const say = new URLSearchParams(location.search);
   const load = (query = q) => { setError(''); fetch('/account/apps.json' + (query ? '?q=' + encodeURIComponent(query) : ''), { credentials: 'same-origin' })
     .then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load your apps just now.")); };
   const loadMine = () => api('/api/apps', { timeout: 60000 }).then((r) => setMine(r.connected)).catch(() => setMine(false));
-  useEffect(() => { load(''); loadMine(); }, []);
+  useEffect(() => { load(''); loadMine(); api('/api/connections').then((r) => setMail(r.emails)).catch(() => setMail([])); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
     setBusy(slug); setError('');
@@ -1275,16 +1290,22 @@ function HostedApps() {
   };
   const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
     .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
-  const connected = mine ? mine.filter((a) => a.accounts?.length) : mine === false ? fromSite : [];
+  const connected = [...(mine ? mine.filter((a) => a.accounts?.length) : mine === false ? fromSite : []),
+    ...(mail?.length ? [{ slug: 'imap', name: 'IMAP', accounts: mail.map((m) => ({ id: m.address, label: m.address, via: 'imap' })) }] : [])];
+  const logo = (a, size) => a.slug === 'imap' ? html`<i class="imap-logo">${Glyph('mail')}</i>` : html`<img src=${'/app-logos/' + a.slug} alt="" width=${size} height=${size} loading="lazy"/>`;
+  const add = (slug) => slug === 'imap' ? setImap(true) : connect(slug);
   const disconnect = async (app, account) => {
     setBusy(`off:${account.id}`); setProblem('');
     try {
-      if (account.via === 'apps') await api('/api/apps/disconnect', { json: { app: app.slug, account: account.id } });
+      if (account.via === 'imap') {}
+      else if (account.via === 'apps') await api('/api/apps/disconnect', { json: { app: app.slug, account: account.id } });
       else {
         const r = await fetch('/account/apps/disconnect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ id: account.id }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't disconnect that account just now.");
       }
-      setAsking(''); await loadMine(); load();
+      if (account.via === 'imap') setMail((await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails);
+      else { await loadMine(); load(); }
+      setAsking('');
     } catch (e) { setProblem(e.message); }
     finally { setBusy(''); }
   };
@@ -1293,17 +1314,19 @@ function HostedApps() {
     ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
     ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
     ${connected.length > 0 && html`<div class="app-accounts">${connected.map((a) => html`<div class="app-group">
-      <div class="app-head"><img src=${'/app-logos/' + a.slug} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
+      <div class="app-head">${logo(a, 22)}<span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
       ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i><span class="app-account-name">${x.label}</span></span>${asking === x.id
         ? html`<span class="app-confirm"><button class="btn sm" disabled=${!!busy} onClick=${() => disconnect(a, x)}>${busy === 'off:' + x.id ? 'Disconnecting…' : 'Disconnect'}</button><button class="text-action" disabled=${!!busy} onClick=${() => setAsking('')}>Keep</button></span>`
         : html`<button class="text-action" disabled=${!!busy} aria-label=${`Disconnect ${a.name}: ${x.label}`} onClick=${() => setAsking(x.id)}>Disconnect</button>`}</div>`)}
-      <button class="app-add" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
+      <button class="app-add" disabled=${!!busy} onClick=${() => add(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
     </div>`)}</div>`}
     ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
-    ${(!q.trim() || /mail|imap|smtp|inbox/i.test(q)) && html`<div class="apps-imap"><${ToolList} only="email" switches=${false}/></div>`}
+    ${imap && html`<div class="apps-imap"><div class="app-head">${logo({ slug: 'imap' })}<span>Connect an inbox over IMAP</span></div>
+      <${EmailForm} onDone=${(r) => { setMail(r.emails); setImap(false); }} onCancel=${() => setImap(false)}/></div>`}
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
-      : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
+      : data.apps.length || imapShown ? html`<div class="apps-grid">${imapShown && html`<div class="apps-row">${logo({ slug: 'imap' })}<span>IMAP</span>${mail?.length
+          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${imap} onClick=${() => setImap(true)}>Connect</button>`}</div>`}${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
           ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`
       : html`<p class="np-note">No app called "${q}".</p>`}`;
 }
