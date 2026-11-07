@@ -14,8 +14,8 @@ computer differs.
   the `~/.agent37/hooks` scripts and serves a terminal on port 7681.
 - `ken-supervise`: there's no systemd here, so this keeps Ken running. On the first boot it puts Ken's code, memory
   folders, standing jobs and `hosting.md` on the persistent disk (`~/.ken`); on every start it updates Ken
-  (`git pull`, then its Python packages); and it starts Ken again whenever it exits, which is how Ken's own hourly
-  self-update restarts into a new version (a little slower each time if it keeps failing fast).
+  (`git pull`, then its Python packages); and it starts Ken again whenever it exits (a little slower each time if it
+  keeps failing fast). Hosted Ken never restarts itself for an update: it gets new versions as its computer wakes.
 
 `/home/node` is the instance's persistent disk and hides anything the image puts there, so Ken's code, `.env`,
 memory and history live in `~/.ken` on the disk, and an image update (which resets everything else) keeps them.

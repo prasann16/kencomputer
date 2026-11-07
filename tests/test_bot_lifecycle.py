@@ -147,6 +147,7 @@ async def test_a_screen_only_update_reports_the_new_version(tmp_path, monkeypatc
     (app / "web" / "app.js").write_text("2"); run("add", "."); run("commit", "-qm", "b"); screens = run("rev-parse", "HEAD")
     monkeypatch.setattr(bot, "KEN_HOME", tmp_path); monkeypatch.setattr(bot, "RUNNING_REV", first)
     monkeypatch.setattr(bot, "FROZEN", False); monkeypatch.delenv("KEN_NO_AUTOUPDATE", raising=False)
+    monkeypatch.delenv("KEN_KEEPALIVE_URL", raising=False)  # Ken on a computer of its own
     sleeps = []
 
     async def sleep(s):
@@ -180,3 +181,16 @@ async def test_every_telegram_message_is_heard(monkeypatch):
     monkeypatch.setattr(bot, "LAST_INCOMING", 0.0)
     await bot.heard(object(), object())
     assert bot.time.monotonic() - bot.LAST_INCOMING < 5
+
+
+async def test_hosted_ken_never_restarts_itself_for_an_update(monkeypatch):
+    import bot
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://app.example.dev/box/checkin")
+    monkeypatch.setattr(bot, "FROZEN", False); monkeypatch.delenv("KEN_NO_AUTOUPDATE", raising=False)
+    slept = []
+
+    async def sleep(s):
+        slept.append(s)
+    monkeypatch.setattr(bot.asyncio, "sleep", sleep)
+    await bot.self_update()  # returns at once: its computer updates it on waking
+    assert slept == []

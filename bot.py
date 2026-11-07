@@ -1037,6 +1037,10 @@ async def self_update() -> None:
     global RUNNING_REV
     if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
+    if host_site():
+        # Hosted Ken updates as its computer wakes (ken-supervise pulls before Ken starts), and it sleeps whenever its
+        # person is away, so it never restarts itself mid-reply, mid-job or mid-file.
+        return
     app_dir = KEN_HOME / "app"
     await asyncio.sleep(300)  # settle after boot
     while True:
