@@ -435,7 +435,9 @@ HOSTED_PROMPT = (
 HEADLESS_BROWSER_PROMPT = (
     "BROWSER: you have your own browser on this computer (headless Chromium; there's no screen). Use the browser "
     "tools for anything that needs a website or a form: open pages, read them, click, type, take screenshots to "
-    "check what you see. It isn't their browser, so it isn't signed in to their accounts: if a site needs their "
+    "check what you see. If a plain page fetch comes back empty or missing the content you need, the page renders "
+    "with JavaScript: open it in the browser instead of concluding you can't read it. "
+    "It isn't their browser, so it isn't signed in to their accounts: if a site needs their "
     "login, say so and ask how they'd like to proceed. Before you post, send, buy, or change an account setting, "
     "show them exactly what you'll do and wait for a yes."
 )
