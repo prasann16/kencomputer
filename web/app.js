@@ -1083,7 +1083,7 @@ const APP_PASSWORD = { 'gmail.com': 'https://myaccount.google.com/apppasswords',
 
 // What Ken can use, connected right here: Chrome, email, calendar, plus any tool Ken adds itself.
 // A connected tool has a switch (does Ken use it); one that isn't connected has Connect.
-function ToolList({ tools, onUse, onAddTool, switches = true }) {
+function ToolList({ tools, onUse, onAddTool, switches = true, only = '' }) {
   const [state, setState] = useState(null), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [address, setAddress] = useState(''), [password, setPassword] = useState(''), [server, setServer] = useState(''), [url, setUrl] = useState(''), [want, setWant] = useState('');
   useEffect(() => { api('/api/connections').then(setState).catch((e) => setError(e.message)); }, []);
@@ -1108,6 +1108,19 @@ function ToolList({ tools, onUse, onAddTool, switches = true }) {
   const use = (t, connected, connect) => connected
     ? switches && html`<input class="job-switch" type="checkbox" role="switch" aria-label=${`Ken uses ${TOOL_NAMES[t]}`} title="Ken uses it" checked=${tools.use.includes(t)} onChange=${(e) => onUse(t, e.target.checked)}/>`
     : connect;
+  const emailRow = row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), only ? 'Other email' : 'Email',
+      only ? 'Any mailbox, like your work email. Ken reads and drafts; it sends only when you say so.' : 'Search, read and draft replies. Sends only when you say so.',
+      use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
+      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
+      ${open === 'email' && html`<div class="conn-form">
+        <input class="np-input" autofocus type="email" autocomplete="email" placeholder="Email address" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
+        <input class="np-input" type="password" autocomplete="off" placeholder="Password" value=${password} onInput=${(e) => setPassword(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && address && password && !busy && e.currentTarget.closest('.conn-form').querySelector('.btn.primary').click()}/>
+        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
+        <p class="conn-steps">${domain.match(/gmail|googlemail|icloud|me\.com|mac\.com/) ? html`This one needs an app password, not your normal one: ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">create one</a>` : ''} and paste it here.${domain.match(/gmail/) ? ' (Google asks you to turn on 2-Step Verification first.)' : ''}` : 'Your email password. If your account has 2-step sign-in, use an app password from its security settings.'}</p>
+        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
+      </div>`}`);
+  // Apps on hosted Ken shows only the email part: any mailbox, over IMAP, for what Apps' one-click list doesn't cover.
+  if (only === 'email') return html`<div class="tool-list">${emailRow}${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`;
   const globe = icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18');
   return html`<div class="tool-list">
     ${HOSTED ? row(globe, 'Browser', HOSTED_BROWSER ? 'Ken’s own browser on its computer: opens websites, reads them and fills in forms.' : 'Ken’s own browser isn’t part of your plan.',
@@ -1122,16 +1135,7 @@ function ToolList({ tools, onUse, onAddTool, switches = true }) {
             <li>Ken connects by itself. Waiting for Chrome…</li></ol>
             <p class="conn-steps">Needs Chrome 144 or newer.</p>
             <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button>${window.kenDesktop && html`<button class="btn ghost" onClick=${() => window.kenDesktop.connectChrome()}>Open Chrome page again</button>`}</div></div>`)}
-    ${row(icon('M4 6h16v12H4zM4 7l8 6 8-6'), 'Email', 'Search, read and draft replies. Sends only when you say so.',
-      use('email', state.emails.length > 0, open !== 'email' && html`<button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Connect</button>`),
-      html`${state.emails.length > 0 && html`<div class="conn-list">${state.emails.map((e) => html`<div>${on(e.address)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/email?address=${encodeURIComponent(e.address)}`, { method: 'DELETE' })}>Disconnect</button></div>`)}${open !== 'email' && html`<div><button class="text-action" onClick=${() => { setOpen('email'); setError(''); setAddress(''); setServer(''); }}>Add another</button></div>`}</div>`}
-      ${open === 'email' && html`<div class="conn-form">
-        <input class="np-input" autofocus placeholder="you@gmail.com" value=${address} onInput=${(e) => setAddress(e.target.value)}/>
-        <input class="np-input" type="password" placeholder="App password" value=${password} onInput=${(e) => setPassword(e.target.value)}/>
-        ${server && html`<input class="np-input" placeholder="Mail server, e.g. imap.gmail.com" value=${server.trim()} onInput=${(e) => setServer(e.target.value)}/>`}
-        <p class="conn-steps">Use an app password, not your normal one. ${help ? html`<a class="text-action" href=${help} target="_blank" rel="noopener">Create one</a>` : 'Your email provider’s security settings can create one.'} ${domain.match(/gmail/) ? '(Google asks you to turn on 2-Step Verification first.)' : ''}</p>
-        <div class="row np-actions"><button class="btn ghost" onClick=${() => setOpen('')}>Cancel</button><button class="btn primary" disabled=${busy || !address || !password} onClick=${() => act('/api/connections/email', { json: { address, password, imap_host: server.trim() } }, () => setPassword(''))}>${busy ? 'Checking…' : 'Connect'}</button></div>
-      </div>`}`)}
+    ${emailRow}
     ${row(icon('M4 6h16v14H4zM4 10h16M9 3v4M15 3v4'), 'Calendar', 'Ken reads your schedule for briefs and planning. Read-only.',
       use('calendar', state.calendars.length > 0, open !== 'calendar' && html`<button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>Connect</button>`),
       html`${state.calendars.length > 0 && html`<div class="conn-list">${state.calendars.map((c, i) => html`<div>${on(c.name)}<button class="text-action" disabled=${busy} onClick=${() => act(`/api/connections/calendar?index=${i}`, { method: 'DELETE' })}>Remove</button></div>`)}${open !== 'calendar' && html`<div><button class="text-action" onClick=${() => { setOpen('calendar'); setError(''); }}>Add another</button></div>`}</div>`}
@@ -1284,6 +1288,7 @@ function HostedApps() {
       <button class="app-add" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
     </div>`)}</div>`}
     ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
+    <${ToolList} only="email" switches=${false}/>
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
       : data.apps.length ? html`<div class="apps-grid">${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
