@@ -161,3 +161,22 @@ async def test_a_screen_only_update_reports_the_new_version(tmp_path, monkeypatc
     except asyncio.CancelledError:
         pass
     assert not exits and bot.RUNNING_REV == screens  # no restart, and check-ins say the new version
+
+
+def test_an_update_never_restarts_ken_right_after_a_message(monkeypatch):
+    import bot
+    monkeypatch.setattr(bot.ENGINE, "busy", lambda: False)
+    now = bot.time.monotonic()
+    monkeypatch.setattr(bot, "LAST_INCOMING", now - 30)  # a video came in 30 s ago: still being taken in
+    assert bot.restart_would_cut_in()
+    monkeypatch.setattr(bot, "LAST_INCOMING", now - bot.HEARD_WAIT - 1)
+    assert not bot.restart_would_cut_in()
+    monkeypatch.setattr(bot.ENGINE, "busy", lambda: True)
+    assert bot.restart_would_cut_in()
+
+
+async def test_every_telegram_message_is_heard(monkeypatch):
+    import bot
+    monkeypatch.setattr(bot, "LAST_INCOMING", 0.0)
+    await bot.heard(object(), object())
+    assert bot.time.monotonic() - bot.LAST_INCOMING < 5
