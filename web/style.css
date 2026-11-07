@@ -87,6 +87,7 @@
 .file-link { color: inherit; text-decoration: underline; text-decoration-color: var(--disabled); text-underline-offset: 3px; cursor: pointer; }
 .file-link:hover { text-decoration-color: currentColor; }
 .file-link code { text-decoration: inherit; }
+.msg blockquote { margin: var(--s2) 0; padding-left: var(--s3); border-left: 3px solid var(--line-strong); }
 .msg-media { margin-top: var(--s3); }
 .msg-media video, .msg-media img { display: block; max-width: min(100%, 360px); max-height: 480px; border-radius: var(--r-md); background: #000; }
 .msg-media img { cursor: zoom-in; }
