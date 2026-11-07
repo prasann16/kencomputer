@@ -136,6 +136,25 @@ def friendly_error(e: BaseException, brain: str) -> str:
     return explain_failure(e, brain)[0]
 
 
+def kill_children() -> None:
+    """Kill every process this one started, and theirs (AI sessions, their commands, browsers), at once. Where there's
+    no `ps` (Windows), nothing: closing the sessions stops them there."""
+    import signal
+    kids: dict[int, list[int]] = {}
+    for line in usage._run("ps", "-A", "-o", "pid=", "-o", "ppid=").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and all(x.isdigit() for x in parts):
+            kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    found, todo = [], list(kids.get(os.getpid(), []))
+    while todo:
+        pid = todo.pop()
+        found.append(pid)
+        todo += kids.get(pid, [])
+    for pid in found:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
 async def until_idle(session, work: Awaitable, limit: float = IDLE_LIMIT, first: float | None = None):
     """Await the brain's work, raising TimeoutError once it has been silent for `limit` seconds,
     and NoAnswer when the AI hasn't said anything at all `first` seconds after it was asked."""
@@ -1418,6 +1437,8 @@ class Engine:
         takes messages while it works, instead of waiting for it to finish."""
         if pid != HOME:
             self.get_agent(pid)
+        if self.is_off():
+            return False
         files = [f for f in (files or []) if f]
         if log_user:
             self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))
@@ -1576,6 +1597,8 @@ class Engine:
                       listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:
         """A scheduled job in a fresh session of its own, so nothing left over in the chat can steer
         it, and only its final answer reaches them, after `preface` (a caught-up job says it's late)."""
+        if self.is_off():
+            return ""
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         session = self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
@@ -1678,6 +1701,34 @@ class Engine:
                 await s.close()
             self.broadcast("chat.reset", pid)
         return saving
+
+    # The off switch: everything Ken is doing stops at once, mid-action (a reply deleting emails stops now, not after
+    # its next step), and nothing starts again (no reply, brief, job or background work) until they turn it back on.
+    # Their plan, memory and files are untouched.
+    def is_off(self) -> bool:
+        return (self.home / "switched-off").exists()
+
+    async def switch(self, on: bool) -> None:
+        note = self.home / "switched-off"
+        if on:
+            note.unlink(missing_ok=True)
+        else:
+            note.write_text(time.strftime("%Y-%m-%d %H:%M") + "\n")
+            kill_children()
+            for t in [*self.run_tasks.values(), *self.chat_tasks]:
+                if t is not asyncio.current_task():
+                    t.cancel()
+            sessions = [*self.chats.values(), *self.run_sessions.values()]
+            self.chats.clear()
+            for s in sessions:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(s.close(), 5)
+            for run in self.list_runs(active=True):
+                self._set_run(run["id"], status="stopped", finished=time.time(), summary="Stopped: Ken was turned off.")
+                self.emit("run.finished", project=run["project"], run=run["id"], status="stopped", title=run["title"], summary="Stopped: Ken was turned off.")
+            for pid in list(self.chat_locks):
+                self.broadcast("chat.busy", pid, busy=False)
+        self.broadcast("ken.power", on=on)
 
     async def _save_thread(self, pid: str, thread: list[dict]) -> None:
         """A cleared thread, read once more in a session of its own: what's worth keeping goes into memory, the way the
@@ -1800,6 +1851,8 @@ class Engine:
     def start_run(self, pid: str, title: str, prompt: str, source: str = "you", origin: int | None = None) -> dict:
         if pid != HOME:
             self.get_agent(pid)
+        if self.is_off():
+            raise ValueError("Ken is off. Turn it on first.")
         rid = uuid.uuid4().hex[:10]
         if origin or self.chat_origin:
             self.origins[rid] = origin or self.chat_origin

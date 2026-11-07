@@ -930,6 +930,9 @@ async def handle_prompt(update: Update, prompt: str, context: str = "", said: st
                         files: list[str] | None = None) -> None:
     """Telegram is one more window onto Ken's one conversation (the same one the app shows).
     A photo or file shows in the app as their message (`said`, the caption, with `files`)."""
+    if ENGINE.is_off():
+        await update.effective_message.reply_text("Ken is off. Turn it on in the app (Settings) to talk to it.")
+        return
     if asking_ai():
         # First contact on a brand-new Ken in the cloud: how it should think comes first (the app asks the same).
         if not FREE_REPLY.fullmatch((said if said is not None else prompt).strip()):
@@ -1697,6 +1700,10 @@ async def scheduler() -> None:
                     remove_job(job)  # its day passed while Ken was off
                     continue
                 if _job_due(job, now, state):
+                    if ENGINE.is_off():
+                        state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)  # skipped, not caught up later
+                        JOB_STATE_FILE.write_text(json.dumps(state))
+                        continue
                     if USAGE.disk_full:
                         continue  # the disk is nearly full: nothing runs until they've said what to do (see Usage.disk_check)
                     if asking_ai():
@@ -1736,6 +1743,8 @@ def next_job_time(jobs: list[dict], state: dict, now: float, hours: int = 48) ->
 
 
 def upcoming_job() -> float | None:
+    if ENGINE.is_off():
+        return None  # Ken in the cloud: nothing to wake the computer for
     try:
         state = json.loads(JOB_STATE_FILE.read_text())
     except Exception:

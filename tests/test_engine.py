@@ -685,3 +685,21 @@ async def test_clearing_a_chat_files_what_mattered_into_memory(engine):
     asks = len(engine.brain.asks)
     assert not await engine.reset_chat(HOME, clear=True)  # nothing they said: nothing to save
     assert len(engine.brain.asks) == asks
+
+
+async def test_the_off_switch_stops_everything_and_keeps_it_off(engine, monkeypatch):
+    import engine as engine_module
+    killed = []
+    monkeypatch.setattr(engine_module, "kill_children", lambda: killed.append(True))
+    run = engine.start_run(HOME, "Tidy the inbox", "delete old emails")
+    await engine.switch(False)
+    assert killed and engine.is_off()
+    assert engine._run_row(run["id"])["status"] == "stopped"
+    asks = len(engine.brain.asks)
+    assert not await engine.send_message(HOME, "hello")  # no replies
+    assert await engine.run_job(HOME, "morning brief") == ""  # no briefs or jobs
+    with pytest.raises(ValueError):
+        engine.start_run(HOME, "Again", "x")  # no background work
+    assert len(engine.brain.asks) == asks
+    await engine.switch(True)
+    assert not engine.is_off() and await engine.send_message(HOME, "hello")
