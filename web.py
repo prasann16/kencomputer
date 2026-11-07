@@ -236,7 +236,15 @@ class WebApp:
                       "hosted": hosted_web(), "usage": plan_usage(request),
                       "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
                       "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
-                      "logout_url": logout_url()})
+                      "logout_url": logout_url(), "off": self.engine.is_off()})
+
+    async def power(self, request):
+        """The off switch: {on: false} stops everything Ken is doing now and keeps it off; {on: true} turns it back on."""
+        on = (await self._body(request)).get("on")
+        if not isinstance(on, bool):
+            return _json({"error": "say on: true or false"}, 400)
+        await self.engine.switch(on)
+        return _json({"off": self.engine.is_off()})
 
     async def setup_status(self, request):
         return _json(self.setup.status() if self.setup else {
@@ -620,6 +628,8 @@ class WebApp:
 
     async def post_message(self, request):
         pid = self._pid(request)
+        if self.engine.is_off():
+            return _json({"error": "Ken is off. Turn it on to talk to it."}, 409)
         if not self._brain_connected(pid):
             return _json({"error": f"Connect {self.engine.backend(pid).capitalize()} in Settings → AI accounts first."}, 400)
         b = await self._body(request)
@@ -1061,6 +1071,7 @@ class WebApp:
         r.add_get("/", self.index)
         r.add_get("/login", self.login)
         r.add_get("/api/meta", self.meta)
+        r.add_post("/api/power", self.power)
         r.add_get("/api/models", self.model_catalog)
         r.add_get("/api/chats", self.chats)
         r.add_get("/api/library", self.library)
