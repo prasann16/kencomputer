@@ -223,16 +223,16 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     assert quiets == [True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes
 
 
-async def test_hosted_ken_never_copies_an_app_chat_to_telegram(monkeypatch):
+async def test_hosted_ken_copies_an_app_chat_to_telegram_silently(monkeypatch):
     import asyncio
     from types import SimpleNamespace
     import bot
     from engine import HOME
     sent = []
     async def send_outbound(b, text, reply_to=None, quiet=False):
-        sent.append(text)
+        sent.append((text, "quiet" if quiet else "buzz"))
     async def send_message(chat_id, text, **kw):
-        sent.append(text)
+        sent.append((text, "quiet" if kw.get("disable_notification") else "buzz"))
     async def flush_outbox(b, chat_id, quiet=False):
         pass
     monkeypatch.setattr(bot, "send_outbound", send_outbound)
@@ -251,7 +251,10 @@ async def test_hosted_ken_never_copies_an_app_chat_to_telegram(monkeypatch):
     for _ in range(50):
         await asyncio.sleep(0.01)
     task.cancel()
-    assert sent == ["All done."]  # in the app, nothing; once they talk on Telegram, news goes there
+    # One conversation in both places, one place buzzing: in the app, Telegram gets it all silently; once they
+    # talk on Telegram, news buzzes there.
+    assert sent == [("💻 edit this", "quiet"), ("On it.", "quiet"), ("Your reel is ready.", "quiet"),
+                    ("<b>Ken wants your OK</b>\nPost it?", "quiet"), ("All done.", "buzz")]
 
 
 async def test_a_photo_from_the_phone_shows_in_the_app_as_their_message(monkeypatch):
