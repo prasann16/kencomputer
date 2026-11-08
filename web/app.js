@@ -1421,8 +1421,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['account', 'Account']];
-  const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : tab;
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ...(HOSTED ? [] : [['tools', 'Tools']]), ['account', 'Account']];
+  // Ken's site has no Tools tab: Apps connects everything there. An old #/settings/tools link opens Apps.
+  const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : HOSTED && tab === 'tools' ? 'apps' : tab;
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
