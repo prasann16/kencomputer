@@ -1539,6 +1539,16 @@ function ReportProblem({ onClose }) {
       <p class="np-note">Anything urgent? Email <a class="text-action" href=${'mailto:' + HELP_EMAIL}>${HELP_EMAIL}</a>${FOUNDER_TELEGRAM && html` or <a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">message the founder on Telegram</a>`}.</p>`}<//>`;
 }
 
+// Settings → AI, under their own Claude or ChatGPT: how much of each limit is used and when it resets. The numbers
+// come with Ken's replies, so showing them costs nothing; before the first reply there's nothing to show yet.
+function PlanLimits({ windows, label }) {
+  if (!windows.length) return html`<div class="ai-limits"><span class="ai-note">How much of your ${label} plan is used shows here after Ken’s next reply.</span></div>`;
+  return html`<div class="ai-limits">${windows.map((w) => html`<div class=${'ai-limit' + (w.near ? ' near' : '')}>
+    <span class="ai-limit-name">${w.label}</span>
+    <span class="ai-bar" role="meter" aria-label=${`${w.label} limit used`} aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(w.pct ?? 0)}><i style=${`width:${Math.min(100, Math.round(w.pct ?? 0))}%`}></i></span>
+    <span class="ai-limit-text">${w.pct == null ? 'Near the limit' : `${Math.round(w.pct)}%`} · resets ${w.reset}</span></div>`)}</div>`;
+}
+
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
   useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
@@ -1557,7 +1567,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const setTab = onTab;
   useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
-  const [privacy, setPrivacy] = useState(null);
+  const [privacy, setPrivacy] = useState(null), [limits, setLimits] = useState(null);
+  useEffect(() => { api('/api/limits').then(setLimits).catch(() => {}); }, []);  // their plans' limits, from replies (no AI call)
   useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); if (!HOSTED) api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
@@ -1585,7 +1596,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
       const rows = [['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => html`<div>${name(id, label)}<span class="ai-state">${own[id] ? `Connected${inUse === id ? ' · in use' : ''}` : 'Not connected'}</span>
-        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span></div>`);
+        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
+        ${own[id] && limits && html`<${PlanLimits} windows=${limits[id] || []} label=${label}/>`}</div>`);
       const usage = meta.usage || {};
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
         <span class="ai-actions">${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);

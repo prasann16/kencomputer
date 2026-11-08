@@ -229,6 +229,8 @@ USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, v
               jobs=lambda: [r["title"] for r in ENGINE.list_runs(active=True) if r["status"] == "running"])
 BRAINS["claude"].on_rate_limit = USAGE.record
 BRAINS["codex"].on_rate_limit = USAGE.record_codex
+ENGINE.plan_limits = USAGE.limits
+ENGINE.limit_resets = USAGE.resets
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()

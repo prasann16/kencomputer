@@ -626,6 +626,10 @@ class WebApp:
         choices = await asyncio.gather(*(self.engine.model_choices(name) for name in names)) if self.engine.model_choices else [[] for _ in names]
         return _json(dict(zip(names, choices)))
 
+    async def plan_limits(self, request):
+        """Their own Claude and ChatGPT plans' limits, as last read from replies (costs no AI calls)."""
+        return _json(self.engine.plan_limits() if self.engine.plan_limits else {})
+
     async def post_message(self, request):
         pid = self._pid(request)
         if self.engine.is_off():
@@ -1073,6 +1077,7 @@ class WebApp:
         r.add_get("/api/meta", self.meta)
         r.add_post("/api/power", self.power)
         r.add_get("/api/models", self.model_catalog)
+        r.add_get("/api/limits", self.plan_limits)
         r.add_get("/api/chats", self.chats)
         r.add_get("/api/library", self.library)
         r.add_post("/api/chats", self.new_chat)
