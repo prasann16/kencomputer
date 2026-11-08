@@ -244,3 +244,27 @@ async def test_the_web_app_takes_a_batch(engine, aiohttp_client, hosted):  # noq
     assert (await client.post(f"/api/telegram-files/{'a' * 24}", json={"files": ["a.MOV", "../b"]})).status == 400
     assert (await client.post(f"/api/telegram-files/{'a' * 24}", json={"files": ["a.MOV", "b.MOV"]})).status == 200
     assert calls == [[engine.files_dir(HOME) / "a.MOV", engine.files_dir(HOME) / "b.MOV"]]
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+async def test_a_big_video_plays_from_a_small_streaming_ready_copy(engine, aiohttp_client, hosted, tmp_path):  # noqa: F811
+    """Phones choke on big originals saved without faststart; ?preview=1 serves a small H.264 copy that starts at once,
+    made once and kept. Without it (saving, sharing) the original comes back untouched."""
+    import subprocess
+    app, client = await signed_in(engine, aiohttp_client)
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    big = engine.files_dir(HOME) / "reel.mov"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30:duration=2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(big)], check=True)  # no faststart: moov at the end
+    original = big.read_bytes()
+    r = await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    preview = await r.read()
+    assert r.status == 200 and preview != original
+    assert 0 <= preview.find(b"moov") < preview.find(b"mdat")  # streaming-ready
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0", "-"], input=preview, capture_output=True, check=True).stdout.decode().strip()
+    assert probe == "1280,720"
+    assert len(list(app.previews.glob("*.mp4"))) == 1
+    await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    assert len(list(app.previews.glob("*.mp4"))) == 1  # made once
+    assert await (await client.get(f"/api/chats/{HOME}/files/reel.mov")).read() == original  # saving gets the original
