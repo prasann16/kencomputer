@@ -35,8 +35,11 @@ rendered on a guess. In the chat:
    what they asked, `plan.md`. Say it's running and they can keep talking to you. The job follows `plan.md`: steps 2
    to 5 carry it out, and anything it couldn't do as planned goes in its message at the end.
 
-They can skip this: "just do it", "no need to check", or a style note that says so. A change to a reel already made
-("bigger captions", "drop that bit") needs no plan: do it.
+Only words that say to skip the plan skip it: "just do it", "no need to check", "don't send me a plan", in this
+message or written in your memory. Their editing rules and style notes ("few cuts", "no zooms") are what goes
+into the plan, never a reason to skip it. A message that sends the plan and also says the edit is running is wrong:
+the job starts only after their reply. A change to a reel already made ("bigger captions", "drop that bit") needs no
+plan: do it.
 
 **Captions are their exact words.** Never shorten, tidy or paraphrase what they said. Before the cut, read every
 word of `source.words.json` once against the transcript and fix what Whisper got wrong: names, product names,
