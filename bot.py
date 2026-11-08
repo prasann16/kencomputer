@@ -2250,12 +2250,34 @@ async def model_choices(backend):
         return list(CREDIT_MODELS)
     if ACCOUNTS is not None and backend not in usable_brains():
         return []
-    # The list comes from the account's own /v1/models; refresh it daily as models change.
+    # The list comes from the account's own /v1/models; refresh it daily as models change, and at once when the AI
+    # login changes (Ken AI credits list two models; their own Claude lists every model it offers).
     path = models_file(backend)
-    stale = not path.exists() or time.time() - path.stat().st_mtime > 86400
-    if stale or not available_models(backend):
+    stamp, login = path.with_name(path.name + ".from"), models_login(backend)
+    try:
+        listed_for = stamp.read_text().strip()
+    except OSError:
+        listed_for = ""
+    before = path.stat().st_mtime if path.exists() else 0
+    stale = not before or time.time() - before > 86400
+    if stale or not available_models(backend) or listed_for != login:
         await refresh_models_file(backend=backend)
+        if path.exists() and path.stat().st_mtime != before:  # only a list that came back is marked as this login's
+            stamp.write_text(login + "\n")
     return available_models(backend)
+
+
+def models_login(backend) -> str:
+    """Which login the model list belongs to, as a short fingerprint (never the secret itself)."""
+    if backend == "codex":
+        return "codex"
+    import hashlib
+    for kind, value in (("key", os.environ.get("ANTHROPIC_API_KEY", "")),
+                        ("included", os.environ.get("ANTHROPIC_AUTH_TOKEN", "")),
+                        ("oauth", os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))):
+        if value:
+            return f"{kind}:{hashlib.sha256(value.encode()).hexdigest()[:12]}"
+    return "signed-in"
 
 
 async def model(arg: str = "") -> dict:
