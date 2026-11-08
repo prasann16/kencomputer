@@ -1417,7 +1417,7 @@ function JobList({ jobs, change }) {
   </div>`)}</div>`;
 }
 
-function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
+function Settings({ onClose, onTab, toast, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
   useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
   const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
@@ -1434,10 +1434,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
 
   const setTab = onTab;
   useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
-  const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
   const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
-  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
+  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
@@ -1446,7 +1445,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['account', 'Account']];
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['account', 'Account']];
   const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : tab;
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
@@ -1474,7 +1473,6 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', 'Phone', HOSTED ? html`<${HostedTelegram}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
-  ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
   ${tab !== 'feedback' && section('account', 'Account', html`<div class="tool-list">
     ${me?.signedIn && row(icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'), me.name || 'Signed in', me.email,
       meta.logout_url && html`<a class="btn sm light" href=${meta.logout_url}>Sign out</a>`)}
@@ -2035,7 +2033,7 @@ function App() {
     ${preview && html`<${Safe} where="PreviewModal"><${PreviewModal} file=${preview} onClose=${() => setPreview(null)} toast=${toast}/><//>`}
     ${bigFile && html`<${Safe} where="SendBigFile"><${SendBigFile} key=${bigFile} token=${bigFile} onClose=${() => setBigFile('')}/><//>`}
     ${talking && html`<${Safe} where="VoiceMode"><${VoiceMode} onClose=${() => { setTalking(false); checkTalk(); }}/><//>`}
-    ${connections && html`<${Safe} where="Settings"><${Settings} brain=${model?.backend} tab=${connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings} onAddTool=${(name)=>{location.hash='#/';send(`Add ${name} as a tool for you. Set it up whichever way works best (an MCP server, a command-line tool or its API), and ask me for anything you need, one thing at a time. Keys go in Keys, not in this chat.`,[],undefined,'home').catch((e)=>toast(e.message));}}/><//>`}
+    ${connections && html`<${Safe} where="Settings"><${Settings} brain=${model?.backend} tab=${connections} onTab=${(t) => history.replaceState(null, '', '#/settings/' + t) || setConnections(t)} meta=${meta} setup=${setup} onConnected=${accountConnected} toast=${toast} onClose=${closeSettings}/><//>`}
     ${projectDialog?.kind==='keys' && html`<${Safe} where="About"><${About} pid=${projectDialog.project.id} onPreview=${setPreview} onClose=${()=>setProjectDialog(null)}/><//>`}
     ${projectDialog?.kind==='rename' && html`<${Safe} where="RenameProject"><${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/><//>`}
     ${projectDialog?.kind==='remove' && html`<${Safe} where="RemoveProject"><${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/><//>`}
