@@ -258,7 +258,9 @@ HOSTING_FILE = KEN_HOME / "hosting.md"
 SETUP_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools", "calendar", "email", "phone")
 # Getting to know them: onboarding stays in Ken's instructions until each of these is done or declined.
 ONBOARDING_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools")
-TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
+# Bots can upload up to 50 MB through Telegram's servers; through Ken's own Bot API server (deploy/telegram-bot-api) up
+# to 2 GB, and the host says so with TELEGRAM_UPLOAD_MB.
+TELEGRAM_FILE_LIMIT = int(os.environ.get("TELEGRAM_UPLOAD_MB") or 50) * 1024 * 1024
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
