@@ -1943,15 +1943,39 @@ async def start_engine() -> WebApp | None:
                 await asyncio.sleep(1)
 
 
+# Hosted Ken has two places to talk, the phone app and Telegram. It answers in the one they used last and leaves the
+# other quiet, so a chat in the app never buzzes Telegram and a chat on Telegram never pushes to the app.
+LAST_PLACE = ""  # "app" or "telegram"; "" until they've said something, then news goes to both
+PLACES = {"app": "app", "voice": "app", "telegram": "telegram"}
+
+
+def heard_from(ev: dict) -> None:
+    global LAST_PLACE
+    if ev.get("type") == "message" and ev.get("role") == "you" and ev.get("via") in PLACES:
+        LAST_PLACE = PLACES[ev["via"]]
+
+
+def two_places() -> bool:
+    return bool(os.environ.get("KEN_NOTIFY_URL")) and bool(ALLOWED_USER_ID)
+
+
+def elsewhere(place: str) -> bool:
+    """They're talking to Ken in the other place, so this one stays quiet."""
+    return two_places() and LAST_PLACE not in ("", place)
+
+
 async def notify_telegram(app) -> None:
     """Approvals reach the phone with buttons; an agent's finished run as one line; and what's said
     in the app shows on the phone too, so it's one conversation wherever you look."""
     q = ENGINE.subscribe()
     while True:
         ev = await q.get()
+        heard_from(ev)
         if not ALLOWED_USER_ID:
             continue
         try:
+            if elsewhere("telegram") and not (ev["type"] == "message" and ev.get("job")):
+                continue
             if ev["type"] == "approval.created":
                 a = ev["approval"]
                 name = "Ken" if a["project"] == HOME else ENGINE.get_agent(a["project"])["name"]
@@ -1969,7 +1993,8 @@ async def notify_telegram(app) -> None:
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
                                     reply_to=ev.get("origin"))
-            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
+            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background") \
+                    and not (two_places() and ev.get("via") == "app"):  # the phone app is right there: no copy
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
                 quiet = ev.get("via") == "app"  # they're at the Mac: it shows on the phone without a buzz
                 if ev.get("role") == "you":
@@ -1993,7 +2018,10 @@ async def notify_app() -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         while True:
             ev = await q.get()
+            heard_from(ev)
             try:
+                if elsewhere("app") and not ev.get("job"):  # a scheduled job's result still reaches the site
+                    continue
                 pid = ev.get("project") or HOME
                 if ev["type"] == "approval.created":
                     pid = ev["approval"]["project"]

@@ -67,3 +67,30 @@ async def test_what_buzzes_reaches_the_app(monkeypatch):
     ]
     assert "job" not in FakeClient.sent[0][1] and "full_text" not in FakeClient.sent[0][1]  # a plain reply
     assert all(s[0] == "https://example.test/app/notify" and s[2] == {"Authorization": "Bearer t0k"} for s in FakeClient.sent)
+
+
+async def test_a_chat_on_telegram_never_pushes_to_the_app(monkeypatch):
+    engine = FakeEngine()
+    monkeypatch.setattr(bot, "ENGINE", engine)
+    monkeypatch.setattr(bot.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 1)
+    monkeypatch.setattr(bot, "LAST_PLACE", "")
+    monkeypatch.setenv("KEN_NOTIFY_URL", "https://example.test/app/notify")
+    monkeypatch.setenv("KEN_NOTIFY_TOKEN", "t0k")
+    FakeClient.sent = []
+    task = asyncio.create_task(bot.notify_app())
+    for ev in (
+        {"type": "message", "project": "home", "role": "you", "text": "?", "via": "telegram"},
+        {"type": "message", "project": "home", "role": "ken", "text": "Answered on Telegram", "via": "telegram"},
+        {"type": "approval.created", "project": "home", "approval": {"project": "home", "title": "Post it?"}},
+        {"type": "message", "project": "home", "role": "ken", "text": "Brief", "job": {"name": "b", "label": "Brief"}},
+        {"type": "message", "project": "home", "role": "you", "text": "hi", "via": "app"},
+        {"type": "message", "project": "home", "role": "ken", "text": "Back in the app", "via": "app"},
+    ):
+        engine.q.put_nowait(ev)
+    for _ in range(50):
+        if len(FakeClient.sent) == 2:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    assert [s[1].get("text") for s in FakeClient.sent] == ["Brief", "Back in the app"]

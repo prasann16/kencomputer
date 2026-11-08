@@ -223,6 +223,37 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     assert quiets == [True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes
 
 
+async def test_hosted_ken_never_copies_an_app_chat_to_telegram(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    import bot
+    from engine import HOME
+    sent = []
+    async def send_outbound(b, text, reply_to=None, quiet=False):
+        sent.append(text)
+    async def send_message(chat_id, text, **kw):
+        sent.append(text)
+    async def flush_outbox(b, chat_id, quiet=False):
+        pass
+    monkeypatch.setattr(bot, "send_outbound", send_outbound)
+    monkeypatch.setattr(bot, "flush_outbox", flush_outbox)
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 1)
+    monkeypatch.setattr(bot, "LAST_PLACE", "")
+    monkeypatch.setenv("KEN_NOTIFY_URL", "https://example.test/app/notify")
+    task = asyncio.create_task(bot.notify_telegram(SimpleNamespace(bot=SimpleNamespace(send_message=send_message))))
+    await asyncio.sleep(0)
+    bot.ENGINE.emit("message", project=HOME, role="you", text="edit this", via="app")
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="On it.", via="app")
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="Your reel is ready.", via="background")
+    bot.ENGINE.emit("approval.created", project=HOME, approval={"id": "a1", "project": HOME, "title": "Post it?", "body": ""})
+    bot.ENGINE.emit("message", project=HOME, role="you", text="?", via="telegram")
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="All done.", via="background")
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+    task.cancel()
+    assert sent == ["All done."]  # in the app, nothing; once they talk on Telegram, news goes there
+
+
 async def test_a_photo_from_the_phone_shows_in_the_app_as_their_message(monkeypatch):
     from types import SimpleNamespace
     import bot
