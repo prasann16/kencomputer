@@ -648,3 +648,27 @@ def test_a_cloud_ken_is_never_told_to_keep_a_mac_awake(monkeypatch):
     monkeypatch.delenv("KEN_PLATFORM")
     monkeypatch.setattr("sys.platform", "darwin")
     assert "COFFEE keeps this" in bot.build_system()  # the Mac still has its coffee cup
+
+
+async def test_the_model_list_follows_the_ai_login(monkeypatch, clean_ai, tmp_path):
+    """Credits list two models; once their own Claude is connected the menu shows their account's models at once,
+    not a day later (a new Ken's menu kept Sonnet and Haiku only)."""
+    import bot
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "own")
+    monkeypatch.setattr(bot, "ACCOUNTS", _Accounts(claude=True))
+    monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    monkeypatch.setattr(bot, "models_file", lambda backend: tmp_path / f"models-{backend}")
+    (tmp_path / "models-claude").write_text("claude-sonnet-5-5\nclaude-haiku-5-5\n")  # written while on credits
+    calls = []
+
+    async def refresh(backend=None):
+        calls.append(backend)
+        (tmp_path / "models-claude").write_text("claude-opus-5-5\nclaude-sonnet-5-5\nclaude-haiku-5-5\n")
+    monkeypatch.setattr(bot, "refresh_models_file", refresh)
+    assert await bot.model_choices("claude") == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+    assert await bot.model_choices("claude") == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+    assert calls == ["claude"]  # the same login doesn't fetch again
+    assert "own" not in (tmp_path / "models-claude.from").read_text()  # a fingerprint, never the token
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "another")
+    await bot.model_choices("claude")
+    assert calls == ["claude", "claude"]

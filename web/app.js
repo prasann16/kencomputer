@@ -15,8 +15,17 @@ function showFailure(message) {
   }
   const reload = Object.assign(document.createElement('button'), { textContent: 'Reload', onclick: () => location.reload() });
   console.error(message);
-  bar.replaceChildren(document.createTextNode('Something went wrong on this page. '), reload);
+  remember(message);
+  const report = openReport && Object.assign(document.createElement('button'), { textContent: 'Report it', onclick: () => openReport() });
+  bar.replaceChildren(document.createTextNode('Something went wrong on this page. '), reload, ...(report ? [report] : []));
 }
+// The last few errors on this page go with a problem report, so a bug can be found without asking what happened.
+const RECENT_ERRORS = [];
+function remember(message) {
+  RECENT_ERRORS.push(`${new Date().toISOString().slice(11, 19)} ${String(message).slice(0, 600)}`);
+  if (RECENT_ERRORS.length > 5) RECENT_ERRORS.shift();
+}
+let openReport = null;  // set by App: opens Report a problem from anywhere
 addEventListener('error', (e) => { reportUiError(e.error || e.message, 'page'); showFailure(e.message); });
 // A mouse click (on a button, tab or link) shouldn't leave a focus ring behind (it shows up on the next key press, like ⌘\).
 // Keyboard presses (detail 0) keep focus, so tabbing still shows where you are.
@@ -28,6 +37,7 @@ function reportUiError(error, where) {
   console.error(`Ken page (${where}):`, error);
   try {
     const message = String(error?.stack || error?.message || error).slice(0, 4000);
+    remember(message);
     fetch('/api/ui-error', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ where, message }) }).catch(() => {});
   } catch {}
 }
@@ -1012,10 +1022,10 @@ function PhoneButton({ linked, onOpen }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
 }
 
-function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onProjectMenu, jobs = [], onJobs, phone, onPhone }) {
+function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone }) {
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // Connect Claude or ChatGPT with their own subscription: the same screen in the Mac app and in the browser.
@@ -1417,6 +1427,118 @@ function JobList({ jobs, change }) {
   </div>`)}</div>`;
 }
 
+// Report a problem (the flag in the header, "Report it" on a page error, Settings → Send feedback): words, plus on
+// Ken's site a screenshot or a few seconds of the screen, taken right here, or pictures from their files. The page's
+// address, the browser and recent errors go with it. The Mac app sends the words.
+const REPORT_MAX = 15 * 1024 * 1024, REPORT_FILES = 4, RECORD_SECONDS = 30;
+const sizeLabel = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+// The browser asks which tab, window or screen to share, this tab first.
+const shareScreen = () => navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'browser', frameRate: 15 }, audio: false,
+  preferCurrentTab: true, selfBrowserSurface: 'include', surfaceSwitching: 'exclude' });
+const declined = (e) => e?.name === 'NotAllowedError' || e?.name === 'AbortError';
+function ReportProblem({ onClose }) {
+  const [text, setText] = useState(''), [email, setEmail] = useState(''), [files, setFiles] = useState([]);
+  const [mode, setMode] = useState(''), [seconds, setSeconds] = useState(0);  // mode: '' | 'shot' (dialog hidden) | 'recording'
+  const [progress, setProgress] = useState(null), [sent, setSent] = useState(false), [error, setError] = useState('');
+  const stopRef = useRef(null), picker = useRef(null), filesRef = useRef(files);
+  filesRef.current = files;
+  useEffect(() => () => { stopRef.current?.(); filesRef.current.forEach((f) => f.url.startsWith('blob:') && URL.revokeObjectURL(f.url)); }, []);
+  const capture = HOSTED && !!navigator.mediaDevices?.getDisplayMedia;
+  // Pictures preview as data: URLs (the page only shows images from itself or data:); recordings play from blob:.
+  const preview = (file) => file.type.startsWith('video/') ? Promise.resolve(URL.createObjectURL(file))
+    : new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => ok(''); r.readAsDataURL(file); });
+  const add = async (list) => {
+    const ready = await Promise.all(list.map(async (file) => ({ file, url: await preview(file) })));
+    setFiles((now) => [...now, ...ready].slice(0, REPORT_FILES));
+  };
+  const remove = (i) => setFiles((now) => { if (now[i].url.startsWith('blob:')) URL.revokeObjectURL(now[i].url); return now.filter((_, k) => k !== i); });
+  const total = files.reduce((n, f) => n + f.file.size, 0), full = files.length >= REPORT_FILES;
+  const stamp = () => new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+  // The screen without this dialog on it: hidden while the picture is taken.
+  const screenshot = async () => {
+    setError('');
+    let stream;
+    try {
+      stream = await shareScreen();
+      setMode('shot');
+      const video = Object.assign(document.createElement('video'), { srcObject: stream, muted: true, playsInline: true });
+      await video.play();
+      await new Promise((ok) => setTimeout(ok, 500));
+      const canvas = Object.assign(document.createElement('canvas'), { width: video.videoWidth, height: video.videoHeight });
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const blob = await new Promise((ok) => canvas.toBlob(ok, 'image/png'));
+      await add([new File([blob], `screenshot-${stamp()}.png`, { type: 'image/png' })]);
+    } catch (e) { if (!declined(e)) setError('Couldn’t take a screenshot. Add one from your files instead.'); }
+    finally { stream?.getTracks().forEach((t) => t.stop()); setMode(''); }
+  };
+  // Up to 30 seconds of the screen while they show what went wrong; a small Stop pill stays on top.
+  const record = async () => {
+    setError('');
+    let stream;
+    try { stream = await shareScreen(); }
+    catch (e) { if (!declined(e)) setError('Couldn’t record the screen. Add a video from your files instead.'); return; }
+    const type = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    const rec = new MediaRecorder(stream, { ...(type && { mimeType: type }), videoBitsPerSecond: 1500000 });
+    const parts = [];
+    let timer;
+    rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data); };
+    rec.onstop = () => {
+      clearInterval(timer);
+      stream.getTracks().forEach((t) => t.stop());
+      stopRef.current = null;
+      const kind = (rec.mimeType || type || 'video/webm').split(';')[0];
+      if (parts.length) add([new File(parts, `recording-${stamp()}.${kind === 'video/mp4' ? 'mp4' : 'webm'}`, { type: kind })]);
+      setMode('');
+    };
+    const stop = () => { if (rec.state !== 'inactive') rec.stop(); };
+    stopRef.current = stop;
+    stream.getVideoTracks()[0].addEventListener('ended', stop);  // "Stop sharing" in the browser's own bar
+    const began = Date.now();
+    setSeconds(0); setMode('recording');
+    timer = setInterval(() => { const s = Math.floor((Date.now() - began) / 1000); setSeconds(s); if (s >= RECORD_SECONDS) stop(); }, 250);
+    rec.start(1000);
+  };
+  const send = async () => {
+    setError(''); setProgress(0);
+    try {
+      if (HOSTED) {
+        const fd = new FormData();
+        fd.append('text', text);
+        fd.append('context', JSON.stringify({ page: location.href, browser: navigator.userAgent, screen: `${innerWidth}×${innerHeight}`, errors: RECENT_ERRORS }));
+        for (const f of files) fd.append('file', f.file, f.file.name);
+        await sendWithProgress('/api/feedback', fd, setProgress);
+      } else await api('/api/feedback', { json: { text, email } });
+      setSent(true);
+    } catch (e) { setError(e.message); } finally { setProgress(null); }
+  };
+  if (mode === 'shot') return null;
+  if (mode === 'recording') return html`<div class="rec-pill" role="status"><i></i><span>Recording ${mmss(seconds)} / ${mmss(RECORD_SECONDS)}</span><button class="btn sm primary" onClick=${() => stopRef.current?.()}>Stop</button></div>`;
+  const glyph = (d) => html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${d}/></svg>`;
+  return html`<${Modal} title=${sent ? 'Thanks, it’s sent' : 'Report a problem'} onClose=${onClose} className="report" closeX>${sent
+    ? html`<p class="np-help">It’s on its way to the people who make Ken.${HOSTED ? ' We reply to the email you signed in with.' : ''}</p>
+      <div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
+    : html`<p class="np-help">A bug, an idea, something you’d love Ken to do.${capture ? ' A screenshot or a few seconds of your screen helps us see it.' : ''}</p>
+      <textarea class="np-input feedback-text" placeholder="What happened?" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+      ${!HOSTED && html`<input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${email} onInput=${(e) => setEmail(e.target.value)}/>`}
+      ${HOSTED && html`<div class="report-attach">
+        ${capture && html`<button class="btn sm" disabled=${full} onClick=${screenshot}>${glyph('M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z')}Screenshot</button>
+          <button class="btn sm" disabled=${full} onClick=${record}>${glyph('M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z')}Record screen</button>`}
+        <button class="btn sm" disabled=${full} onClick=${() => picker.current.click()}>${glyph('M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15.5 7')}${capture ? 'Add a file' : 'Add a screenshot or video'}</button>
+        <input ref=${picker} type="file" accept="image/*,video/*" multiple hidden onChange=${(e) => { add([...e.target.files]); e.target.value = ''; }}/>
+      </div>
+      ${files.length > 0 && html`<div class="report-files">${files.map((f, i) => html`<figure key=${f.file.name + f.file.size}>${f.file.type.startsWith('video/')
+        ? html`<video src=${f.url} muted playsinline controls preload="metadata"></video>` : html`<img src=${f.url} alt=${f.file.name}/>`}
+        <figcaption>${f.file.type.startsWith('video/') ? 'Recording' : 'Picture'} · ${sizeLabel(f.file.size)}</figcaption>
+        <button class="report-x" aria-label=${'Remove ' + f.file.name} onClick=${() => remove(i)}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></figure>`)}</div>`}
+      ${total > REPORT_MAX && html`<p class="connect-error" role="alert">That’s ${sizeLabel(total)}, more than 15 MB. Remove something or record a shorter clip.</p>`}
+      <p class="np-note">Sent with it: this page’s address, your browser and any recent errors on this page.</p>`}
+      ${progress !== null && files.length > 0 && html`<div class="upload-bar" role="progressbar" aria-valuenow=${Math.round(progress * 100)}><span style=${`width:${Math.round(progress * 100)}%`}></span></div>`}
+      ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+      <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${progress !== null || (!text.trim() && !files.length) || total > REPORT_MAX} onClick=${send}>${progress === null ? 'Send' : files.length ? `Sending… ${Math.round(progress * 100)}%` : 'Sending…'}</button></div>
+      <p class="np-note">Anything urgent? Email <a class="text-action" href=${'mailto:' + HELP_EMAIL}>${HELP_EMAIL}</a>${FOUNDER_TELEGRAM && html` or <a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">message the founder on Telegram</a>`}.</p>`}<//>`;
+}
+
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
   useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
@@ -1435,8 +1557,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const setTab = onTab;
   useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
-  const [privacy, setPrivacy] = useState(null), [note, setNote] = useState(''), [replyTo, setReplyTo] = useState(''), [sent, setSent] = useState(false), [sending, setSending] = useState(false);
-  const sendFeedback = async () => { setSending(true); setError(''); try { await api('/api/feedback', { json: { text: note, email: replyTo } }); setSent(true); setNote(''); } catch (e) { setError(e.message); } finally { setSending(false); } };
+  const [privacy, setPrivacy] = useState(null);
   useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); if (!HOSTED) api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
@@ -1475,7 +1596,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   ${section('phone', 'Phone', HOSTED ? html`<${HostedTelegram}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
   ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
-  ${tab !== 'feedback' && section('account', 'Account', html`<div class="tool-list">
+  ${section('account', 'Account', html`<div class="tool-list">
     ${me?.signedIn && row(icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'), me.name || 'Signed in', me.email,
       meta.logout_url && html`<a class="btn sm light" href=${meta.logout_url}>Sign out</a>`)}
     ${row(icon('M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z'), 'Appearance', 'Light, dark, or the same as your computer.',
@@ -1484,20 +1605,12 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       html`Helps fix bugs and shows which features get used: counts like “a job ran” and how much AI each one used. Never what you say, your files or your logins. <a class="text-action" href="https://kencomputer.dev/privacy" target="_blank" rel="noopener">Exactly what's sent</a>`,
       html`<input class="job-switch" type="checkbox" role="switch" aria-label=${privacy.share ? 'On' : 'Off'} checked=${privacy.share} onChange=${(e) => share(e.target.checked)}/>`)}
     ${row(icon('M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z'), 'Send feedback', 'A bug, an idea, something you’d love Ken to do. It goes straight to the people who make Ken.',
-      html`<button class="btn sm light" onClick=${() => { setTab('feedback'); setError(''); setSent(false); }}>Write</button>`)}
+      html`<button class="btn sm light" onClick=${() => openReport?.()}>Write</button>`)}
   </div>
   <div class="tool-list off-row">${row(icon('M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'), 'Turn Ken off', 'Stops everything Ken is doing right now, mid-step. No replies, briefs or jobs until you turn it back on.',
     !offAsk && html`<button class="btn sm off-btn" onClick=${() => setOffAsk(true)}>Turn off</button>`,
     offAsk && html`<div class="off-ask"><p>Your plan, memory and files are kept. Turn Ken on again from the app any time.</p>
       <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>`)}
-  ${tab === 'feedback' && html`<section class="sp-section" id="set-feedback"><h2>Send feedback</h2>${sent
-    ? html`<p class="np-help">Thanks, it's on its way to the people who make Ken.${HOSTED ? ' We reply to the email you signed in with.' : ''}</p>`
-    : html`<p class="np-help">A bug, an idea, something you'd love Ken to do: it goes straight to the people who make Ken.</p>
-      <textarea class="np-input feedback-text" placeholder="What's on your mind?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
-      ${!HOSTED && html`<input class="np-input" type="email" placeholder="Your email, if you'd like a reply (optional)" value=${replyTo} onInput=${(e) => setReplyTo(e.target.value)}/>`}
-      <div class="row np-actions"><button class="btn ghost" onClick=${() => setTab('account')}>Cancel</button><button class="btn primary" disabled=${sending || !note.trim()} onClick=${sendFeedback}>${sending ? 'Sending…' : 'Send'}</button></div>
-      <p class="np-note">Anything urgent? Email <a class="text-action" href=${'mailto:' + HELP_EMAIL}>${HELP_EMAIL}</a>.</p>
-      ${FOUNDER_TELEGRAM && html`<p class="np-note"><a class="text-action" href=${'https://t.me/' + FOUNDER_TELEGRAM} target="_blank" rel="noopener">Message the founder on Telegram</a></p>`}`}</section>`}
   ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   ${update && html`<footer class="sp-foot"><span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
@@ -1810,6 +1923,8 @@ function App() {
   useEffect(()=>{warm(pid);},[pid]);
   const toast = useCallback((m) => setToastMsg(m), []);
   notify = toast;
+  const [reporting, setReporting] = useState(false);
+  openReport = () => setReporting(true);
   const [docFile, setDocFile] = useState(null);
   showDoc = setDocFile;
   useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000 + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
@@ -2026,7 +2141,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : !setup && !setupFailed ? html`<section class="conversation-body"><div class="starting"><img src="/ken.svg" alt=""/><p class="quiet-copy" role="status">Starting Ken…</p></div></section>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>
@@ -2040,6 +2155,7 @@ function App() {
     ${projectDialog?.kind==='rename' && html`<${Safe} where="RenameProject"><${RenameProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{setProjectDialog(null);refreshChats();}}/><//>`}
     ${projectDialog?.kind==='remove' && html`<${Safe} where="RemoveProject"><${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/><//>`}
     ${newProject && html`<${Safe} where="NewAgent"><${NewAgent} setup=${setup} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/><//>`}
+    ${reporting && html`<${Safe} where="ReportProblem"><${ReportProblem} onClose=${() => setReporting(false)}/><//>`}
     ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
   </div>`;
 }
