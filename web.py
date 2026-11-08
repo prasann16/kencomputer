@@ -133,6 +133,8 @@ class WebApp:
     def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
         self.token = load_token(home)
+        self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
+        self._preview_locks: dict[str, asyncio.Lock] = {}
         self.rev = rev
         self.transcribe = transcribe
         self.commands = commands or {}
@@ -824,7 +826,49 @@ class WebApp:
             raise web.HTTPNotFound()
         if not path.is_file():
             raise web.HTTPNotFound()
+        if "preview" in request.query:
+            path = await self._preview(path)
         return self._serve(path, download="download" in request.query)
+
+    PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+
+    async def _preview(self, path: Path) -> Path:
+        """A video's watching copy (?preview=1): what Telegram does, for the app and the web. Full-quality originals are
+        big and often not saved streaming-ready, so a phone couldn't play them; this copy is at most 1280 px on its long
+        side, H.264, streaming-ready, a few MB. Made once per version of the file (a few seconds), then kept a week.
+        Saving or sharing still gets the original. A file that isn't a video, or that ffmpeg can't read, is served as is."""
+        if path.suffix.lower() not in self.PREVIEW_SUFFIXES or not shutil.which("ffmpeg"):
+            return path
+        import hashlib
+        st = path.stat()
+        key = hashlib.sha256(f"{path}:{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:20]
+        out = self.previews / f"{key}.mp4"
+        async with self._preview_locks.setdefault(key, asyncio.Lock()):
+            if out.exists():
+                return out
+            self.previews.mkdir(parents=True, exist_ok=True)
+            for old in self.previews.glob("*.mp4"):  # a week unwatched: gone (they're remade on demand)
+                if time.time() - old.stat().st_atime > 7 * 86400:
+                    old.unlink(missing_ok=True)
+            part = out.with_suffix(".part.mp4")
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-v", "error", "-i", str(path),
+                "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(part),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=300)
+            except asyncio.TimeoutError:
+                proc.kill()
+                part.unlink(missing_ok=True)
+                return path
+            if proc.returncode != 0 or not part.exists():
+                log.warning("video preview failed for %s: %s", path.name, (err or b"").decode(errors="replace")[-300:])
+                part.unlink(missing_ok=True)
+                return path
+            part.replace(out)
+            return out
 
     def _serve(self, path, download=False):
         from urllib.parse import quote
@@ -842,6 +886,8 @@ class WebApp:
             path = self.engine.file_path(pid, request.match_info["name"])
         except KeyError:
             raise web.HTTPNotFound()
+        if "preview" in request.query and path.is_file():
+            path = await self._preview(path)
         return self._serve(path)
 
     async def reset(self, request):
