@@ -1038,13 +1038,16 @@ class WebApp:
 
     async def resolve(self, request):
         b = await self._body(request)
-        if b.get("decision") not in ("approve", "skip"):
-            return _json({"error": "decision must be approve or skip"}, 400)
-        body = b.get("body")
+        if b.get("decision") not in ("approve", "skip", "revise"):
+            return _json({"error": "decision must be approve, skip or revise"}, 400)
+        body, note = b.get("body"), b.get("note")
         try:
-            a = await self.engine.resolve_approval(request.match_info["aid"], b["decision"], body if isinstance(body, str) else None)
+            a = await self.engine.resolve_approval(request.match_info["aid"], b["decision"], body if isinstance(body, str) else None,
+                                                   note=note if isinstance(note, str) else "")
         except KeyError:
             raise web.HTTPNotFound()
+        except ValueError as e:
+            return _json({"error": str(e)}, 400)
         return _json(a)
 
     async def voice(self, request):

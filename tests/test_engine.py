@@ -260,6 +260,57 @@ async def test_approve_starts_work_and_result_lands_in_chat(engine):
     assert engine.get_approval(b["id"])["status"] == "skipped"
 
 
+async def test_review_queue_proof_send_back_and_judgment(engine, tmp_path):
+    engine.create_agent("MyReader")
+    shot = engine.agents_dir / "myreader" / "files" / "after.png"
+    shot.write_bytes(b"png")
+    a = engine.create_approval("myreader", "merge", "Offline badge", "Adds the badge", "merge feat/offline",
+                               media=[str(shot), "/etc/passwd", str(tmp_path / "missing.png")], link="feat/offline")
+    assert a["media"] == [str(shot.resolve())] and a["link"] == "feat/offline"
+    assert engine.pending_approvals()[0]["media"] == [str(shot.resolve())]
+    with pytest.raises(ValueError):
+        await engine.resolve_approval(a["id"], "revise")  # sending back needs a reason
+    back = await engine.resolve_approval(a["id"], "revise", note="badge overlaps the title on small screens")
+    await settle(engine)
+    assert back["status"] == "revised" and back["note"].startswith("badge overlaps")
+    run = engine.list_runs(project="myreader")[0]
+    assert run["title"] == "Rework: Offline badge"
+    assert "badge overlaps the title" in run["prompt"] and "Adds the badge" in run["prompt"]
+    b = engine.create_approval("myreader", "merge", "Offline badge v2", "Fixed")
+    await engine.resolve_approval(b["id"], "approve", note="ship it, nice")
+    await settle(engine)
+    assert "Their note: ship it, nice" in engine.list_runs(project="myreader")[0]["prompt"]
+    judgment = (engine.memory_dir("myreader") / "judgment.md").read_text()
+    assert judgment.splitlines()[0].startswith("How they decide")
+    assert 'Sent back (merge): Offline badge — "badge overlaps' in judgment
+    assert 'Approved (merge): Offline badge v2 — "ship it, nice"' in judgment
+    assert "judgment.md" in engine.system("myreader")
+
+
+async def test_approval_request_carries_proof(engine):
+    engine.create_agent("MyReader")
+    shot = engine.agents_dir / "myreader" / "files" / "demo.mp4"
+    shot.write_bytes(b"mp4")
+    engine.handle_request({"type": "approval", "agent": "myreader", "kind": "merge", "title": "Ship",
+                           "body": "b", "media": [str(shot)], "link": "https://preview.example"})
+    a = engine.pending_approvals()[0]
+    assert a["media"] == [str(shot.resolve())] and a["link"] == "https://preview.example"
+
+
+async def test_send_back_over_the_api(engine, tmp_path, aiohttp_client):
+    from web import WebApp
+
+    app = WebApp(engine, tmp_path, rev="abc")
+    client = await aiohttp_client(app.build())
+    await client.get(f"/login?token={app.token}", allow_redirects=False)
+    engine.create_agent("MyReader")
+    a = engine.create_approval("myreader", "post", "Launch post", "We launched")
+    assert (await client.post(f"/api/approvals/{a['id']}", json={"decision": "revise"})).status == 400
+    r = await client.post(f"/api/approvals/{a['id']}", json={"decision": "revise", "note": "shorter"})
+    assert r.status == 200 and (await r.json())["status"] == "revised"
+    await settle(engine)
+
+
 async def test_agent_requests(engine):
     import json, os
     engine.create_agent("MyReader")
