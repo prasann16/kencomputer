@@ -74,7 +74,7 @@ async def test_push_mode_never_polls(monkeypatch):
         bot = type("B", (), {"username": "kenbot", "set_my_commands": staticmethod(lambda *a, **k: _noop())})()
         updater = type("U", (), {"start_polling": staticmethod(lambda **k: calls.append("poll") or _noop())})()
 
-        def add_handler(self, *a):
+        def add_handler(self, *a, **kw):
             pass
 
         async def initialize(self):
