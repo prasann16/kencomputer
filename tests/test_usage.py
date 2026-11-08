@@ -37,9 +37,10 @@ def test_reading_without_windows_uses_the_sdk_fields():
 
 
 def test_near_the_limit():
-    assert not usage.near_limit({"pct": 79.9}, NOW)
-    assert usage.near_limit({"pct": 80}, NOW)
-    assert usage.near_limit({"status": "allowed_warning"}, NOW)
+    assert not usage.near_limit({"pct": 89.9}, NOW)
+    assert usage.near_limit({"pct": 90}, NOW)
+    assert usage.near_limit({"status": "allowed_warning"}, NOW)  # no percentage: the plan's own warning counts
+    assert not usage.near_limit({"pct": 83, "status": "allowed_warning"}, NOW)  # with one, 90% is the line
     assert usage.near_limit({"pct": 5, "status": "rejected"}, NOW)
     assert not usage.near_limit({"pct": 99, "resets_at": NOW - 1}, NOW)  # that window is over
 
@@ -48,11 +49,13 @@ def test_heads_up_once_per_window_and_again_after_it_resets():
     u, said = fresh()
     u.record(reading(five=0.5), NOW)
     assert said == []
-    u.record(reading(five=0.82), NOW)
-    assert said == [f"Heads-up: you've used 82% of your Claude plan's 5 hour limit. It resets {usage.when(NOW + 3600, NOW)}."]
+    u.record(reading(five=0.85), NOW)
+    assert said == []  # 85%: not yet
+    u.record(reading(five=0.92), NOW)
+    assert said == [f"Heads-up: you've used 92% of your Claude plan's 5 hour limit. It resets {usage.when(NOW + 3600, NOW)}."]
     u.record(reading(five=0.95), NOW)
     assert len(said) == 1  # once per window
-    u.record(reading(five=0.81, reset=NOW + 5 * 3600), NOW + 4000)  # the next window
+    u.record(reading(five=0.91, reset=NOW + 5 * 3600), NOW + 4000)  # the next window
     assert len(said) == 2
 
 
@@ -69,7 +72,7 @@ def test_usage_text():
 
 
 # What Codex's account/rateLimits/read answers (openai-codex 0.163).
-CODEX = {"primary": {"usedPercent": 84, "windowDurationMins": 300, "resetsAt": int(NOW + 1800)},
+CODEX = {"primary": {"usedPercent": 94, "windowDurationMins": 300, "resetsAt": int(NOW + 1800)},
          "secondary": {"usedPercent": 30, "windowDurationMins": 10080, "resetsAt": int(NOW + 4 * 86400)},
          "planType": "plus", "rateLimitReachedType": None}
 
@@ -77,9 +80,9 @@ CODEX = {"primary": {"usedPercent": 84, "windowDurationMins": 300, "resetsAt": i
 def test_chatgpt_plan_readings_and_heads_up():
     u, said = fresh()
     u.record_codex(CODEX, NOW)
-    assert said == [f"Heads-up: you've used 84% of your ChatGPT plan's 5 hour limit. It resets {usage.when(NOW + 1800, NOW)}."]
+    assert said == [f"Heads-up: you've used 94% of your ChatGPT plan's 5 hour limit. It resets {usage.when(NOW + 1800, NOW)}."]
     text = u.report("codex", NOW, mem={})
-    assert text.startswith("Your ChatGPT plan:") and "5 hour  ▰▰▰▰▰▰▰▰▱▱ 84%" in text and "Weekly  ▰▰▰▱▱▱▱▱▱▱ 30%" in text
+    assert text.startswith("Your ChatGPT plan:") and "5 hour  ▰▰▰▰▰▰▰▰▰▱ 94%" in text and "Weekly  ▰▰▰▱▱▱▱▱▱▱ 30%" in text
     assert "No reading yet" in u.report("claude", NOW, mem={})  # each plan keeps its own readings
 
 
@@ -221,3 +224,19 @@ def test_watch_disk_stops_work_before_saying_so(monkeypatch):
         task.cancel()
     asyncio.run(go())
     assert order == ["stopped"] and len(said) == 1 and "stopped what I was doing" in said[0]
+
+
+def test_settings_meters_and_when_a_full_plan_opens_again():
+    """Settings → AI shows each plan's windows from the readings replies brought (no AI call); a plan at its limit
+    says when it opens again."""
+    u, _ = fresh()
+    assert u.limits(NOW) == {"claude": [], "codex": []} and u.resets("claude", NOW) == ""
+    u.record(reading(five=1.0, status="rejected"), NOW)
+    u.record_codex(CODEX, NOW)
+    limits = u.limits(NOW)
+    assert [(w["label"], w["pct"], w["near"]) for w in limits["claude"]] == [("5 hour", 100.0, True), ("Weekly", 49.0, False)]
+    assert limits["claude"][0]["reset"] == usage.when(NOW + 3600, NOW)
+    assert [w["label"] for w in limits["codex"]] == ["5 hour", "Weekly"]
+    assert u.resets("claude", NOW) == usage.when(NOW + 3600, NOW)
+    assert [w["label"] for w in u.limits(NOW + 7200)["claude"]] == ["Weekly"]  # a window past its reset drops off
+    assert u.resets("claude", NOW + 7200) == ""

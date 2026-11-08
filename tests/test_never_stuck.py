@@ -336,3 +336,17 @@ async def test_ken_speaking_first_that_fails_leaves_no_error_without_a_question(
     person's first message then gets the plain error and Try again)."""
     assert not await flaky.send_message(HOME, "", log_user=False, via="app", prompt="say hello")
     assert flaky.messages(HOME) == []
+
+
+async def test_a_plan_at_its_limit_says_when_it_opens_again(flaky, monkeypatch):
+    """Their own Claude hit its limit: the message says when it resets, from the reading Ken already has."""
+    async def limited(self, prompt, on_text, on_tool=None, on_delta=None):
+        raise AIUnavailable(429, "rate_limit")
+    monkeypatch.setattr(FailingSession, "ask", limited)
+    flaky.limit_resets = lambda backend: "15:00"
+    flaky.log_message(HOME, "you", "draft my post")
+    assert not await flaky.send_message(HOME, "draft my post", log_user=False)
+    assert flaky.messages(HOME)[-1]["text"] == "You've reached your Claude plan's limit for now. It resets at 15:00."
+    flaky.limit_resets = lambda backend: ""  # no reading yet: the plain sentence
+    assert not await flaky.send_message(HOME, "draft my post", log_user=False)
+    assert flaky.messages(HOME)[-1]["text"] == "You've reached your Claude plan's limit for now."

@@ -25,7 +25,7 @@ log = logging.getLogger("ken")
 WINDOW_NAMES = {"five_hour": "5 hour", "seven_day": "weekly", "monthly": "monthly", "seven_day_opus": "weekly Opus",
                 "seven_day_sonnet": "weekly Sonnet", "overage": "extra usage"}
 PLAN_NAMES = {"claude": "Claude", "codex": "ChatGPT"}
-WARN_AT = 80  # % of a window used when Ken gives the heads-up
+WARN_AT = 90  # % of a window used when Ken gives the heads-up
 LOW_MEMORY_FOR = 120  # seconds memory must stay critical before Ken says so (a short spike isn't news)
 # The disk: at DISK_WARN % full Ken tells them; at DISK_STOP % it stops all work and pauses scheduled jobs until
 # they say what to do. Only while little is left (DISK_LEFT_GB): a big Mac at 80% still has plenty of room.
@@ -80,7 +80,10 @@ def near_limit(w: dict, now: float) -> bool:
     """Close enough to the limit to say so; a window past its reset no longer counts."""
     if w.get("resets_at") and w["resets_at"] <= now:
         return False
-    return w.get("status") in ("allowed_warning", "rejected") or (w.get("pct") or 0) >= WARN_AT
+    if w.get("status") == "rejected":
+        return True
+    # The plan's own "warning" status comes earlier than we want; it counts only when there's no percentage.
+    return w["pct"] >= WARN_AT if w.get("pct") is not None else w.get("status") == "allowed_warning"
 
 
 def when(ts: float | None, now: float | None = None) -> str:
@@ -298,6 +301,26 @@ class Usage:
             self.save(state)
         except Exception as e:
             log.warning("couldn't save the usage reading: %s", e)
+
+    def limits(self, now: float | None = None) -> dict[str, list[dict]]:
+        """Settings → AI: each plan's current windows (label, % used, reset time), from the readings that came
+        with replies. Nothing is asked of Claude or ChatGPT for this."""
+        now = time.time() if now is None else now
+        state, out = self.load(), {}
+        for plan in PLAN_NAMES:
+            windows = state.get(plan, {})
+            order = sorted(windows, key=lambda k: list(WINDOW_NAMES).index(k) if k in WINDOW_NAMES else 99)
+            out[plan] = [{"label": WINDOW_NAMES.get(n, n).capitalize(), "pct": w.get("pct"), "resets_at": w.get("resets_at"),
+                          "reset": when(w.get("resets_at"), now), "near": near_limit(w, now)}
+                         for n in order if (w := windows[n]) and not (w.get("resets_at") and w["resets_at"] <= now)]
+        return out
+
+    def resets(self, plan: str, now: float | None = None) -> str:
+        """When a plan that hit its limit opens again: the latest reset among the windows at their limit."""
+        now = time.time() if now is None else now
+        full = [w["resets_at"] for w in self.load().get(plan, {}).values() if w.get("resets_at") and w["resets_at"] > now
+                and (w.get("status") == "rejected" or (w.get("pct") or 0) >= 100)]
+        return when(max(full), now) if full else ""
 
     def report(self, backend: str, now: float | None = None, mem: dict | None = None, ken: int | None = None) -> str:
         """/usage: each window's meter and when it resets, then this computer's memory."""

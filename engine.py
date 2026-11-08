@@ -334,6 +334,8 @@ class Engine:
         self.brain = brain
         self.brains = brains or {brain.name: brain}
         self.model_choices = None  # async backend -> available model IDs
+        self.plan_limits = None  # () -> {"claude": [window...], "codex": [...]}: Settings → AI's meters
+        self.limit_resets = None  # backend -> "15:00" when a plan that hit its limit opens again, or ""
         self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
         self.resume_listener = None  # via -> where a resumed reply also goes (Telegram), or None
         self.stopping = False  # set while Ken shuts down (close)
@@ -1517,6 +1519,8 @@ class Engine:
                 quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
                 msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
                                if quiet else explain_failure(e, self.backend(pid)))
+                if msg.startswith("You've reached your") and self.limit_resets and (at := self.limit_resets(self.backend(pid))):
+                    msg = f"{msg[:-1]}. It resets at {at}."
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
                 # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
                 # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
