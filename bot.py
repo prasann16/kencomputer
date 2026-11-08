@@ -1980,7 +1980,8 @@ def elsewhere(place: str) -> bool:
 
 async def notify_telegram(app) -> None:
     """Approvals reach the phone with buttons; an agent's finished run as one line; and what's said
-    in the app shows on the phone too, so it's one conversation wherever you look."""
+    in the app shows on the phone too, so it's one conversation wherever you look. Only one place buzzes: while
+    they're in the app (or the phone app), everything lands on Telegram silently; a scheduled job's result always buzzes."""
     q = ENGINE.subscribe()
     while True:
         ev = await q.get()
@@ -1988,8 +1989,7 @@ async def notify_telegram(app) -> None:
         if not ALLOWED_USER_ID:
             continue
         try:
-            if elsewhere("telegram") and not (ev["type"] == "message" and ev.get("job")):
-                continue
+            hush = elsewhere("telegram") and not (ev["type"] == "message" and ev.get("job"))
             if ev["type"] == "approval.created":
                 a = ev["approval"]
                 name = "Ken" if a["project"] == HOME else ENGINE.get_agent(a["project"])["name"]
@@ -2001,16 +2001,15 @@ async def notify_telegram(app) -> None:
                     InlineKeyboardButton("Skip", callback_data=f"appr:{a['id']}:skip"),
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
-                                           **quoting(ev.get("origin")))
+                                           disable_notification=hush, **quoting(ev.get("origin")))
             elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME:
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
-                                    reply_to=ev.get("origin"))
-            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background") \
-                    and not (two_places() and ev.get("via") == "app"):  # the phone app is right there: no copy
+                                    reply_to=ev.get("origin"), quiet=hush)
+            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
-                quiet = ev.get("via") == "app"  # they're at the Mac: it shows on the phone without a buzz
+                quiet = hush or ev.get("via") == "app"  # they're in the app: it shows on Telegram without a buzz
                 if ev.get("role") == "you":
                     attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
                     await send_outbound(app.bot, "💻 " + words[:3500] + attached, quiet=quiet)
