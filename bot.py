@@ -26,6 +26,10 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--media"]:  # hosted Ken: creator storage in the cloud, for big footage and finished videos (media.py)
+    import media
+    raise SystemExit(media.main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -206,6 +210,23 @@ def video_prompt() -> str:
         "they meant to say, in their order, minus warm-up, retakes, tangents, repeats and dead air. Reels are vertical 1080x1920. "
         "Watch your own output before sending: grab a few frames "
         "with ffmpeg and look at them. Then copy the mp4 to the outbox."
+        + storage_prompt()
+    )
+
+
+def storage_prompt() -> str:
+    """Ken in the cloud: creator storage for big footage, so this small disk never fills up (media.py)."""
+    import media
+    if not media.available():
+        return ""
+    return (
+        f" STORAGE: this computer's disk is small, so big footage lives in cloud storage: `{KEN_CMD} --media put <file>` "
+        f"stores a file (prints its key), `{KEN_CMD} --media get <key> <dest>` brings it back, `{KEN_CMD} --media url <key>` "
+        "gives a URL ffmpeg can read from directly for an hour, and `--media list`, `--media delete <key>` and "
+        f"`--media keep <key>` manage it. Full-quality originals: store them as they arrive, edit from a small working "
+        "copy (1080p is plenty), and render the final cut from the original's URL, so quality stays full. Finished "
+        f"work: `{KEN_CMD} --media put <file> --keep`, and `{KEN_CMD} --media link <key> [days]` makes a share link anyone "
+        "can open (for a brand or an editor). Originals not kept are cleared after 90 days; say so if they ask."
     )
 
 
@@ -283,6 +304,27 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
     return True
 
 
+STORAGE_SEND_LIMIT = 2000 * 1024 * 1024  # Ken's own Telegram server takes files up to 2 GB
+
+
+def can_send_from_storage(size: int) -> bool:
+    """Over Telegram's 50 MB from a bot: with creator storage and Ken's own Telegram server (the host says so), the file
+    goes up to storage and from there to Telegram whole, at full quality, never shrunk."""
+    import media
+    return os.environ.get("TELEGRAM_SEND_FROM_STORAGE") == "1" and media.available() and size <= STORAGE_SEND_LIMIT
+
+
+async def send_from_storage(bot, chat_id: int, path: Path, quiet: bool = False) -> None:
+    import media
+    stored = await asyncio.to_thread(media.put, path, True)
+    ref = f"ken-media:{stored['key']}"
+    if path.suffix.lower() in video.VIDEO_SUFFIXES:
+        await bot.send_video(chat_id, ref, caption=path.name, supports_streaming=True, disable_notification=quiet,
+                             write_timeout=600, read_timeout=600)
+    else:
+        await bot.send_document(chat_id, ref, caption=path.name, disable_notification=quiet, write_timeout=600, read_timeout=600)
+
+
 def download_where(path: Path) -> str:
     """Where a file too big for Telegram can be had. A Ken in the cloud moves it into its files and links straight to
     it on its site (sign-in first if needed); a Ken on its own computer says where the file is."""
@@ -310,6 +352,12 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
             try:
                 size = path.stat().st_size
                 if size == 0:
+                    path.unlink(missing_ok=True)
+                    continue
+                if size > TELEGRAM_FILE_LIMIT and can_send_from_storage(size):
+                    # The whole file, full quality, playable: through storage to Ken's own Telegram server.
+                    await send_from_storage(bot, chat_id, path, quiet)
+                    log_history("assistant", f"[sent {'video' if path.suffix.lower() in video.VIDEO_SUFFIXES else 'file'}: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
                 if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
