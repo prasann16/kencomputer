@@ -741,7 +741,7 @@ def where_you_are(f: dict | None = None) -> str:
     if f["app"]:
         app = ("The Ken app, in their web browser, has" if kind == "cloud" else "The Ken app on this computer has")
         settings = ("Plan (what's left of it), AI (their own Claude or ChatGPT, or Ken AI credits), Apps (Gmail, "
-                    "Calendar and more), Phone (Telegram), Tools and Privacy" if kind == "cloud" else
+                    "Calendar and more), Phone (Telegram) and Account" if kind == "cloud" else
                     "AI accounts (connect Claude, Codex, or both), Tools (Chrome, email and calendar plus any tool you "
                     "add), Phone and Privacy")
         phone = ("Ken on your phone is Telegram" if kind == "cloud" else "Ken on your phone is their own Telegram bot")

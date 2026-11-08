@@ -1558,7 +1558,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
   const [privacy, setPrivacy] = useState(null);
-  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
+  useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); if (!HOSTED) api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
   const share = async (on) => { setError(''); try { setPrivacy(await api('/api/privacy', { method: 'PUT', json: { share: on } })); } catch (e) { setError(e.message); } };
   const row = (icon, title, text, right, body) => html`<div class="conn"><div class="conn-row"><span class="conn-icon">${icon}</span><div class="conn-text"><b>${title}</b><span>${text}</span></div><div class="conn-right">${right}</div></div>${body}</div>`;
   const on = (label) => html`<span class="conn-on"><i></i>${label}</span>`;
@@ -1567,7 +1567,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ['tools', 'Tools'], ['account', 'Account']];
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ...(HOSTED ? [] : [['tools', 'Tools']]), ['account', 'Account']];  // Ken on the site: Apps covers it
   const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : tab;
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
