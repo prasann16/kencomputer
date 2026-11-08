@@ -155,3 +155,18 @@ async def test_a_link_ken_never_sent_goes_out_when_it_starts_again(hosted):
     await bot.resend_big_file_links(Bot())
     assert len(sent) == 1  # once
     assert bot.waiting_big_file(token)["caption"] == "edit this for my insta"  # still waiting for the file
+
+
+def test_a_reel_too_big_to_send_gets_a_link_straight_to_it(monkeypatch, tmp_path):
+    import bot
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://ken.example/box/abc/keepalive")
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path / "inbox")
+    (tmp_path / "inbox").mkdir()
+    (tmp_path / "inbox" / "porto reel.mp4").write_bytes(b"older")
+    out = tmp_path / "porto reel.mp4"
+    out.write_bytes(b"new")
+    said = bot.download_where(out)
+    assert said == "Download it here: https://ken.example/download/porto%20reel-2.mp4"
+    assert (tmp_path / "inbox" / "porto reel-2.mp4").read_bytes() == b"new" and not out.exists()
+    monkeypatch.delenv("KEN_KEEPALIVE_URL")
+    assert bot.download_where(tmp_path / "x.mp4") == f"It's on this computer at {tmp_path / 'x.mp4'}"

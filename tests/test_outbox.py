@@ -46,6 +46,8 @@ def test_a_reel_goes_as_a_video_and_the_full_quality_file(monkeypatch, tmp_path)
 
 
 def test_a_reel_too_big_for_telegram_says_where_to_download_it(monkeypatch, tmp_path):
-    sent, _ = run(monkeypatch, tmp_path, 500, {"KEN_INCLUDED_AI_URL": "https://ken.example/ai"})
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path / "inbox")
+    sent, _ = run(monkeypatch, tmp_path, 500, {"KEN_KEEPALIVE_URL": "https://ken.example/box/b1/keepalive"})
     assert sent[0] == ("video", "reel.mp4")
-    assert sent[1][0] == "text" and "Open Ken to download it: https://ken.example" in sent[1][1]
+    assert sent[1][0] == "text" and "Download it here: https://ken.example/download/reel.mp4" in sent[1][1]
+    assert (tmp_path / "inbox" / "reel.mp4").stat().st_size == 500  # kept in Ken's files, where the link finds it

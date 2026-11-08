@@ -39,7 +39,9 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import tempfile
+import urllib.parse
 import time
 from pathlib import Path
 
@@ -278,9 +280,19 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
 
 
 def download_where(path: Path) -> str:
-    """Where a file too big for Telegram can be had: Ken's own site for a Ken in the cloud, else this computer."""
-    site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
-    return f"Open Ken to download it: {site}" if site.startswith("https://") else f"It's on this computer at {path}"
+    """Where a file too big for Telegram can be had. A Ken in the cloud moves it into its files and links straight to
+    it on its site (sign-in first if needed); a Ken on its own computer says where the file is."""
+    site = host_site()
+    if not site:
+        return f"It's on this computer at {path}"
+    kept = INBOX_DIR / path.name
+    n = 1
+    while kept.exists():
+        n += 1
+        kept = INBOX_DIR / f"{path.stem}-{n}{path.suffix}"
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), kept)
+    return f"Download it here: {site}/download/{urllib.parse.quote(kept.name)}"
 
 
 async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
