@@ -22,12 +22,22 @@ SITE = "https://app.example.dev"
 MB = 1024 * 1024
 
 
+EDITS = []
+
+
 class Msg:
-    def __init__(self, caption="make a reel of this"):
-        self.chat_id, self.message_id, self.caption, self.replies = 777001, 42, caption, []
+    def __init__(self, caption="make a reel of this", chat_id=777001, message_id=42):
+        self.chat_id, self.message_id, self.caption, self.replies = chat_id, message_id, caption, []
 
     async def reply_text(self, text, **kw):
         self.replies.append(text)
+        return SimpleNamespace(message_id=900 + len(self.replies))
+
+    def get_bot(self):
+        class Bot:
+            async def edit_message_text(self, text, chat_id, message_id):
+                EDITS.append((chat_id, message_id, text))
+        return Bot()
 
 
 @pytest.fixture
@@ -45,14 +55,36 @@ async def test_too_big_replies_at_once_with_a_link_and_keeps_what_they_asked(hos
     assert await bot.too_big(msg, SimpleNamespace(file_size=180 * MB), "a video", "IMG_0042.MOV")
     [reply] = msg.replies
     token = re.fullmatch(rf"That video is too big for Telegram to pass on\. Send it here: {SITE}/send/([0-9a-f]{{24}})", reply).group(1)
-    assert bot.waiting_big_file(token) | {"ts": 0} == {"chat_id": 777001, "message_id": 42, "caption": "make a reel of this",
-                                                       "kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB, "ts": 0,
-                                                       "replied": True}
-    other = Msg("")
+    w = bot.waiting_big_file(token)
+    assert w | {"ts": 0, "last": 0} == {"chat_id": 777001, "message_id": 42, "caption": "make a reel of this", "kind": "a video",
+                                        "name": "IMG_0042.MOV", "size": 180 * MB, "ts": 0, "last": 0, "replied": True, "reply_id": 901,
+                                        "files": [{"kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB}]}
+    other = Msg("", chat_id=555)
     assert await bot.too_big(other, SimpleNamespace(file_size=30 * MB), "a file", "notes.pdf")
     assert other.replies[0].startswith("That file is too big for Telegram to pass on.")
-    assert await bot.too_big(other, SimpleNamespace(file_size=40 * MB), "a recording", "call.m4a")
-    assert other.replies[1].startswith("That recording is too big")
+    later = Msg("", chat_id=556)
+    assert await bot.too_big(later, SimpleNamespace(file_size=40 * MB), "a recording", "call.m4a")
+    assert later.replies[0].startswith("That recording is too big")
+
+
+async def test_several_too_big_together_get_one_reply_that_grows(hosted, monkeypatch):
+    """Six full-quality videos sent at once: one reply, one link, saying how many; a batch much later gets its own."""
+    EDITS.clear()
+    first = Msg("make a reel")
+    await bot.too_big(first, SimpleNamespace(file_size=50 * MB), "a video", "IMG_7613.MOV")
+    token = first.replies[0].rsplit("/", 1)[1]
+    for i, name in enumerate(["IMG_7663.MOV", "IMG_7664.MOV"]):
+        more = Msg("", message_id=43 + i)
+        assert await bot.too_big(more, SimpleNamespace(file_size=60 * MB), "a video", name)
+        assert more.replies == []  # no second message
+    assert EDITS[-1] == (777001, 901, f"Those 3 videos are too big for Telegram to pass on. Send them all here: {SITE}/send/{token}")
+    assert [f["name"] for f in bot.waiting_big_file(token)["files"]] == ["IMG_7613.MOV", "IMG_7663.MOV", "IMG_7664.MOV"]
+    assert bot.waiting_big_file(token)["caption"] == "make a reel"
+    now = bot.time.time()
+    monkeypatch.setattr(bot.time, "time", lambda: now + bot.BIG_FILE_GROUP_S + 1)
+    late = Msg("")
+    await bot.too_big(late, SimpleNamespace(file_size=50 * MB), "a video", "IMG_9000.MOV")
+    assert late.replies and late.replies[0].rsplit("/", 1)[1] != token
 
 
 async def test_small_files_go_through_and_ken_on_its_own_computer_says_what_it_always_did(waiting, monkeypatch):
@@ -94,7 +126,8 @@ async def test_when_it_arrives_ken_carries_on_and_answers_in_telegram(hosted, mo
     monkeypatch.setattr(bot, "flush_outbox", lambda *a, **k: asyncio.sleep(0))
     phone = bot.Phone()
     phone.app = SimpleNamespace(bot=FakeBot())
-    assert phone.waiting_file(token) == {"kind": "a video", "name": "IMG_0042.MOV", "caption": "make a reel of this", "size": 180 * MB}
+    assert phone.waiting_file(token) == {"kind": "a video", "name": "IMG_0042.MOV", "caption": "make a reel of this", "size": 180 * MB,
+                                         "files": [{"kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB}]}
     path = tmp_path / "IMG_0042.MOV"
     assert await phone.file_arrived(token, path)
     await asyncio.gather(*bot.ENGINE._bg)
@@ -170,3 +203,44 @@ def test_a_reel_too_big_to_send_gets_a_link_straight_to_it(monkeypatch, tmp_path
     assert (tmp_path / "inbox" / "porto reel-2.mp4").read_bytes() == b"new" and not out.exists()
     monkeypatch.delenv("KEN_KEEPALIVE_URL")
     assert bot.download_where(tmp_path / "x.mp4") == f"It's on this computer at {tmp_path / 'x.mp4'}"
+
+
+async def test_a_batch_arrives_together_and_ken_works_on_all_of_it(hosted, monkeypatch, tmp_path):
+    msg = Msg("one reel from these")
+    await bot.too_big(msg, SimpleNamespace(file_size=50 * MB), "a video", "a.MOV")
+    await bot.too_big(Msg(""), SimpleNamespace(file_size=50 * MB), "a video", "b.MOV")
+    token = msg.replies[0].rsplit("/", 1)[1]
+    asked = {}
+
+    async def send_message(pid, text, files=None, **kw):
+        asked.update(text=text, files=files, **kw)
+        return True
+    monkeypatch.setattr(bot, "ENGINE", SimpleNamespace(_bg=[], send_message=send_message))
+    monkeypatch.setattr(bot, "log_history", lambda *a: None)
+    phone = bot.Phone()
+    phone.app = SimpleNamespace(bot=None)
+    paths = [tmp_path / "a.MOV", tmp_path / "b.MOV"]
+    assert await phone.file_arrived(token, paths)
+    await asyncio.gather(*bot.ENGINE._bg)
+    assert asked["files"] == ["a.MOV", "b.MOV"] and "2 files together" in asked["prompt"] and str(paths[1]) in asked["prompt"]
+    assert 'Their message with them: "one reel from these"' in asked["prompt"]
+
+
+async def test_the_web_app_takes_a_batch(engine, aiohttp_client, hosted):  # noqa: F811
+    calls = []
+
+    class FakePhone:
+        def waiting_file(self, token):
+            return {"kind": "a video", "name": "a.MOV", "caption": "", "size": 1, "files": []}
+
+        async def file_arrived(self, token, paths):
+            calls.append(paths)
+            return True
+
+    app, client = await signed_in(engine, aiohttp_client, phone=FakePhone())
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    for n in ("a.MOV", "b.MOV"):
+        (engine.files_dir(HOME) / n).write_bytes(b"v")
+    assert (await client.post(f"/api/telegram-files/{'a' * 24}", json={"files": ["a.MOV", "../b"]})).status == 400
+    assert (await client.post(f"/api/telegram-files/{'a' * 24}", json={"files": ["a.MOV", "b.MOV"]})).status == 200
+    assert calls == [[engine.files_dir(HOME) / "a.MOV", engine.files_dir(HOME) / "b.MOV"]]
