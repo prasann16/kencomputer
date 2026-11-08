@@ -65,6 +65,7 @@ DEFAULT_AUTONOMY = {
     "ask": ["Email customers", "Post publicly", "Merge & ship", "Spend money"],
 }
 APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
+JUDGMENT_FILE = "judgment.md"  # in an agent's memory/: every decision they made on its asks, with their words
 # Work runs as long as it needs; only a brain that has said nothing for this long is stopped.
 IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
@@ -346,6 +347,9 @@ class Engine:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        for col in ("media TEXT", "link TEXT", "note TEXT"):  # proof on a review card, and what they said back
+            with contextlib.suppress(sqlite3.OperationalError):
+                self.db.execute(f"ALTER TABLE approvals ADD COLUMN {col}")
         self.subscribers: set[asyncio.Queue] = set()
         self.chats: dict[str, object] = {}
         self.chat_locks: dict[str, asyncio.Lock] = {}
@@ -783,8 +787,15 @@ class Engine:
             f"Your home and working folder is {p['workdir']}.{where}\n"
             f"Fine to do on your own: {'; '.join(auto['alone']) or 'nothing'}. Ask first: {'; '.join(auto['ask']) or 'nothing'} "
             f"(rules in {d / 'autonomy.json'}). To ask, or to hand long work to the background, write JSON into {r}/: "
-            f'{{"type": "approval", "agent": "{pid}", "kind": "email|post|merge|spend|other", "title": "...", "body": "exactly what they\'ll see", "next": "what you do once approved"}} or '
+            f'{{"type": "approval", "agent": "{pid}", "kind": "email|post|merge|spend|other", "title": "...", "body": "exactly what they\'ll see", "next": "what you do once approved", '
+            '"media": ["full paths of screenshots or a short screen recording that show it"], "link": "a preview URL or branch, if any"} or '
             f'{{"type": "run", "agent": "{pid}", "title": "...", "prompt": "full instructions"}}.\n'
+            "Asks land in their review queue, which they clear in one go, so make each one decidable at a glance: say "
+            "what changed and why in a few lines, and show it working (screenshots, a short recording for a flow, the "
+            "test result) rather than describing it. Changes to code you make on your own branch, in a git worktree "
+            "beside the main checkout so their copy is untouched, check that it works, and when merging needs "
+            "their OK, ask with kind merge and merge once they approve. When they send something back, their note says why: fix it and ask again with fresh proof. "
+            f"{JUDGMENT_FILE} in memory/ holds how they've decided before; read it before you ask, so fewer asks come back.\n"
             + (f"\n{self.tools_prompt(set(tools['use']))}\n" if self.tools_prompt(set(tools["use"])) else "")
             + f"\n=== CONTEXT.md ===\n{self.get_context(pid).strip()}"
         )
@@ -1862,7 +1873,10 @@ class Engine:
             self.start_run(pid, str(req.get("title") or "Task")[:120], str(req["prompt"]),
                            source="ken" if pid == HOME else "agent")
         elif kind == "approval":
-            self.create_approval(pid, str(req.get("kind", "other")), str(req["title"]), str(req.get("body", "")), str(req.get("next", "")))
+            media = req.get("media") or []
+            self.create_approval(pid, str(req.get("kind", "other")), str(req["title"]), str(req.get("body", "")), str(req.get("next", "")),
+                                 media=[str(m) for m in media] if isinstance(media, list) else [str(media)],
+                                 link=str(req.get("link") or ""))
         else:
             raise ValueError(f"unknown request {kind!r}")
 
@@ -2054,12 +2068,19 @@ class Engine:
 
     # ------------------------------------------------------------ approvals
 
-    def create_approval(self, pid: str, kind: str, title: str, body: str, next_step: str = "") -> dict:
+    def create_approval(self, pid: str, kind: str, title: str, body: str, next_step: str = "",
+                        media: list[str] | None = None, link: str = "") -> dict:
         aid = uuid.uuid4().hex[:10]
+        proof = []
+        for m in (media or [])[:8]:  # only files they may open; anything else is left off the card
+            try:
+                proof.append(str(self.shared_file(m)))
+            except KeyError:
+                log.info("approval %s: proof %r isn't a file they can open", aid, m)
         self.db.execute(
-            "INSERT INTO approvals (id, project, kind, title, body, next, status, created) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO approvals (id, project, kind, title, body, next, status, created, media, link) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (aid, pid, kind if kind in APPROVAL_KINDS else "other", title.strip()[:200], body.strip()[:20000],
-             next_step.strip()[:2000], "pending", time.time()),
+             next_step.strip()[:2000], "pending", time.time(), json.dumps(proof), link.strip()[:500]),
         )
         a = self.get_approval(aid)
         if self.chat_origin:
@@ -2067,35 +2088,72 @@ class Engine:
         self.emit("approval.created", project=pid, approval=a, origin=self.chat_origin)
         return a
 
+    @staticmethod
+    def _approval(r) -> dict:
+        a = dict(r)
+        try:
+            a["media"] = json.loads(a.get("media") or "[]")
+        except ValueError:
+            a["media"] = []
+        a["link"] = a.get("link") or ""
+        return a
+
     def get_approval(self, aid: str) -> dict:
         r = self.db.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()
         if r is None:
             raise KeyError(aid)
-        return dict(r)
+        return self._approval(r)
 
     def pending_approvals(self) -> list[dict]:
-        return [dict(r) for r in self.db.execute("SELECT * FROM approvals WHERE status='pending' ORDER BY created").fetchall()]
+        return [self._approval(r) for r in self.db.execute("SELECT * FROM approvals WHERE status='pending' ORDER BY created").fetchall()]
 
-    async def resolve_approval(self, aid: str, decision: str, body: str | None = None) -> dict:
+    def _record_judgment(self, a: dict, decision: str, note: str) -> None:
+        """Their call on an ask, in their own words, kept where the agent reads it, so its next asks need fewer corrections."""
+        f = self.memory_dir(a["project"]) / JUDGMENT_FILE
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            if not f.exists():
+                f.write_text("How they decide on my asks: every approve, skip and send-back, newest last. Read before asking.\n\n")
+            verb = {"approve": "Approved", "skip": "Skipped", "revise": "Sent back"}[decision]
+            line = f"- {_short_date()} · {verb} ({a['kind']}): {a['title']}" + (f" — \"{note}\"" if note else "") + "\n"
+            with f.open("a") as out:
+                out.write(line)
+        except OSError as e:
+            log.warning("couldn't record judgment for %s: %s", a["project"], e)
+
+    async def resolve_approval(self, aid: str, decision: str, body: str | None = None, note: str = "") -> dict:
+        """approve: do it. skip: drop it. revise: not yet; it goes back to whoever asked, with their note on why."""
         a = self.get_approval(aid)
         if a["status"] != "pending":
             return a
+        if decision not in ("approve", "skip", "revise"):
+            raise ValueError("decision must be approve, skip or revise")
+        note = (note or "").strip()[:4000]
+        if decision == "revise" and not note:
+            raise ValueError("say what to change")
         approved = decision == "approve"
         origin = self.origins.pop(aid, None)
         final = (body if body is not None else a["body"]).strip()
+        status = {"approve": "approved", "skip": "skipped", "revise": "revised"}[decision]
         self.db.execute(
-            "UPDATE approvals SET status=?, resolved=?, final_body=? WHERE id=?",
-            ("approved" if approved else "skipped", time.time(), final if approved else None, aid),
+            "UPDATE approvals SET status=?, resolved=?, final_body=?, note=? WHERE id=?",
+            (status, time.time(), final if approved else None, note or None, aid),
         )
         a = self.get_approval(aid)
         self.emit("approval.resolved", project=a["project"], approval=a)
+        self._record_judgment(a, decision, note)
         if approved:
             go = f'(Approved: "{a["title"]}". Do it now, exactly as below, then report the proof.\n\n{final}' + (
-                f"\n\nThen: {a['next']})" if a["next"] else ")")
-            if a["project"] == HOME:
-                asyncio.create_task(self.send_message(HOME, "", prompt=go, log_user=False))
-            else:
-                self.start_run(a["project"], a["title"], go, source="approval", origin=origin)
+                f"\n\nThen: {a['next']}" if a["next"] else "") + (f"\n\nTheir note: {note}" if note else "") + ")"
+        elif decision == "revise":
+            go = (f'(Sent back, not approved: "{a["title"]}". Their note: {note}\n\nWhat you asked:\n{a["body"]}\n\n'
+                  "Fix what they said, check it again, then ask again with fresh proof.)")
+        else:
+            return a
+        if a["project"] == HOME:
+            asyncio.create_task(self.send_message(HOME, "", prompt=go, log_user=False))
+        else:
+            self.start_run(a["project"], a["title"] if approved else f"Rework: {a['title']}"[:120], go, source="approval", origin=origin)
         return a
 
     # ------------------------------------------------------------------- views

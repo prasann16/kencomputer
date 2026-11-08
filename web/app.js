@@ -160,7 +160,7 @@ const ago = (ts) => {
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
-const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null, brain: location.hash === '#/brain' });
+const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null, brain: location.hash === '#/brain', queue: location.hash === '#/queue' });
 
 // Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
@@ -567,20 +567,31 @@ function Live({ stream, activity, onStop }) {
 const VERB = { email: 'Send', post: 'Post', merge: 'Merge', spend: 'Approve spend', other: 'Approve' };
 const KIND = { email: 'Email', post: 'Post', merge: 'Merge & ship', spend: 'Spend', other: 'Needs your OK' };
 
+// What an ask shows: the proof first (screenshots, a recording), then the words.
+function Proof({ a }) {
+  const media = a.media || [];
+  return html`${media.length > 0 && html`<div class="proof">${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>`}
+    ${a.link && html`<div class="meta proof-link">${/^https?:\/\//.test(a.link) ? html`<a href=${a.link} target="_blank" rel="noopener">${a.link}</a>` : html`<code>${a.link}</code>`}</div>`}`;
+}
+
+const decideApproval = (a, project, decision, extra = {}) => api(`/api/approvals/${a.id}`, { json: { decision, ...extra }, timeout: 120000 })
+  .then(() => decision === 'approve' ? `Approved. ${project ? project.name : 'Ken'} is on it.` : decision === 'revise' ? `Sent back to ${project ? project.name : 'Ken'}.` : 'Skipped.');
+
 function ApprovalCard({ a, project, toast }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(a.body);
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);  // a string while they write why it goes back
   const decide = async (decision) => {
     setBusy(true);
     try {
-      await api(`/api/approvals/${a.id}`, { json: { decision, body: editing ? body : undefined }, timeout: 120000 });
-      toast(decision === 'approve' ? `Approved. ${project ? project.name : 'Ken'} is on it.` : 'Skipped.');
+      toast(await decideApproval(a, project, decision, { body: editing ? body : undefined, note: note || undefined }));
     } catch (e) { toast(e.message); setBusy(false); }
   };
   return html`<article class="card approval">
     <div class="row meta"><${Chip} project=${project} /><span>${KIND[a.kind] || KIND.other}</span><span style="margin-left:auto">${clock(a.created)}</span></div>
     <div class="title">${a.title}</div>
+    <${Proof} a=${a}/>
     ${editing
       ? html`<label class="sr" for=${'edit-' + a.id}>Edit before approving</label><textarea id=${'edit-' + a.id} value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>`
       : a.body && html`<div class="well">${md(a.body)}</div>`}
@@ -590,9 +601,89 @@ function ApprovalCard({ a, project, toast }) {
       ${editing
         ? html`<button class="btn" disabled=${busy} onClick=${() => { setEditing(false); setBody(a.body); }}>Cancel edit</button>`
         : html`<button class="btn" disabled=${busy} onClick=${() => setEditing(true)}>Edit</button>`}
+      <button class="btn" disabled=${busy} onClick=${() => setNote(note === null ? '' : null)}>Send back</button>
       <button class="btn ghost" disabled=${busy} onClick=${() => decide('skip')}>Skip</button>
     </div>
+    ${note !== null && html`<div class="row send-back"><label class="sr" for=${'note-' + a.id}>What should change?</label><textarea id=${'note-' + a.id} placeholder="What should change?" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea><button class="btn primary" disabled=${busy || !note.trim()} onClick=${() => decide('revise')}>Send back</button></div>`}
   </article>`;
+}
+
+// ------------------------------------------------------------------- queue
+
+// Everything waiting on them, from every agent, in one place: cleared in a batch, mostly from the keyboard.
+const QUEUE_KEYS = [['j / k', 'next / previous'], ['a', 'approve'], ['n', 'approve with a note'], ['r', 'send back with a note'], ['s', 'skip']];
+
+function QueuePage({ approvals, projects, toast }) {
+  const byId = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+  const [sel, setSel] = useState(0);
+  const [note, setNote] = useState(null);  // { mode: 'revise' | 'approve', text } while writing a note
+  const [busy, setBusy] = useState(null);
+  const noteRef = useRef(null);
+  const items = approvals || [];
+  const at = Math.min(sel, Math.max(0, items.length - 1));
+  const current = items[at];
+  useEffect(() => { if (note) noteRef.current?.focus(); }, [note?.mode]);
+  useEffect(() => { document.querySelector('.queue-item.sel')?.scrollIntoView({ block: 'nearest' }); }, [at, items.length]);
+  const decide = async (decision, text) => {
+    if (!current || busy) return;
+    setBusy(current.id);
+    try {
+      toast(await decideApproval(current, byId[current.project], decision, text ? { note: text } : {}));
+      setNote(null);
+    } catch (e) { toast(e.message); }
+    setBusy(null);
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('.modal')) return;
+      if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+      const k = e.key;
+      if (k === 'j' || k === 'ArrowDown') { setSel(Math.min(at + 1, items.length - 1)); setNote(null); }
+      else if (k === 'k' || k === 'ArrowUp') { setSel(Math.max(at - 1, 0)); setNote(null); }
+      else if (k === 'a') decide('approve');
+      else if (k === 's') decide('skip');
+      else if (k === 'r') setNote({ mode: 'revise', text: '' });
+      else if (k === 'n') setNote({ mode: 'approve', text: '' });
+      else return;
+      e.preventDefault();
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, [at, items, busy]);
+  const submitNote = () => { const t = note.text.trim(); if (note.mode === 'revise' && !t) return; decide(note.mode, t); };
+  if (!approvals) return html`<section class="knows-page queue-page"><div class="knows-inner queue-empty"><p class="quiet-copy" role="status">Loading…</p></div></section>`;
+  if (!items.length) return html`<section class="knows-page queue-page"><div class="knows-inner queue-empty"><h1>Nothing waiting on you</h1>
+    <p class="quiet-copy">When an agent needs your OK (a merge, a post, an email), it lands here with proof attached.</p></div></section>`;
+  return html`<section class="knows-page queue-page"><div class="knows-inner">
+    <div class="queue-head"><h1>Queue <span class="queue-count">${items.length}</span></h1>
+      <div class="queue-keys" aria-label="Keyboard shortcuts">${QUEUE_KEYS.map(([k, what]) => html`<span><kbd>${k}</kbd> ${what}</span>`)}</div></div>
+    <ol class="queue-list">${items.map((a, i) => {
+      const project = byId[a.project], open = i === at;
+      return html`<li key=${a.id} class=${'queue-item' + (open ? ' sel' : '')}>
+        <button class="queue-row" aria-expanded=${open} onClick=${() => { setSel(i); setNote(null); }}>
+          <${Chip} project=${project}/><span class="queue-kind">${KIND[a.kind] || KIND.other}</span>
+          <span class="queue-title ellipsis">${a.title}</span>${(a.media || []).length > 0 && html`<span class="meta">${a.media.length} 📎</span>`}<span class="meta">${ago(a.created)}</span></button>
+        ${open && html`<div class=${'queue-detail' + ((a.media || []).length ? ' has-proof' : '')}>
+          <div class="queue-proof"><${Proof} a=${a}/></div>
+          <div class="queue-words approval">
+          ${a.body && html`<div class="well">${md(a.body)}</div>`}
+          ${a.next && html`<div class="meta">Then: ${a.next}</div>`}
+          ${note ? html`<div class="send-back">
+              <label class="sr" for="queue-note">${note.mode === 'revise' ? 'What should change?' : 'A note to go with it'}</label>
+              <textarea id="queue-note" ref=${noteRef} placeholder=${note.mode === 'revise' ? 'What should change? (Enter sends, Esc cancels)' : 'A note to go with your OK (Enter sends, Esc cancels)'} value=${note.text}
+                onInput=${(e) => setNote({ ...note, text: e.target.value })}
+                onKeyDown=${(e) => { if (e.key === 'Escape') { e.preventDefault(); setNote(null); } else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitNote(); } }}></textarea>
+              <div class="row"><button class="btn primary" disabled=${!!busy || (note.mode === 'revise' && !note.text.trim())} onClick=${submitNote}>${note.mode === 'revise' ? 'Send back' : VERB[a.kind] || 'Approve'}</button>
+                <button class="btn ghost" onClick=${() => setNote(null)}>Cancel</button></div></div>`
+            : html`<div class="row">
+              <button class="btn primary" disabled=${!!busy} onClick=${() => decide('approve')}>${VERB[a.kind] || 'Approve'} <kbd>a</kbd></button>
+              <button class="btn" disabled=${!!busy} onClick=${() => setNote({ mode: 'revise', text: '' })}>Send back <kbd>r</kbd></button>
+              <button class="btn ghost" disabled=${!!busy} onClick=${() => decide('skip')}>Skip <kbd>s</kbd></button></div>`}
+          </div>
+        </div>`}
+      </li>`;
+    })}</ol>
+  </div></section>`;
 }
 
 // ---------------------------------------------------------------------- runs
@@ -1028,10 +1119,11 @@ function PhoneButton({ linked, onOpen }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
 }
 
-function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone }) {
+function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, queue = { sel: false, count: 0 }, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone }) {
+  const away = brain || queue.sel;  // a page other than the chat: no chat controls up top
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+      : html`<a class=${'tab' + (!away ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (queue.sel ? ' sel' : '')} href="#/queue">Queue${queue.count > 0 && html`<span class="tab-count" aria-label=${queue.count + ' waiting'}>${queue.count}</span>`}</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!away && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // Connect Claude or ChatGPT with their own subscription: the same screen in the Mac app and in the browser.
@@ -2167,9 +2259,9 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} queue=${{ sel: route.queue, count: today ? today.approvals.length : 0 }} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
-    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : !setup && !setupFailed ? html`<section class="conversation-body"><div class="starting"><img src="/ken.svg" alt=""/><p class="quiet-copy" role="status">Starting Ken…</p></div></section>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
+    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : !setup && !setupFailed ? html`<section class="conversation-body"><div class="starting"><img src="/ken.svg" alt=""/><p class="quiet-copy" role="status">Starting Ken…</p></div></section>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : route.queue ? html`<${QueuePage} approvals=${today ? today.approvals : null} projects=${projects} toast=${toast}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>
     ${docFile && html`<${Safe} where="DocViewer"><${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/><//>`}
     ${runId && html`<${Safe} where="RunDrawer"><${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/><//>`}
