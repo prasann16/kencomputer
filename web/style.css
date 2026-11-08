@@ -24,7 +24,7 @@
 .chat-header > /* The header's words (model, Clear, Settings) are quiet pills. */
 .settings-link, .clear-button, .model-select { display: inline-flex; align-items: center; height: 38px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill);
   background: none; color: var(--muted); font: 500 var(--text-ui)/1 var(--sans); cursor: pointer; transition: background .15s, color .15s; }
-.settings-link:hover, .clear-button:hover, .model-select:hover { background: var(--well); color: var(--ink); }
+.settings-link:hover, .clear-button:hover, .model-select:hover { background-color: var(--well); color: var(--ink); } /* only the colour: the menu's arrow is its background image */
 .clear-button:disabled, .model-select:disabled { opacity: .5; cursor: default; }
 .model-select { max-width: 220px; padding-right: 32px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis;
   background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4l2.5 2.5L7.5 4'/%3E%3C/svg%3E") no-repeat right 14px center; }
