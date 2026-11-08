@@ -112,7 +112,36 @@ one")? Fix the ranges and cut again until it reads like they said it that way.
 next word too (often a "yeah" or "so" they ran straight into) or end the range a phrase earlier, then cut again. If
 a warning survives two tries, accept it.
 
-## 3. Design it
+## 3. Build it in HyperFrames
+
+New reels are HyperFrames projects: the captions and graphics are HTML, the person can change anything by hand
+from an edit link, and you render the finished video from the same project. The cut from step 2 (`cut.mp4`, with
+the words timed to it in `props.json`) is the footage.
+
+    cd videos/<short-name> && npx -y hyperframes@0.9.25 init edit --video cut.mp4 --resolution portrait --skip-transcribe --non-interactive --skip-skills
+
+That makes `edit/`, the project. Read `edit/AGENTS.md` once: it's the contract every composition follows (timed
+clips, one paused timeline, nothing random). Then design it, the same brief as below: a hook in the first two seconds,
+captions that are their exact words (from `props.json` `words`, timed to `cut.mp4`), and infographics that show what
+they say, in their style, inside the safe zones. Build them in `edit/` (a scene per graphic, the captions as their own
+track) so each can be changed on its own later.
+
+Check before rendering, in one go each: `npx -y hyperframes@0.9.25 check --json edit` (fix every error), then
+`npx -y hyperframes@0.9.25 snapshot edit --at 1.5,10,24` and look at the frames (cut-off text, a graphic over their
+face, red zones). Render:
+
+    npx -y hyperframes@0.9.25 render edit --output reel.mp4 --quality delivery
+
+Then the same last checks as step 5 (the strip of frames, the cut read in order), and send `reel.mp4` with its edit
+link on its own line: `<ken> --video-edit <short-name>` prints it. Say it in one line, like "Want to change anything
+yourself? Edit it here: <link>". The link opens the editor in any browser, behind their Ken sign-in. They may change
+the reel there: before any later change, read `edit/` again rather than assuming it's as you left it, and render
+from it.
+
+The rest of this skill (design, frames, render) is for reels made before HyperFrames: a `props.json` design and no
+`edit/` folder. Keep changing those that way.
+
+## 3b. Design it (reels made before HyperFrames)
 
 Every reel gets infographics: that's what makes it more than captions over a talking head. What kind, how many,
 and how they look and move is your call, decided on the fly for this video and what they're saying (their style
@@ -179,7 +208,7 @@ Keep `words`, `cuts` and `framing` from the cut in `props.json`, and fix mishear
   `<OffthreadVideo src={staticFile(src)} muted />`. Everything you need is here: don't read the kit's code.
 - Run `npx tsc -p .` in the folder and fix every error before checking frames.
 
-## 4. Check frames before rendering
+## 4. Check frames before rendering (reels made before HyperFrames)
 
 Checking frames takes seconds. Give all the times in **one** command (never run renders or stills in parallel:
 each opens Chrome and uses about a gigabyte):
@@ -193,7 +222,7 @@ their face at the wrong moment, captions colliding with an over-the-video graphi
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
-## 5. Render and check
+## 5. Render and check (reels made before HyperFrames)
 
     <ken> --video-render videos/<short-name>
 
@@ -221,7 +250,10 @@ download it to keep it."
 
 ## Changes later
 
-"Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
+A reel with an `edit/` folder (HyperFrames): change only what they asked in `edit/`, check, render again, and send it
+with its edit link. They may have changed it themselves in the editor, so read it first.
+
+Older reels: "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
 everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
 changed, render, check the strip once.

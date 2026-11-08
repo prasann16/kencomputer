@@ -26,6 +26,13 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--video-edit"]:  # hosted Ken: the edit link for a reel built with HyperFrames (studio.py)
+    import studio
+    _name = (sys.argv[2:3] or [""])[0].rstrip("/").split("/")[-1]
+    _link = studio.link(_name)
+    print(_link or "Edit links are on Ken in the cloud. Here, run `npx hyperframes preview` in the project folder.")
+    raise SystemExit(0 if _link else 1)
+
 if sys.argv[1:2] == ["--media"]:  # hosted Ken: creator storage in the cloud, for big footage and finished videos (media.py)
     import media
     raise SystemExit(media.main(sys.argv[2:]))

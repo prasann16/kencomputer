@@ -830,6 +830,48 @@ class WebApp:
             path = await self._preview(path)
         return self._serve(path, download="download" in request.query)
 
+    # HyperFrames Studio (studio.py): the editor for a reel Ken made, opened from its edit link.
+    async def studio_open(self, request):
+        """{project}: Studio running for that project (videos/<project>), ready for /studio/*."""
+        import studio
+        name = str((await self._body(request)).get("project", ""))
+        project = studio.project_dir(self.engine.home_cwd / "videos", name)
+        if project is None:
+            return _json({"error": "Ken can't find that video project."}, 404)
+        try:
+            await studio.ensure(project)
+        except RuntimeError as exc:
+            return _json({"error": str(exc)}, 503)
+        return _json({"ok": True, "project": name})
+
+    async def studio_proxy(self, request):
+        """Everything Studio's page asks for, passed to it as is (its live updates are server-sent events, streamed)."""
+        import aiohttp
+        import studio
+        url = f"http://127.0.0.1:{studio.PORT}/{request.match_info['tail']}"
+        if request.query_string:
+            url += f"?{request.query_string}"
+        keep = {k: v for k, v in request.headers.items() if k.lower() in ("content-type", "accept", "range", "if-none-match", "last-event-id")}
+        try:
+            session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
+            upstream = await session.request(request.method, url, headers=keep, data=await request.read() if request.can_read_body else None)
+        except aiohttp.ClientError:
+            await session.close()
+            return _json({"error": "The video editor isn't running. Open it again from its link."}, 502)
+        resp = web.StreamResponse(status=upstream.status, headers={k: v for k, v in upstream.headers.items()
+                                                                   if k.lower() in ("content-type", "cache-control", "content-range", "accept-ranges", "etag", "last-modified")})
+        try:
+            await resp.prepare(request)
+            async for chunk in upstream.content.iter_any():
+                await resp.write(chunk)
+            await resp.write_eof()
+        except (ConnectionResetError, aiohttp.ClientError):
+            pass
+        finally:
+            upstream.release()
+            await session.close()
+        return resp
+
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 
     async def _preview(self, path: Path) -> Path:
@@ -1144,6 +1186,8 @@ class WebApp:
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
         r.add_post("/api/open", self.open_file)
         r.add_get("/api/file", self.shared_file)
+        r.add_post("/api/studio", self.studio_open)
+        r.add_route("*", "/studio/{tail:.*}", self.studio_proxy)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_get("/api/today", self.today)
