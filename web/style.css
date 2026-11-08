@@ -575,3 +575,11 @@ ol.conn-steps li { margin: 2px 0; }
 .rec-pill span { font-variant-numeric: tabular-nums; }
 .rec-pill .btn.primary { background: var(--bg); color: var(--ink); }
 @keyframes rec-blink { to { visibility: hidden; } }
+
+/* The page a "too big for Telegram" link opens: the files, one button, a progress bar. */
+.send-page .send-list { margin: 0 0 var(--s4); padding: 6px var(--s5); list-style: none; border-radius: var(--r-card); background: var(--well); }
+.send-page .send-list li { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s2) 0; font-size: var(--text-ui); }
+.send-page .send-list li + li { border-top: 1px solid var(--line-strong); }
+.send-page .send-list span { min-width: 0; overflow-wrap: anywhere; }
+.send-page .send-list small { flex-shrink: 0; color: var(--muted); }
+.send-page .send-progress .upload-bar { max-width: none; height: 6px; color: var(--ink); }

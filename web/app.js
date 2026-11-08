@@ -127,13 +127,19 @@ async function upload(pid, list, attach, onProgress) {
     // One percentage across every file picked together.
     const total = list.reduce((n, f) => n + f.size, 0) || 1;
     let done = 0;
-    if (small.length) {
+    // Small files go up together, in batches under 90 MB: the proxy refuses any one request over 100 MB.
+    const batches = [];
+    for (const f of small) {
+      const last = batches[batches.length - 1];
+      if (last && last.size + f.size <= 90 * 1024 * 1024) { last.files.push(f); last.size += f.size; }
+      else batches.push({ files: [f], size: f.size });
+    }
+    if (batches.length) onProgress?.(0);
+    for (const b of batches) {
       const fd = new FormData();
-      for (const f of small) fd.append('file', f, f.name);
-      const smallSize = small.reduce((n, f) => n + f.size, 0);
-      onProgress?.(0);
-      saved.push(...((await sendWithProgress(`/api/chats/${pid}/files${query}`, fd, (part) => onProgress?.(part * smallSize / total))).saved || []));
-      done = smallSize;
+      for (const f of b.files) fd.append('file', f, f.name);
+      saved.push(...((await sendWithProgress(`/api/chats/${pid}/files${query}`, fd, (part) => onProgress?.((done + part * b.size) / total))).saved || []));
+      done += b.size;
     }
     for (const f of big) {
       saved.push(...await uploadPieces(pid, f, query, (part) => onProgress?.((done + part * f.size) / total)));
@@ -1655,29 +1661,37 @@ const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" unde
 const JOB_NAMES = { 'morning-brief': 'Morning brief', 'nightly-review': 'Nightly review' };
 const JOB_HELP = { 'morning-brief': 'What matters today, sent to you each morning.', 'nightly-review': 'Files the day into Ken’s memory and tells you what it saved.' };
 
-// Hosted Ken: a file too big for Telegram to pass on, sent here instead (the link Ken replied with in Telegram,
-// <site>/send/<token>, which opens #/send/<token>). Once it's here Ken carries on, and answers in Telegram.
+// Hosted Ken: files too big for Telegram to pass on, sent here instead (the link Ken replied with in Telegram,
+// <site>/send/<token>, which opens #/send/<token>). A whole page, so nothing else gets in the way: pick them all,
+// watch them go up, and Ken carries on in Telegram.
 function SendBigFile({ token, onClose }) {
   const [info, setInfo] = useState(null), [error, setError] = useState(''), [progress, setProgress] = useState(null), [done, setDone] = useState(false);
   useEffect(() => { api(`/api/telegram-files/${token}`).then(setInfo).catch((e) => setError(e.message)); }, []);
-  const noun = /video/.test(info?.kind || '') ? 'video' : /recording|voice/.test(info?.kind || '') ? 'recording' : 'file';
-  const pick = async (file) => {
-    if (!file) return;
+  const files = info?.files?.length ? info.files : info ? [info] : [];
+  const nouns = new Set(files.map((f) => /video/.test(f.kind || '') ? 'video' : /recording|voice/.test(f.kind || '') ? 'recording' : 'file'));
+  const noun = nouns.size === 1 ? [...nouns][0] : 'file', many = files.length > 1;
+  const pick = async (list) => {
+    if (!list.length) return;
     setError(''); setProgress(0);
     try {
-      const [name] = await upload('home', [file], true, setProgress);
-      await api(`/api/telegram-files/${token}`, { json: { file: name } });
+      const names = await upload('home', list, true, setProgress);
+      await api(`/api/telegram-files/${token}`, { json: { files: names } });
       setDone(true);
     } catch (e) { setError(e.message); setProgress(null); }
   };
-  return html`<${Modal} title=${done ? 'Ken has it' : `Send the ${noun} here`} className="big-file" closeX onClose=${onClose}>
-    ${done ? html`<p class="np-help">Ken is on it, and will answer you in Telegram.</p><div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
-      : info ? html`<p class="np-help">Telegram can't pass on files this big${info.name ? ` (${info.name}, ${Math.round(info.size / 1048576)} MB)` : ''}. Choose it here and Ken carries on with what you asked${info.caption ? `: “${info.caption}”` : ''}.</p>
-        ${progress === null ? html`<label class="btn primary big-file-pick">Choose the ${noun}<input type="file" hidden onChange=${(e) => pick(e.target.files[0])}/></label>`
-          : html`<p class="np-note" role="status">Sending…${progress > 0 ? ` ${Math.round(progress * 100)}%` : ''} Keep this page open until it's done.</p>`}`
-      : !error && html`<p class="np-note">Loading…</p>`}
-    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-  <//>`;
+  const pct = Math.round((progress || 0) * 100);
+  return html`<div class="settings-page send-page" role="region" aria-label="Send files to Ken"><div class="sp-wrap">
+    <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn sm ghost" onClick=${onClose}>Close</button></header>
+    ${done ? html`<h1 class="sp-title">Ken has them</h1><p class="np-help">Ken is on it, and will answer you in Telegram.</p><div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
+      : error && !info ? html`<h1 class="sp-title">This link doesn't work</h1><p class="connect-error" role="alert">${error}</p>`
+      : !info ? html`<p class="np-note">Loading…</p>`
+      : html`<h1 class="sp-title">Send ${many ? `your ${files.length} ${noun}s` : `the ${noun}`} here</h1>
+        <p class="np-help">Telegram can't pass on files this big. Choose ${many ? 'them all' : 'it'} here, at full quality, and Ken carries on with what you asked${info.caption ? `: “${info.caption}”` : ''}.</p>
+        ${files.some((f) => f.name) && html`<ul class="send-list">${files.map((f) => html`<li><span>${f.name}</span><small>${Math.round((f.size || 0) / 1048576)} MB</small></li>`)}</ul>`}
+        ${progress === null ? html`<label class="btn primary big-file-pick">Choose ${many ? `the ${noun}s` : `the ${noun}`}<input type="file" multiple hidden onChange=${(e) => pick([...e.target.files])}/></label>`
+          : html`<div class="send-progress" role="status"><div class="upload-bar"><span style=${`width:${pct}%`}></span></div><p class="np-note">Sending… ${pct}% · keep this page open until it's done.</p></div>`}
+        ${error && html`<p class="connect-error" role="alert">${error}</p>`}`}
+  </div></div>`;
 }
 
 function RenameProject({ project, onClose, onDone }) {

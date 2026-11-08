@@ -405,20 +405,21 @@ class WebApp:
         return _json({"ok": True})
 
     async def big_file(self, request):
-        """Hosted Ken: a file too big for Telegram, sent here instead (bot.py's too_big link). GET: what the link is
-        waiting for. POST {"file": <name uploaded into Home's files>}: it's here; Ken carries on in Telegram."""
-        expired = _json({"error": "This link has expired or was already used. Send the file to Ken in Telegram again for a new one."}, 404)
+        """Hosted Ken: files too big for Telegram, sent here instead (bot.py's too_big link). GET: what the link is
+        waiting for. POST {"files": [<names uploaded into Home's files>]} (or one "file"): here; Ken carries on in Telegram."""
+        expired = _json({"error": "This link has expired, was already used, or belongs to another Ken account. Send the file to Ken in Telegram again for a new one."}, 404)
         token = request.match_info["token"]
         if not self.phone:
             return expired
         if request.method == "GET":
             info = self.phone.waiting_file(token)
             return _json(info) if info else expired
-        name = str((await self._body(request)).get("file", ""))
-        path = self.engine.files_dir(HOME) / name
-        if not name or "/" in name or name.startswith(".") or not path.is_file():
-            return _json({"error": "That file didn't arrive. Try sending it again."}, 400)
-        return _json({"ok": True}) if await self.phone.file_arrived(token, path) else expired
+        body = await self._body(request)
+        names = [str(n) for n in (body.get("files") or [body.get("file", "")])][:50]
+        paths = [self.engine.files_dir(HOME) / n for n in names]
+        if not names or any(not n or "/" in n or n.startswith(".") or not p.is_file() for n, p in zip(names, paths)):
+            return _json({"error": "A file didn't arrive. Try sending it again."}, 400)
+        return _json({"ok": True}) if await self.phone.file_arrived(token, paths if "files" in body else paths[0]) else expired
 
     # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
     # talker that can make HTTP calls with Ken's web token can use them.
