@@ -86,6 +86,27 @@ async function uploadPieces(pid, file, query, onProgress) {
   return (await api(`/api/chats/${pid}/uploads/${id}/done${query}`, { json: {}, timeout: 120000 })).saved || [];
 }
 
+// fetch can't report how much it has sent, so a file upload goes through XMLHttpRequest to show a live percentage.
+function sendWithProgress(path, body, onProgress) {
+  return new Promise((ok, fail) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', path);
+    x.timeout = 600000;
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); };
+    x.onload = () => {
+      if (x.status === 401) { location.reload(); return fail(new Error('signed out')); }
+      let data = {};
+      try { data = JSON.parse(x.responseText); } catch {}
+      const said = typeof data.error === 'string' && !/^[a-z0-9_.-]+$/.test(data.error) ? data.error : '';
+      if (x.status < 200 || x.status >= 300) return fail(new Error(said || (x.status >= 500 ? 'Ken is waking up. Try again in a moment.' : x.statusText)));
+      ok(data);
+    };
+    x.onerror = () => fail(new Error('Can’t reach Ken right now. Check your connection and try again.'));
+    x.ontimeout = () => fail(new Error('Ken didn’t answer in time. Check your connection and try again.'));
+    x.send(body);
+  });
+}
+
 async function upload(pid, list, attach, onProgress) {
   const query = attach ? '?attach=1' : '';
   let saved;
@@ -93,13 +114,17 @@ async function upload(pid, list, attach, onProgress) {
   else {
     saved = [];
     const small = list.filter((f) => f.size <= 48 * 1024 * 1024), big = list.filter((f) => f.size > 48 * 1024 * 1024);
+    // One percentage across every file picked together.
+    const total = list.reduce((n, f) => n + f.size, 0) || 1;
+    let done = 0;
     if (small.length) {
       const fd = new FormData();
       for (const f of small) fd.append('file', f, f.name);
-      saved.push(...((await api(`/api/chats/${pid}/files${query}`, { body: fd, timeout: 600000 })).saved || []));
+      const smallSize = small.reduce((n, f) => n + f.size, 0);
+      onProgress?.(0);
+      saved.push(...((await sendWithProgress(`/api/chats/${pid}/files${query}`, fd, (part) => onProgress?.(part * smallSize / total))).saved || []));
+      done = smallSize;
     }
-    const total = big.reduce((n, f) => n + f.size, 0);
-    let done = 0;
     for (const f of big) {
       saved.push(...await uploadPieces(pid, f, query, (part) => onProgress?.((done + part * f.size) / total)));
       done += f.size;
@@ -416,7 +441,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
     ${recorder.error && html`<div class="mic-error" role="alert">${recorder.error}${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('privacy')}>Microphone settings</button>`}</div>`}
     ${recording && !recorder.heard && recorder.seconds>2 && html`<div class="mic-error" role="status">No sound from your microphone.${window.kenDesktop?.microphoneSettings && html` <button class="text-action" onClick=${()=>window.kenDesktop.microphoneSettings('input')}>Check input</button>`}</div>`}
     ${commands.length>0 && html`<div class="command-list" role="listbox" aria-label="Chat commands">${commands.map(([name,description],i)=>html`<button role="option" aria-selected=${i===commandIndex} onClick=${()=>{setText(name+' ');ta.current.focus();}}><b>${name}</b><span>${description}</span></button>`)}</div>`}
-    ${uploading > 0 && html`<div class="upload-status" role="status">${uploaded === null ? 'Attaching files…' : `Uploading… ${Math.round(uploaded * 100)}%`}</div>`}
+    ${uploading > 0 && html`<div class="upload-status" role="status">${uploaded === null ? 'Attaching files…' : uploaded >= 1 ? 'Saving on Ken…' : `Uploading… ${Math.round(uploaded * 100)}%`}${uploaded !== null && html`<div class="upload-bar"><span style=${`width:${Math.round(uploaded * 100)}%`}></span></div>`}</div>`}
     ${files.length > 0 && html`<div class="attached">${files.map((f) => html`<span class="filechip">${isImage(f)?html`<img src=${`/api/chats/${storageKey}/files/${encodeURIComponent(f)}`} alt=${f}/>`:Icon.file}${f}
       <button class="x" aria-label=${'Remove ' + f} onClick=${() => setFiles(files.filter((x) => x !== f))}>${Icon.close}</button></span>`)}</div>`}
     <div class="composer" onClick=${(e) => { if (e.target === e.currentTarget) ta.current?.focus(); }}>

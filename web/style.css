@@ -180,6 +180,8 @@
 .filechip img { width: 38px; height: 38px; object-fit: cover; border-radius: 8px; }
 .filechip .x { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; padding: 0; border: 0; border-radius: var(--r-pill); background: none; color: var(--faint); }
 .filechip .x:hover { background: var(--hover); color: var(--ink); }
+.upload-bar { height: 3px; margin-top: 4px; max-width: 240px; border-radius: 2px; background: var(--line, rgba(127,127,127,.25)); overflow: hidden; }
+.upload-bar span { display: block; height: 100%; background: currentColor; transition: width .2s; }
 .upload-status, .voice-setup { margin: 0 0 var(--s2) var(--s2); font-size: var(--text-xs); color: var(--muted); }
 .mic-error { margin: 0 0 var(--s2) var(--s2); font-size: var(--text-xs); line-height: 1.5; color: var(--danger); }
 .mic-error .text-action { font-size: var(--text-xs); }
