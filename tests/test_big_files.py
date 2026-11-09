@@ -205,6 +205,28 @@ def test_a_reel_too_big_to_send_gets_a_link_straight_to_it(monkeypatch, tmp_path
     assert bot.download_where(tmp_path / "x.mp4") == f"It's on this computer at {tmp_path / 'x.mp4'}"
 
 
+async def test_a_file_telegram_times_out_on_comes_as_a_link_not_an_error(monkeypatch, tmp_path):
+    import bot
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://ken.example/box/abc/keepalive")
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path / "inbox")
+    monkeypatch.setattr(bot, "OUTBOX_DIR", tmp_path / "outbox")
+    monkeypatch.setattr(bot, "log_history", lambda *a: None)
+    (tmp_path / "outbox").mkdir()
+    (tmp_path / "outbox" / "plan.pdf").write_bytes(b"pdf")
+    said = []
+
+    class Bot:
+        async def send_document(self, *a, **kw):
+            raise TimeoutError("Timed out")
+
+        async def send_message(self, chat_id, text, **kw):
+            said.append(text)
+
+    await bot.flush_outbox(Bot(), 1)
+    assert said == ["📁 plan.pdf didn't go through on Telegram. Download it here: https://ken.example/download/plan.pdf"]
+    assert (tmp_path / "inbox" / "plan.pdf").read_bytes() == b"pdf"
+
+
 async def test_a_batch_arrives_together_and_ken_works_on_all_of_it(hosted, monkeypatch, tmp_path):
     msg = Msg("one reel from these")
     await bot.too_big(msg, SimpleNamespace(file_size=50 * MB), "a video", "a.MOV")
@@ -268,3 +290,32 @@ async def test_a_big_video_plays_from_a_small_streaming_ready_copy(engine, aioht
     await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
     assert len(list(app.previews.glob("*.mp4"))) == 1  # made once
     assert await (await client.get(f"/api/chats/{HOME}/files/reel.mov")).read() == original  # saving gets the original
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
+def test_a_reply_never_shows_a_path_a_cloud_ken_links_the_file(monkeypatch, tmp_path):
+    import bot
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://ken.example/box/abc/keepalive")
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path / "inbox")
+    reel = tmp_path / "work" / "videos" / "launch-x" / "launch-x.mp4"
+    reel.parent.mkdir(parents=True)
+    reel.write_bytes(b"reel")
+    notes = tmp_path / "work" / "notes.md"
+    notes.write_text("x")
+    said = bot.no_paths(f"It's saved at `{reel}`. I also updated {notes}.")
+    assert said == "It's saved at launch-x.mp4 (https://ken.example/download/launch-x.mp4). I also updated notes.md."
+    assert (tmp_path / "inbox" / "launch-x.mp4").read_bytes() == b"reel" and reel.exists()  # linked, not moved
+    assert bot.no_paths(f"Again: {reel}") == "Again: launch-x.mp4 (https://ken.example/download/launch-x.mp4)"
+    assert bot.no_paths("Go to https://kencomputer.dev/a/b.html now") == "Go to https://kencomputer.dev/a/b.html now"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
+def test_a_reply_never_shows_a_path_a_ken_at_home_sends_the_file(monkeypatch, tmp_path):
+    import bot
+    monkeypatch.delenv("KEN_KEEPALIVE_URL", raising=False)
+    monkeypatch.setattr(bot, "OUTBOX_DIR", tmp_path / "outbox")
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"reel")
+    assert bot.no_paths(f"Here it is: [the reel]({reel})") == "Here it is: the reel"
+    assert bot.no_paths(f"Here: {reel}") == "Here: reel.mp4"
+    assert (tmp_path / "outbox" / "reel.mp4").read_bytes() == b"reel"
