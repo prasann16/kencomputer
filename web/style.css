@@ -418,9 +418,14 @@ ol.conn-steps li { margin: 2px 0; }
 .app-head .imap-logo { width: 22px; height: 22px; border-radius: 6px; }
 .imap-logo svg { width: 16px; height: 16px; }
 .apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 1px; }
-.apps-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 14px; border-radius: var(--r-card); background: var(--well); font-size: var(--text-md); font-weight: 500; }
+.apps-row { position: relative; display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 14px; border-radius: var(--r-card); background: var(--well); font-size: var(--text-md); font-weight: 500; }
 .apps-row img { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; }
-.apps-row span:first-of-type { flex: 1; min-width: 0; line-height: 1.3; overflow-wrap: anywhere; } /* long names wrap, never cut off */
+.apps-row span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
+/* The whole name, over the tile, when a cut-off name is hovered or tapped (fullName in app.js marks it .cut). */
+.apps-row.cut:has(.app-name:hover)::after, .apps-row.cut:has(.app-name:focus)::after {
+  content: attr(data-name); position: absolute; left: 10px; bottom: calc(100% + 4px); z-index: 5; max-width: calc(100% - 20px);
+  padding: 6px 10px; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: var(--text-sm); font-weight: 500;
+  white-space: normal; box-shadow: var(--shadow); pointer-events: none; }
 .apps-row .btn { flex-shrink: 0; }
 .apps-row .conn-on { font-size: var(--text-sm); font-weight: 400; }
 /* Telegram (hosted): a code to scan from a computer; a button on the phone. */

@@ -1376,7 +1376,7 @@ function HostedApps() {
       <${EmailForm} onDone=${(r) => { setMail(r.emails); setImap(false); }} onCancel=${() => setImap(false)}/></div>`}
     ${error ? html`<p class="connect-error" role="alert">${error} <button class="text-action" onClick=${() => load()}>Try again</button></p>` : !data ? html`<p class="np-note">Loading…</p>`
       : data.apps.length || imapShown ? html`<div class="apps-grid">${imapShown && html`<div class="apps-row">${logo({ slug: 'imap' })}<span>IMAP</span>${mail?.length
-          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${imap} onClick=${() => setImap(true)}>Connect</button>`}</div>`}${data.apps.map((a) => html`<div class="apps-row"><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span>${a.name}</span>${a.connected
+          ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${imap} onClick=${() => setImap(true)}>Connect</button>`}</div>`}${data.apps.map((a) => html`<div class="apps-row" data-name=${a.name}><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span class="app-name" tabindex="0" onMouseEnter=${fullName} onFocus=${fullName}>${a.name}</span>${a.connected
           ? html`<span class="conn-on"><i></i>Connected</span>` : html`<button class="btn sm" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Connect'}</button>`}</div>`)}</div>`
       : html`<p class="np-note">No app called "${q}".</p>`}`;
 }
@@ -1554,6 +1554,9 @@ function PlanLimits({ windows, label }) {
     <span class="ai-bar" role="meter" aria-label=${`${w.label} limit used`} aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(w.pct ?? 0)}><i style=${`width:${Math.min(100, Math.round(w.pct ?? 0))}%`}></i></span>
     <span class="ai-limit-text">${w.pct == null ? 'Near the limit' : `${Math.round(w.pct)}%`} · resets ${w.reset}</span></div>`)}</div>`;
 }
+
+// An app name too long for its tile ends in "…"; hovering (or tapping) it shows the whole name in a bubble.
+const fullName = (e) => { const el = e.currentTarget; el.parentElement.classList.toggle('cut', el.scrollWidth > el.clientWidth); };
 
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
