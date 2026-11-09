@@ -108,6 +108,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 KEN_HOME.mkdir(parents=True, exist_ok=True)
 # Ken's own Node for videos (video_kit.py), first on the PATH once it's there, so `npx remotion` is Ken's.
 os.environ["PATH"] = str(KEN_HOME / "tools" / "node" / "bin") + os.pathsep + os.environ.get("PATH", "")
+# HyperFrames (reels): no usage telemetry, and its skills ship with Ken (skills/hyperframes*), so its CLI never
+# installs them into the person's own ~/.agents.
+os.environ.setdefault("HYPERFRAMES_NO_TELEMETRY", "1")
+os.environ.setdefault("HYPERFRAMES_SKIP_SKILLS", "1")
 # How Ken runs itself from a shell: the app's engine, or this checkout's Python and bot.py.
 KEN_CMD = f'"{sys.executable}"' if getattr(sys, "frozen", False) else f'"{sys.executable}" "{Path(__file__).resolve()}"'
 SHARED_MCP: dict[str, dict] = {}  # name -> how a chat reaches a server every chat shares, once the app server is up

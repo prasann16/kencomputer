@@ -116,27 +116,44 @@ a warning survives two tries, accept it.
 
 New reels are HyperFrames projects: the captions and graphics are HTML, the person can change anything by hand
 from an edit link, and you render the finished video from the same project. The cut from step 2 (`cut.mp4`, with
-the words timed to it in `props.json`) is the footage.
+the words timed to it in `props.json`) is the footage. Always run HyperFrames as `npx -y hyperframes@0.9.25`.
 
     cd videos/<short-name> && npx -y hyperframes@0.9.25 init edit --video cut.mp4 --resolution portrait --skip-transcribe --non-interactive --skip-skills
 
-That makes `edit/`, the project. Read `edit/AGENTS.md` once: it's the contract every composition follows (timed
-clips, one paused timeline, nothing random). Then design it, the same brief as below: a hook in the first two seconds,
-captions that are their exact words (from `props.json` `words`, timed to `cut.mp4`), and infographics that show what
-they say, in their style, inside the safe zones. Build them in `edit/` (a scene per graphic, the captions as their own
-track) so each can be changed on its own later.
+That makes `edit/`, the project, with `cut.mp4` playing full screen and its sound kept (`data-has-audio="true"`;
+never mute it). **How** to build it is in your `hyperframes` skill: read its SKILL.md (the contract) and, for a reel,
+`references/types/vertical.md`, `references/captions.md`, `references/overlays.md` and `references/motion.md`.
+**What** to build is `plan.md`: this skill's plan replaces HyperFrames' own storylines and SPEC.md, and their
+approval of the plan is the go-ahead, so don't stop again for a preview.
+
+- **Captions**: their exact words from `props.json` `words` (already timed to `cut.mp4`), on one captions track,
+  a few words at a time, the spoken word highlighted. Look in the registry for a caption style before writing one
+  (`hyperframes-registry`: `npx -y hyperframes@0.9.25 catalog --query "word by word captions" --json`, then
+  `add <name>`), then make it theirs.
+- **Graphics**: one scene per graphic, each its own sub-composition in `edit/compositions/` so it can be changed on
+  its own. Search the registry first for anything with a name (a counter, a lower third, a chart, a highlight, a
+  transition) and restyle it; build only what it doesn't have. Real things from their source: an app's real icon
+  or screenshot, saved in `edit/assets/`.
+- **Fonts**: only HyperFrames' bundled fonts work by name; any other (their brand font, a Google font) needs its file
+  in `edit/assets/fonts/` with an `@font-face` (download it once with curl).
+- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
+  every word and graphic out of them.
+- **Sound effects** on visible actions (a pop, a whoosh) are optional and quiet: `media-use` has free ones. Never
+  add music unless they asked.
+- Design each reel yourself, in their style note's look where it says something.
 
 Check before rendering, in one go each: `npx -y hyperframes@0.9.25 check --json edit` (fix every error), then
 `npx -y hyperframes@0.9.25 snapshot edit --at 1.5,10,24` and look at the frames (cut-off text, a graphic over their
-face, red zones). Render:
+face, anything in the safe zones). A render draws every frame in Chrome, about 2 minutes per 20 seconds of reel, so
+check with snapshots and render once, as a background job:
 
     npx -y hyperframes@0.9.25 render edit --output reel.mp4 --quality delivery
 
 Then the same last checks as step 5 (the strip of frames, the cut read in order), and send `reel.mp4` with its edit
 link on its own line: `<ken> --video-edit <short-name>` prints it. Say it in one line, like "Want to change anything
 yourself? Edit it here: <link>". The link opens the editor in any browser, behind their Ken sign-in. They may change
-the reel there: before any later change, read `edit/` again rather than assuming it's as you left it, and render
-from it.
+the reel there: before any later change, read `edit/` again (`npx -y hyperframes@0.9.25 timeline --json edit` shows what
+plays when) rather than assuming it's as you left it, and render from it.
 
 The rest of this skill (design, frames, render) is for reels made before HyperFrames: a `props.json` design and no
 `edit/` folder. Keep changing those that way.
