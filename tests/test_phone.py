@@ -175,13 +175,16 @@ async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monk
         shown.append((said, files))
     monkeypatch.setattr(bot, "handle_prompt", handle_prompt)
     monkeypatch.setattr(bot, "log_history", lambda *a: None)
+    waits = []
     class File:
-        async def download_to_drive(self, path):
+        async def download_to_drive(self, path, **kw):
+            waits.append(kw.get("read_timeout"))
             open(path, "wb").write(b"mp4")
     def update(size):
-        async def get_file():
+        async def get_file(**kw):
+            waits.append(kw.get("read_timeout"))
             return File()
-        async def reply_text(text):
+        async def reply_text(text, **_):
             replies.append(text)
         async def send_action(action):
             pass
@@ -193,6 +196,12 @@ async def test_a_video_from_the_phone_reaches_ken_or_gets_a_reply(tmp_path, monk
     assert shown[0] == ("add captions", ["clip.mp4"])  # the app shows it as their message, video and all
     await bot.on_file(update(180 * 1024 * 1024), None)  # over Telegram's 20 MB bot limit: say so, don't go quiet
     assert len(prompts) == 1 and "20 MB" in replies[0]
+    # Ken's own Bot API server (2 GB): the server fetches the whole file before answering, so Ken waits long and says so.
+    monkeypatch.setattr(bot, "TELEGRAM_DOWNLOAD_LIMIT", 2000 * 1024 * 1024)
+    waits.clear()
+    await bot.on_file(update(800 * 1024 * 1024), None)
+    assert replies[-1].startswith("Got it. Bringing in the 800 MB video") and len(prompts) == 2
+    assert waits == [bot.FILE_WAIT, bot.FILE_WAIT] and bot.FILE_WAIT >= 600
 
 
 async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):

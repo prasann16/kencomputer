@@ -1194,17 +1194,17 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_chat.send_action(ChatAction.TYPING)
     try:
         if msg.photo:  # compressed photo: largest size is last
-            tg_file = await msg.photo[-1].get_file()
+            tg_file = await msg.photo[-1].get_file(read_timeout=FILE_WAIT)
             name = f"photo-{time.strftime('%Y%m%d-%H%M%S')}.jpg"
         else:  # sent as a file with an image mime type
-            tg_file = await msg.document.get_file()
+            tg_file = await msg.document.get_file(read_timeout=FILE_WAIT)
             name = msg.document.file_name or f"image-{time.strftime('%Y%m%d-%H%M%S')}"
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
         if path.exists():
             path = INBOX_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}"
         name = path.name
-        await tg_file.download_to_drive(str(path))
+        await tg_file.download_to_drive(str(path), read_timeout=FILE_WAIT)
     except Exception as e:
         log.warning("image download failed: %s", e)
         await msg.reply_text(f"Couldn't save that image: {e}")
@@ -1223,6 +1223,14 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # The Bot API hands bots files up to 20 MB (TELEGRAM_DOWNLOAD_MB can change that, for a server that allows more).
 TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 1024 * 1024
+# With Ken's own Bot API server, getFile answers only once the server has the whole file from Telegram (a 2 GB video
+# takes minutes), so fetching a file gets a long wait instead of the library's few seconds.
+FILE_WAIT = 30 * 60
+
+
+async def fetch_file(item, path: Path) -> None:
+    tg_file = await item.get_file(read_timeout=FILE_WAIT, write_timeout=60, connect_timeout=30)
+    await tg_file.download_to_drive(str(path), read_timeout=FILE_WAIT, write_timeout=60, connect_timeout=30)
 
 # Hosted Ken: a file too big for Telegram to pass on is sent in Ken's web app instead, through the link Ken replies
 # with (<site>/send/<token>; the web app takes big files in pieces). What they asked waits here for a day, and Ken
@@ -1393,12 +1401,15 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await too_big(msg, item, kind, name):
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
+    if (item.file_size or 0) > 100 * 1024 * 1024:  # a big one takes a while to come in: say so, once
+        await msg.reply_text(f"Got it. Bringing in the {item.file_size // (1024 * 1024)} MB {kind.split(' ', 1)[-1]}, "
+                             "big ones take a minute or two.", disable_notification=True)
     try:
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
         if path.exists():
             path = INBOX_DIR / f"{path.stem}-{stamp}{path.suffix}"
-        await (await item.get_file()).download_to_drive(str(path))
+        await fetch_file(item, path)
     except Exception as e:
         log.warning("file download failed: %s", e)
         await msg.reply_text(f"Couldn't save that: {e}")
