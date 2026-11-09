@@ -112,7 +112,23 @@ one")? Fix the ranges and cut again until it reads like they said it that way.
 next word too (often a "yeah" or "so" they ran straight into) or end the range a phrase earlier, then cut again. If
 a warning survives two tries, accept it.
 
-## 3. Build it in HyperFrames
+## 3. Design it (the same however it's built)
+
+Every reel gets infographics: that's what makes it more than captions over a talking head. What kind, how many,
+and how they look and move is your call, decided for this video and what they're saying (their style note wins
+where it says something). Show the real thing when they mention an app, tool or site (its real icon or screen).
+
+- **Captions**: their exact words, a few at a time, the spoken word picked out. Plain text over the video unless
+  you choose otherwise for this reel; a few words can be emphasized.
+- **Hook**: a short line over the first seconds, with the word that matters marked.
+- **Your own design every time**: no preset or template looks (no ready-made caption styles or graphic packs). Lay
+  each graphic out as one column or row so nothing overlaps.
+- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
+  every word and graphic out of them.
+
+Then build it one of two ways: in HyperFrames (3a, new reels) or with Remotion (3b–5, reels made before HyperFrames).
+
+## 3a. Build it in HyperFrames
 
 New reels are HyperFrames projects: the captions and graphics are HTML, the person can change anything by hand
 from an edit link, and you render the finished video from the same project. The cut from step 2 (`cut.mp4`, with
@@ -127,20 +143,14 @@ never mute it). **How** to build it is in your `hyperframes` skill: read its SKI
 approval of the plan is the go-ahead, so don't stop again for a preview.
 
 - **Captions**: their exact words from `props.json` `words` (already timed to `cut.mp4`), on one captions track,
-  a few words at a time, the spoken word highlighted. Look in the registry for a caption style before writing one
-  (`hyperframes-registry`: `npx -y hyperframes@0.9.25 catalog --query "word by word captions" --json`, then
-  `add <name>`), then make it theirs.
+  designed as in step 3. Write them yourself; don't add a registry caption style.
 - **Graphics**: one scene per graphic, each its own sub-composition in `edit/compositions/` so it can be changed on
-  its own. Search the registry first for anything with a name (a counter, a lower third, a chart, a highlight, a
-  transition) and restyle it; build only what it doesn't have. Real things from their source: an app's real icon
-  or screenshot, saved in `edit/assets/`.
+  its own, designed as in step 3. The registry is for mechanics only (a transition, a counter's motion), never
+  for a look. Real things from their source: an app's real icon or screenshot, saved in `edit/assets/`.
 - **Fonts**: only HyperFrames' bundled fonts work by name; any other (their brand font, a Google font) needs its file
   in `edit/assets/fonts/` with an `@font-face` (download it once with curl).
-- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
-  every word and graphic out of them.
 - **Sound effects** on visible actions (a pop, a whoosh) are optional and quiet: `media-use` has free ones. Never
   add music unless they asked.
-- Design each reel yourself, in their style note's look where it says something.
 
 Check before rendering, in one go each: `npx -y hyperframes@0.9.25 check --json edit` (fix every error), then
 `npx -y hyperframes@0.9.25 snapshot edit --at 1.5,10,24` and look at the frames (cut-off text, a graphic over their
@@ -158,18 +168,10 @@ plays when) rather than assuming it's as you left it, and render from it.
 The rest of this skill (design, frames, render) is for reels made before HyperFrames: a `props.json` design and no
 `edit/` folder. Keep changing those that way.
 
-## 3b. Design it (reels made before HyperFrames)
+## 3b. Build it with Remotion (reels made before HyperFrames)
 
-Every reel gets infographics: that's what makes it more than captions over a talking head. What kind, how many,
-and how they look and move is your call, decided on the fly for this video and what they're saying (their style
-note wins where it says something). Show the real thing when they mention an app, tool or site (its real icon or
-screen).
-
-Also available: a hook over the first seconds (`hook`, star the word that matters), emphasized caption words
+The design is step 3's. Also available: a hook over the first seconds (`hook`, star the word that matters), emphasized caption words
 (`words[i].emph = true`), a push-in on a line (`zooms`: `{start, end}`).
-
-**Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
-text and graphics out of them.
 
 **The toolbox.** `src/kit/tools.tsx` (it appears in the folder with the first `--video-stills`) has parts with no
 look of their own: `Place` (a spot in the safe zones, or x/y), `Text` (any Google font by name, any size, weight,
