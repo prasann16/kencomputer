@@ -2254,8 +2254,10 @@ class Engine:
 
     def voice_call_done(self, lines: list[dict], seconds: float) -> dict | None:
         """After a voice call, its words go into the Home chat, so voice and text are one history."""
-        said = [(str(x.get("role")), " ".join(str(x.get("text", "")).split())[:1000]) for x in lines[:200]
-                if isinstance(x, dict) and x.get("role") in ("you", "ken") and str(x.get("text", "")).strip()]
+        def clean(text) -> str:  # without the voice's delivery cues ("[excited] Oh, nice!")
+            return " ".join(re.sub(r"\[[a-z][a-z ]{1,24}\]", " ", str(text), flags=re.I).split())[:1000]
+        said = [(str(x.get("role")), clean(x.get("text", ""))) for x in lines[:200]
+                if isinstance(x, dict) and x.get("role") in ("you", "ken") and clean(x.get("text", ""))]
         if not said:
             return None
         text = "\n".join(f"{'You' if role == 'you' else 'Ken'}: {words}" for role, words in said)

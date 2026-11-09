@@ -76,7 +76,7 @@ def test_remember_puts_what_they_said_into_kens_real_memory(engine):
 
 
 async def test_after_the_call_its_words_are_in_the_chat_and_ken_hears_them_once(engine):
-    m = engine.voice_call_done([{"role": "you", "text": "what's on today?"}, {"role": "ken", "text": "Just the dentist at 3."},
+    m = engine.voice_call_done([{"role": "you", "text": "what's on today?"}, {"role": "ken", "text": "[cheerful] Just the dentist at 3."},
                                 {"role": "system", "text": "x"}, "junk"], 125.4)
     assert m["role"] == "ken" and m["call"] == {"seconds": 125} and m["via"] == "voice"
     assert m["text"] == "You: what's on today?\nKen: Just the dentist at 3."
