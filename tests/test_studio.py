@@ -84,3 +84,5 @@ def test_the_edit_link_is_on_the_host_behind_sign_in(monkeypatch):
     assert studio.link("porto-reel") == "https://kencomputer.dev/studio/porto-reel"
     monkeypatch.delenv("KEN_KEEPALIVE_URL")
     assert studio.link("porto-reel") == ""
+    monkeypatch.setenv("KEN_STUDIO_SITE", "http://localhost:4600/")  # a stand-in for the host, in a local test
+    assert studio.link("porto-reel") == "http://localhost:4600/studio/porto-reel"

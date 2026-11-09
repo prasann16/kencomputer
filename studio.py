@@ -84,4 +84,5 @@ def link(name: str) -> str:
     """The edit link for a project: on the host's site, behind the person's sign-in."""
     url = os.environ.get("KEN_KEEPALIVE_URL", "")
     site = url.rsplit("/box/", 1)[0] if url.startswith("https://") and "/box/" in url else ""
+    site = os.environ.get("KEN_STUDIO_SITE", "").rstrip("/") or site  # a stand-in for the host, when testing
     return f"{site}/studio/{name}" if site else ""
