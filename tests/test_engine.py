@@ -661,7 +661,7 @@ async def test_a_new_message_while_ken_is_busy_is_answered_at_once(engine):
 def test_room_for_one_more_job_is_read_from_the_computer(monkeypatch):
     import usage
     monkeypatch.setattr(usage.sys, "platform", "linux")
-    monkeypatch.setattr(usage.os, "getloadavg", lambda: (0.5, 0, 0))
+    monkeypatch.setattr(usage.os, "getloadavg", lambda: (0.5, 0, 0), raising=False)  # Windows has none
     gb = 2**30
     monkeypatch.setattr(usage, "ken_memory", lambda root=None: 3 * gb)  # the chat and two jobs: 1 GB each
     monkeypatch.setattr(usage, "memory", lambda: {"total": 8 * gb, "available": 5 * gb})

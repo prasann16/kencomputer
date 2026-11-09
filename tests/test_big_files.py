@@ -292,6 +292,7 @@ async def test_a_big_video_plays_from_a_small_streaming_ready_copy(engine, aioht
     assert await (await client.get(f"/api/chats/{HOME}/files/reel.mov")).read() == original  # saving gets the original
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
 def test_a_reply_never_shows_a_path_a_cloud_ken_links_the_file(monkeypatch, tmp_path):
     import bot
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://ken.example/box/abc/keepalive")
@@ -308,6 +309,7 @@ def test_a_reply_never_shows_a_path_a_cloud_ken_links_the_file(monkeypatch, tmp_
     assert bot.no_paths("Go to https://kencomputer.dev/a/b.html now") == "Go to https://kencomputer.dev/a/b.html now"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
 def test_a_reply_never_shows_a_path_a_ken_at_home_sends_the_file(monkeypatch, tmp_path):
     import bot
     monkeypatch.delenv("KEN_KEEPALIVE_URL", raising=False)
