@@ -2111,8 +2111,11 @@ async def notify_telegram(app) -> None:
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
                 quiet = hush or ev.get("via") == "app"  # they're in the app: it shows on Telegram without a buzz
                 if ev.get("role") == "you":
-                    attached = ("\n" if words else "") + "📎 " + ", ".join(files) if files else ""
-                    await send_outbound(app.bot, "💻 " + words[:3500] + attached, quiet=quiet)
+                    # A voice note shows as 🎙️ and what they said, never its file name.
+                    voice = [f for f in files if re.match(r"voice-.*\.(m4a|webm|ogg|mp3|wav|aac)$", f, re.I)]
+                    others = [f for f in files if f not in voice]
+                    attached = ("\n" if words else "") + "📎 " + ", ".join(others) if others else ""
+                    await send_outbound(app.bot, ("💻 🎙️ " if voice else "💻 ") + words[:3500] + attached, quiet=quiet)
                 elif ev.get("role") == "ken" and words:
                     await send_outbound(app.bot, words, quiet=quiet)
                     await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along

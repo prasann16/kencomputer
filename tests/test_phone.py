@@ -213,14 +213,15 @@ async def test_what_happens_in_the_app_shows_on_the_phone(monkeypatch):
     task = asyncio.create_task(bot.notify_telegram(SimpleNamespace(bot=None)))
     await asyncio.sleep(0)
     bot.ENGINE.emit("message", project=HOME, role="you", text="edit this for Instagram", files=["IMG_5208.MOV"], via="app")
+    bot.ENGINE.emit("message", project=HOME, role="you", text="Nah, it's okay", files=["voice-1794243961927.m4a"], via="app")
     bot.ENGINE.emit("message", project=HOME, role="ken", text="On it.", via="app")
     bot.ENGINE.emit("message", project=HOME, role="ken", text="Answer on the phone", via="telegram")  # already delivered there
     bot.ENGINE.emit("message", project=HOME, role="ken", text="Your reel is ready.", via="background")
     for _ in range(50):
         await asyncio.sleep(0.01)
     task.cancel()
-    assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "On it.", "Your reel is ready."]
-    assert quiets == [True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes
+    assert sent == ["💻 edit this for Instagram\n📎 IMG_5208.MOV", "💻 🎙️ Nah, it's okay", "On it.", "Your reel is ready."]
+    assert quiets == [True, True, True, False]  # at the Mac: no buzz; a background job finishing still buzzes
 
 
 async def test_hosted_ken_copies_an_app_chat_to_telegram_silently(monkeypatch):
