@@ -1555,8 +1555,8 @@ function PlanLimits({ windows, label }) {
     <span class="ai-limit-text">${w.pct == null ? 'Near the limit' : `${Math.round(w.pct)}%`} · resets ${w.reset}</span></div>`)}</div>`;
 }
 
-// An app name too long for its tile ends in "…"; hovering (or tapping) it shows the whole name in a bubble.
-const fullName = (e) => { const el = e.currentTarget; el.parentElement.classList.toggle('cut', el.scrollWidth > el.clientWidth); };
+// An app name too long for its tile (past two lines) ends in "…"; hovering or tapping it shows the whole name.
+const fullName = (e) => { const el = e.currentTarget; el.parentElement.classList.toggle('cut', el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth); };
 
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);

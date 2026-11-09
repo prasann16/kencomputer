@@ -417,10 +417,11 @@ ol.conn-steps li { margin: 2px 0; }
 .imap-logo { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; display: grid; place-items: center; background: var(--bg); color: var(--ink); }
 .app-head .imap-logo { width: 22px; height: 22px; border-radius: 6px; }
 .imap-logo svg { width: 16px; height: 16px; }
-.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 1px; }
+.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); /* wide enough that one word fits */ gap: 10px; padding: 1px; }
 .apps-row { position: relative; display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 14px; border-radius: var(--r-card); background: var(--well); font-size: var(--text-md); font-weight: 500; }
 .apps-row img { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; }
-.apps-row span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
+/* A name breaks only between words, onto two lines at most; past that it ends in … (and the bubble shows it all). */
+.apps-row span:first-of-type { flex: 1; min-width: 0; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; outline: none; }
 /* The whole name, over the tile, when a cut-off name is hovered or tapped (fullName in app.js marks it .cut). */
 .apps-row.cut:has(.app-name:hover)::after, .apps-row.cut:has(.app-name:focus)::after {
   content: attr(data-name); position: absolute; left: 10px; bottom: calc(100% + 4px); z-index: 5; max-width: calc(100% - 20px);
