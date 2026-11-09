@@ -297,6 +297,56 @@ def download_where(path: Path) -> str:
     return f"Download it here: {site}/download/{urllib.parse.quote(kept.name)}"
 
 
+# A path to a file on this computer, as Ken might write it in a reply (bare, in `code`, or as a markdown link target).
+_PATH_IN_TEXT = re.compile(r"(?<![\w/:.])((?:~|/)[^\s<>()`'\"*\[\]]*/[^\s<>()`'\"*\[\]]+\.[A-Za-z0-9]{1,5})(?![\w/])")
+# Things worth handing over (a reel, a picture, a document); a path to anything else is just named.
+DELIVERABLE = {".mp4", ".mov", ".m4v", ".webm", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".mp3", ".wav",
+               ".m4a", ".docx", ".xlsx", ".pptx", ".csv", ".txt", ".srt"}
+
+
+def _link_for(path: Path, site: str) -> str:
+    """A download link on the host's site for a file Ken made: linked (or copied) into its files, never moved."""
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    kept, n = INBOX_DIR / path.name, 1
+    while kept.exists() and not kept.samefile(path):
+        if kept.stat().st_size == path.stat().st_size and kept.read_bytes()[:65536] == path.read_bytes()[:65536]:
+            break  # the same file, handed over before
+        n += 1
+        kept = INBOX_DIR / f"{path.stem}-{n}{path.suffix}"
+    if not kept.exists():
+        try:
+            os.link(path, kept)
+        except OSError:
+            shutil.copy2(path, kept)
+    return f"{site}/download/{urllib.parse.quote(kept.name)}"
+
+
+def no_paths(text: str) -> str:
+    """Their chat never shows a path on this computer. A file worth having becomes a download link (a Ken in the cloud)
+    or is sent along after the message (a Ken on its own computer); anything else is just named."""
+    site = host_site()
+
+    def swap(m: re.Match) -> str:
+        raw = m.group(1)
+        path = Path(os.path.expanduser(raw))
+        name = path.name
+        try:
+            if not path.is_file() or path.suffix.lower() not in DELIVERABLE:
+                return name
+            if site:
+                return f"{name} ({_link_for(path, site)})"
+            OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+            if not (OUTBOX_DIR / name).exists() and path.parent.resolve() != OUTBOX_DIR.resolve():
+                shutil.copy2(path, OUTBOX_DIR / name)
+        except OSError:
+            pass
+        return name
+
+    text = re.sub(r"`([^`\n]+)`", lambda m: m.group(0) if not _PATH_IN_TEXT.fullmatch(m.group(1)) else m.group(1), text)
+    text = re.sub(r"\[([^\]\n]+)\]\(<?([~/][^()<>\n]*?)>?\)", lambda m: m.group(1) if _PATH_IN_TEXT.fullmatch(m.group(2)) else m.group(0), text)
+    return _PATH_IN_TEXT.sub(swap, text)
+
+
 async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
@@ -341,7 +391,9 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
             except Exception as e:
                 log.warning("failed sending %s: %s", path.name, e)
                 try:
-                    await bot.send_message(chat_id, f"📁 Couldn't send {path.name}: {e}")
+                    # Telegram didn't take it (slow or busy): a Ken in the cloud links to it on its site instead.
+                    where = download_where(path) if host_site() and path.exists() else "Ask me and I'll try again."
+                    await bot.send_message(chat_id, f"📁 {path.name} didn't go through on Telegram. {where}")
                 except Exception:
                     pass
                 path.unlink(missing_ok=True)
@@ -415,7 +467,9 @@ WORK_RULES = (
     "from the outbox; images arrive as photos, videos as playable videos (converted and shrunk to fit "
     "Telegram's 50MB automatically), everything else as documents. Copy, don't "
     "move, if the original matters. Say what you're sending in your reply — the file arrives "
-    "right after it. When they wrote from the app, also say where the file is saved. "
+    "right after it (one too big for Telegram comes as a download link). Never write out where a file is saved. "
+    "When they wrote from the app, give the file's full path alone in backticks: the app shows it as a player or "
+    "a file with a Download button, by name, never the path. "
 )
 SECRETS_RULE = (
     "SECRETS: when you need a login or API key, ask them to add it in the app's Brain, under Accounts & "
@@ -900,7 +954,7 @@ async def send_chunked(update: Update, text: str, quote: bool = True) -> None:
     """A reply quotes the message it answers (first chunk only), so it threads in the chat.
 
     Telegram only auto-quotes in groups; in a private chat the quote has to be asked for."""
-    text = text.strip() or "(done — no output)"
+    text = no_paths(text.strip()) or "(done — no output)"
     for i, chunk in enumerate(split_chunks(text)):
         quote_kw = {"do_quote": quote and i == 0, "allow_sending_without_reply": True}
         try:
@@ -1547,7 +1601,7 @@ async def send_outbound(bot, text: str, reply_to: int | None = None, quiet: bool
     `quiet` lands it without a buzz."""
     if bot is None or not ALLOWED_USER_ID:
         return
-    for i, chunk in enumerate(split_chunks(text.strip() or "…")):
+    for i, chunk in enumerate(split_chunks(no_paths(text.strip()) or "…")):
         quote = quoting(reply_to if i == 0 else None)
         try:
             await bot.send_message(ALLOWED_USER_ID, md_to_html(chunk), parse_mode=ParseMode.HTML,
@@ -2778,7 +2832,7 @@ class Phone:
         async def deliver(text: str) -> None:
             if bot is None:
                 return
-            for chunk in split_chunks(text.strip() or "(done — no output)"):
+            for chunk in split_chunks(no_paths(text.strip()) or "(done — no output)"):
                 try:
                     await bot.send_message(chat_id, md_to_html(chunk), parse_mode=ParseMode.HTML)
                 except BadRequest:

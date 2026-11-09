@@ -195,7 +195,7 @@ function words(text) {
 }
 function inline(text) {
   return text.split(/(`[^`\n]+`)/g).map((seg, i) => {
-    if (i % 2) { const code = seg.slice(1, -1); return isPath(code) ? fileLink(code, html`<code>${code}</code>`) : html`<code>${code}</code>`; }
+    if (i % 2) { const code = seg.slice(1, -1); return isPath(code) ? fileLink(code, code.replace(/\/$/, '').split('/').pop()) : html`<code>${code}</code>`; }
     const parts = seg.split(LINK_RE);
     return parts.map((part, j) => {
       if (j % 3 === 1) return null;
