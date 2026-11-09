@@ -29,10 +29,11 @@ rendered on a guess. In the chat:
    - **Every graphic**: the second it comes in, the words it lands on (quoted), what it shows and where on screen.
      The first 20 seconds need something to see too, not only captions.
    - **Captions**: their exact words.
-4. **Send them the plan** in plain words, short: a list they can read in thirty seconds, then "Shall I go ahead? Tell
-   me anything to change." **Then stop and wait.** Don't cut, design or render anything before their yes.
+4. **Tell them the plan** in a few short lines, in your own words: the main moves, not every cut and graphic
+   (`plan.md` keeps the detail). Ask if you should go ahead. **Then stop and wait.** Don't cut, design or render
+   anything before their yes.
 5. On their yes (with any changes written into `plan.md`), hand the whole job off as a background job: the folder,
-   what they asked, `plan.md`. Say it's running and they can keep talking to you. The job follows `plan.md`: steps 2
+   what they asked, `plan.md`. Tell them in one short line roughly how long it'll take. The job follows `plan.md`: steps 2
    to 5 carry it out, and anything it couldn't do as planned goes in its message at the end.
 
 Only words that say to skip the plan skip it: "just do it", "no need to check", "don't send me a plan", in this
@@ -47,14 +48,12 @@ numbers, web addresses ("kencomputer.dev", "24/7"), so the captions match what t
 
 ## 0. Their style first
 
-Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, this is
-their first video: ask ONE question before you start, "Any style you want? Send a reel you like, your brand
-colours or logo, or say 'surprise me'." If they send a reel, grab a few frames of it with ffmpeg and match its
-look (fonts, colours, captions, how graphics look and move). If they say "surprise me", or your instructions
-say not to ask, decide the look yourself for this video. The style note holds only what they
-asked for: a reel or brand they want matched, their colours or fonts, "keep this look", and every rule they gave
-you ("no emojis", "keep my jokes"). Every correction they make on any video goes into it right away, so they never
-say it twice. Never save a look you chose yourself as their style: each new reel gets its own look.
+Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, decide the
+look yourself for this video; don't ask about style first. If they send a reel they like, their colours or logo,
+match it. The style note holds only what they asked for: a reel or brand they want matched, their colours or fonts,
+"keep this look", and every rule they gave you ("no emojis", "keep my jokes"). Every correction they make on any
+video goes into it right away, so they never say it twice. Never save a look you chose yourself as their style:
+each new reel gets its own look.
 
 ## 1. Listen
 
