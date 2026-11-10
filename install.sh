@@ -123,7 +123,17 @@ ok "Voice transcription ready"
 # Claude Code ships inside the Agent SDK Ken just installed.
 CLAUDE_BIN="$("$KEN_HOME/venv/bin/python" -c "import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude')")"
 [ -x "$CLAUDE_BIN" ] || CLAUDE_BIN="$(command -v claude || true)"
-[ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
+
+# Any OpenAI-compatible address (KEN_OPENAI_BASE_URL, with a key and a model) runs Ken instead of Claude. One saved by
+# an earlier setup, or set in the app's Settings, is kept.
+OPENAI_BASE_URL="${KEN_OPENAI_BASE_URL:-}"
+OPENAI_API_KEY="${KEN_OPENAI_API_KEY:-}"
+OPENAI_MODEL="${KEN_OPENAI_MODEL:-}"
+if [ -z "$OPENAI_BASE_URL" ] && [ -f "$KEN_HOME/.env" ]; then
+  OPENAI_BASE_URL="$(sed -n 's/^KEN_OPENAI_BASE_URL=//p' "$KEN_HOME/.env")"
+  OPENAI_API_KEY="$(sed -n 's/^KEN_OPENAI_API_KEY=//p' "$KEN_HOME/.env")"
+  OPENAI_MODEL="$(sed -n 's/^KEN_OPENAI_MODEL=//p' "$KEN_HOME/.env")"
+fi
 
 # ---------- 4. telegram bot ----------
 # `ken setup` (KEN_SETUP=1) walks through Telegram and Claude again on an existing install.
@@ -191,9 +201,33 @@ else
   tg sendMessage -d "chat_id=$USER_ID" --data-urlencode "text=✓ Got you, ${FIRST_NAME:-there}. Finishing setup — I'll say hi in a minute." >/dev/null || true
 fi
 
-# ---------- 5. claude auth ----------
+# ---------- 5. ai auth ----------
 say ""
+# Claude, or any address that speaks the OpenAI API. An automated install sets KEN_AUTH_MODE or KEN_OPENAI_BASE_URL;
+# otherwise ask once, before Claude's sign-in.
+if [ -z "$OPENAI_BASE_URL" ] && [ -z "${KEN_AUTH_MODE:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && (: < /dev/tty) 2>/dev/null; then
+  ask "Run Ken on Claude, or an OpenAI-compatible address? [claude]:"
+  case "$REPLY" in
+    [oO]*)
+      ask "Address (for example https://api.openai.com/v1):"
+      OPENAI_BASE_URL="$REPLY"
+      ask_secret "Key (Enter if the address needs none):"
+      OPENAI_API_KEY="$REPLY"
+      ask "Model (Enter for the first one it offers):"
+      OPENAI_MODEL="$REPLY" ;;
+  esac
+fi
+if [ -n "$OPENAI_BASE_URL" ]; then
+  say "── Connecting your AI ──"
+  # Ask it for its models: catches a wrong address or key here, not on the first message.
+  OFFERED="$(KEN_OPENAI_BASE_URL="$OPENAI_BASE_URL" KEN_OPENAI_API_KEY="$OPENAI_API_KEY" "$KEN_HOME/venv/bin/python" -c \
+    "import sys, asyncio; sys.path.insert(0, '$KEN_HOME/app'); import openai_brain; m = asyncio.run(openai_brain.models()); print(m[0] if m else '')" \
+    2>/dev/null)" || fail "That address didn't answer — check it, its key, and the network"
+  OPENAI_MODEL="${OPENAI_MODEL:-$OFFERED}"
+  ok "Ken runs on $OPENAI_BASE_URL${OPENAI_MODEL:+ ($OPENAI_MODEL)}"
+else
 say "── Connecting Claude ──"
+[ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
 OAUTH_TOKEN=""
 API_KEY="${ANTHROPIC_API_KEY:-}"
 if [ "${KEN_AUTH_MODE:-subscription}" = "api" ]; then
@@ -228,6 +262,7 @@ else
   [ -n "$OAUTH_TOKEN" ] || fail "No Claude token — run 'claude setup-token' and re-run the installer"
   ok "Claude connected"
 fi
+fi
 
 # ---------- 6. config + memory ----------
 mkdir -p "$KEN_HOME/work" "$KEN_HOME/memory"
@@ -237,6 +272,9 @@ ALLOWED_USER_ID=$USER_ID
 CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN
 ANTHROPIC_API_KEY=$API_KEY
 CLAUDE_MODEL=${KEN_INITIAL_MODEL:-}
+KEN_OPENAI_BASE_URL=$OPENAI_BASE_URL
+KEN_OPENAI_API_KEY=$OPENAI_API_KEY
+KEN_OPENAI_MODEL=$OPENAI_MODEL
 WORKSPACE=$KEN_HOME/work
 WHISPER_MODEL=small
 TASK_TIMEOUT_SECONDS=1800
@@ -244,7 +282,7 @@ EOF
 if [ "${KEN_HOSTED:-}" = "1" ]; then
   printf '\nKEN_NO_AUTOUPDATE=1\n' >> "$KEN_HOME/.env"
   "$KEN_HOME/venv/bin/pip" freeze > "$KEN_HOME/app/requirements-deployed.txt"
-  "$CLAUDE_BIN" --version > "$KEN_HOME/app/claude-deployed-version.txt"
+  if [ -n "$CLAUDE_BIN" ]; then "$CLAUDE_BIN" --version > "$KEN_HOME/app/claude-deployed-version.txt"; fi
 fi
 chmod 600 "$KEN_HOME/.env"
 
@@ -269,7 +307,7 @@ if [ ! -f "$KEN_HOME/hosting.md" ]; then
 
 - Provisioned and handed over by the kencomputer.dev operator. Same open-source Ken software as a self-install; only who racked the box differs.
 - Everything of theirs lives here: SOUL.md, memory, history, files, credentials. Voice notes are transcribed on this machine.
-- What leaves this machine: calls to the Claude API (Anthropic) to run you, billed to their own Anthropic API key, and whatever a connected service is told to fetch or send.
+- What leaves this machine: calls to the AI they connected (Anthropic's Claude API, or their OpenAI-compatible address) to run you, and whatever a connected service is told to fetch or send.
 - Operator access: the operator keeps a root SSH login to this server for setup, health checks, updates, and backups. That login can read everything on the machine. Say so plainly if asked who can see their data.
 - Backups: not automatic. The operator can take an on-demand backup, which copies the whole Ken home directory, credentials included, to the operator's computer. Whether the hosting provider snapshots the VM depends on what was chosen at provisioning.
 - Hosted vs self-hosted, if they ask: hosted is zero setup and always on but trusts the operator; self-hosted runs on hardware they control but they own uptime, patching, and backups.
@@ -280,7 +318,7 @@ EOF
 
 - The human installed Ken themselves, on a machine they control, with the open-source install script. Nobody at kencomputer.dev has any access to it.
 - Everything lives here: SOUL.md, memory, history, files, credentials. Voice notes are transcribed on this machine.
-- What leaves this machine: calls to the Claude API (Anthropic) to run you, on their own Claude subscription or API key, and whatever a connected service is told to fetch or send.
+- What leaves this machine: calls to the AI they connected (Anthropic's Claude API, or their OpenAI-compatible address) to run you, and whatever a connected service is told to fetch or send.
 - Backups: nothing automatic. If this machine dies, ~/.ken is gone unless they back it up themselves. Say so if asked.
 EOF
   fi
