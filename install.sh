@@ -203,26 +203,39 @@ fi
 
 # ---------- 5. ai auth ----------
 say ""
-# Claude, or any address that speaks the OpenAI API. An automated install sets KEN_AUTH_MODE or KEN_OPENAI_BASE_URL;
-# otherwise ask once, before Claude's sign-in.
+# Claude, OpenAI, or a server of their own that speaks the OpenAI API. An automated install sets KEN_AUTH_MODE or
+# KEN_OPENAI_BASE_URL; otherwise ask once, before any sign-in.
 if [ -z "$OPENAI_BASE_URL" ] && [ -z "${KEN_AUTH_MODE:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && (: < /dev/tty) 2>/dev/null; then
-  ask "Run Ken on Claude, or an OpenAI-compatible address? [claude]:"
+  say "── How should Ken think? ──"
+  dim "  1) Claude        your Claude subscription or an Anthropic API key"
+  dim "  2) OpenAI        your OpenAI account's API key"
+  dim "  3) Self-hosted   Ollama, LM Studio, vLLM or any OpenAI-compatible server"
+  ask "Choose 1, 2 or 3 [1]:"
   case "$REPLY" in
-    [oO]*)
-      ask "Address (for example https://api.openai.com/v1):"
+    2|[oO]p*)
+      OPENAI_BASE_URL="https://api.openai.com/v1"
+      ask_secret "OpenAI API key:"
+      OPENAI_API_KEY="$REPLY"
+      [ -n "$OPENAI_API_KEY" ] || fail "An OpenAI API key is required"
+      ask "Model [gpt-4o]:"
+      OPENAI_MODEL="${REPLY:-gpt-4o}" ;;
+    3|[sSlL]*|[oO]l*)
+      ask "Address (for example http://localhost:11434/v1):"
       OPENAI_BASE_URL="$REPLY"
-      ask_secret "Key (Enter if the address needs none):"
+      ask_secret "Key (Enter if the server needs none):"
       OPENAI_API_KEY="$REPLY"
       ask "Model (Enter for the first one it offers):"
       OPENAI_MODEL="$REPLY" ;;
   esac
+  say ""
 fi
 if [ -n "$OPENAI_BASE_URL" ]; then
   say "── Connecting your AI ──"
   # Ask it for its models: catches a wrong address or key here, not on the first message.
+  dim "  Checking $OPENAI_BASE_URL…"
   OFFERED="$(KEN_OPENAI_BASE_URL="$OPENAI_BASE_URL" KEN_OPENAI_API_KEY="$OPENAI_API_KEY" "$KEN_HOME/venv/bin/python" -c \
     "import sys, asyncio; sys.path.insert(0, '$KEN_HOME/app'); import openai_brain; m = asyncio.run(openai_brain.models()); print(m[0] if m else '')" \
-    2>/dev/null)" || fail "That address didn't answer — check it, its key, and the network"
+    2>/dev/null)" || fail "$OPENAI_BASE_URL didn't answer — check the address, its key, and the network"
   OPENAI_MODEL="${OPENAI_MODEL:-$OFFERED}"
   ok "Ken runs on $OPENAI_BASE_URL${OPENAI_MODEL:+ ($OPENAI_MODEL)}"
 else

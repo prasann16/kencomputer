@@ -1123,7 +1123,7 @@ function FirstConnect({ onPick, onDone }) {
     <p>Ken runs on your Claude or ChatGPT subscription, or on any OpenAI-compatible address. Set it up once and you’re set.</p>
     <button class="btn primary" onClick=${() => pick('claude')}>Connect Claude</button>
     <button class="btn primary" onClick=${() => pick('codex')}>Connect ChatGPT</button>
-    <button class="btn primary" onClick=${() => setCompat(true)}>Use an OpenAI-compatible address</button>
+    <button class="btn primary" onClick=${() => setCompat(true)}>Use OpenAI or a self-hosted AI</button>
     <p class="first-connect-note">You can add the other one later in Settings.</p></div>`;
 }
 
@@ -1145,7 +1145,7 @@ function FirstThink({ usage, onPick, onConnected, onCredits }) {
     <div class="think-options" role="group" aria-label="How Ken thinks">
       ${option('Connect Claude', 'Use your Claude subscription', () => pick('claude'))}
       ${option('Connect ChatGPT', 'Use your ChatGPT subscription', () => pick('codex'))}
-      ${option('Use an OpenAI-compatible address', 'OpenAI, OpenRouter, Ollama, your own server', () => setCompat(true))}
+      ${option('Use OpenAI or a self-hosted AI', 'OpenAI, OpenRouter, Ollama, your own server', () => setCompat(true))}
       ${(() => {
         // None left (a used-up trial or month): don't offer them; a paid plan can add more instead.
         const none = usage?.credits_left && !(parseFloat(usage.credits_left.replace(/[^0-9.]/g, '')) > 0);
