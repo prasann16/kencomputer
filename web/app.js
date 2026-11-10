@@ -1381,6 +1381,19 @@ function HostedApps() {
       : html`<p class="np-note">No app called "${q}".</p>`}`;
 }
 
+// Hosted Ken's Settings → Phone: two tabs, iPhone (the app: a code to scan from a computer, the App Store button on a
+// phone) and Telegram. The code is the App Store link, made once (npx qrcode -t svg -e M -q 1 <link>).
+const IPHONE_APP = 'https://apps.apple.com/app/id6830192469';
+const IPHONE_QR = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31 31" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h31v31H0z"/><path stroke="#000000" d="M1 1.5h7m1 0h1m2 0h2m2 0h5m2 0h7M1 2.5h1m5 0h1m1 0h2m2 0h1m1 0h2m2 0h1m3 0h1m5 0h1M1 3.5h1m1 0h3m1 0h1m5 0h4m2 0h3m1 0h1m1 0h3m1 0h1M1 4.5h1m1 0h3m1 0h1m1 0h2m1 0h2m4 0h1m1 0h1m2 0h1m1 0h3m1 0h1M1 5.5h1m1 0h3m1 0h1m2 0h1m3 0h1m3 0h1m1 0h1m2 0h1m1 0h3m1 0h1M1 6.5h1m5 0h1m2 0h3m2 0h1m4 0h2m1 0h1m5 0h1M1 7.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M9 8.5h1m4 0h2m2 0h3M1 9.5h1m1 0h2m1 0h3m1 0h1m1 0h8m3 0h1m2 0h1m1 0h2M1 10.5h2m5 0h1m2 0h1m1 0h1m3 0h1m2 0h4m1 0h1m3 0h1M3 11.5h11m1 0h1m1 0h2m3 0h2m1 0h1m1 0h2M1 12.5h1m1 0h3m5 0h1m1 0h4m12 0h1M1 13.5h1m1 0h2m1 0h2m1 0h1m1 0h2m5 0h1m5 0h1m1 0h2M1 14.5h2m2 0h1m2 0h1m5 0h1m2 0h4m2 0h1m3 0h3M3 15.5h3m1 0h3m5 0h3m2 0h1m2 0h1m3 0h3M2 16.5h1m1 0h2m2 0h4m2 0h1m1 0h2m1 0h3m3 0h1m2 0h1M1 17.5h2m2 0h1m1 0h2m1 0h1m1 0h2m6 0h3m2 0h2m1 0h1M2 18.5h1m1 0h3m1 0h1m1 0h2m1 0h2m2 0h2m3 0h1m1 0h1m1 0h3M1 19.5h1m2 0h1m2 0h3m3 0h1m2 0h3m2 0h2m2 0h1m1 0h1M3 20.5h2m5 0h2m4 0h1m1 0h2m4 0h1m2 0h1M2 21.5h1m2 0h3m4 0h1m1 0h1m1 0h12M9 22.5h1m3 0h3m2 0h2m1 0h1m3 0h5M1 23.5h7m1 0h2m2 0h2m1 0h1m1 0h1m1 0h2m1 0h1m1 0h2m1 0h1M1 24.5h1m5 0h1m1 0h5m2 0h2m1 0h1m1 0h1m3 0h2m1 0h2M1 25.5h1m1 0h3m1 0h1m2 0h1m2 0h1m1 0h1m2 0h1m2 0h5m1 0h1m1 0h1M1 26.5h1m1 0h3m1 0h1m1 0h8m1 0h1m2 0h2m2 0h2m1 0h1M1 27.5h1m1 0h3m1 0h1m1 0h2m2 0h2m2 0h1m1 0h1m1 0h2m1 0h1m2 0h1m1 0h1M1 28.5h1m5 0h1m2 0h1m1 0h1m1 0h3m2 0h1m1 0h2m1 0h3m1 0h1M1 29.5h7m1 0h1m2 0h1m1 0h2m1 0h2m1 0h2m2 0h1m3 0h1"/></svg>';
+function HostedPhone() {
+  const [tab, setTab] = useState('iphone');
+  return html`<div class="segmented phone-tabs" role="radiogroup" aria-label="Phone">${[['iphone', 'iPhone'], ['telegram', 'Telegram']].map(([id, label]) => html`<button role="radio" aria-checked=${tab === id} onClick=${() => setTab(id)}>${label}</button>`)}</div>
+    ${tab === 'iphone' ? html`<p class="np-help">Ken on your iPhone: chat, get Ken's messages as notifications, and send it photos and files. Sign in with the same account.</p>
+      <div class="tg-connect"><p class="np-help tg-scan">Scan this with your iPhone's camera.</p><div class="tg-qr" dangerouslySetInnerHTML=${{ __html: IPHONE_QR }}></div>
+        <a class="btn primary" href=${IPHONE_APP} target="_blank" rel="noopener">Get it on the App Store</a></div>`
+      : html`<${HostedTelegram}/>`}`;
+}
+
 // Hosted Ken's Settings → Telegram: a code to scan with the phone (a button on the phone itself), right here; it
 // says Connected by itself once they press Start in Telegram.
 function HostedTelegram() {
@@ -1614,7 +1627,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
-  ${section('phone', 'Phone', HOSTED ? html`<${HostedTelegram}/>`
+  ${section('phone', 'Phone', HOSTED ? html`<${HostedPhone}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
   ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
   ${section('account', 'Account', html`<div class="tool-list">
