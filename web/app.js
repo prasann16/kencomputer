@@ -855,6 +855,11 @@ const VOICE_FILES = {
   libsampleratePath: '/vendor/elevenlabs/libsamplerate.worklet.js',
 };
 const TALK_CONNECT_WAIT = 25000;  // the whole way to a live call: the mic, Ken's context, the voice service
+// An answer with something to look at (a link, a draft, a few paragraphs) is in the chat already (/api/voice/ask posts
+// it there): the call shrinks to Ken's face in the corner so they can see it, and the talker is told not to read it out.
+// ponytail: a text heuristic on Ken's answer; a flag from Ken itself if it docks too often or too rarely.
+const TALK_SHOWABLE = /https?:\/\/|www\.\S|\]\(|```|\n\s*\n/;
+const TALK_SHOWN = '\n\n(This is on their screen now, in the chat. Don’t read out links, addresses or the draft: say in a few words what it is and that it’s in the chat.)';
 const TALK_LINES = { mic: 'Allow the microphone…', connecting: 'Connecting…', listening: 'Listening', speaking: 'Ken is talking', working: 'Ken is on it…', ended: 'Call ended', failed: '' };
 
 async function voiceStatus() {
@@ -872,6 +877,9 @@ function VoiceMode({ onClose }) {
   const [problem, setProblem] = useState({ text: '', retry: true });
   const [seconds, setSeconds] = useState(0);
   const [attempt, setAttempt] = useState(0);
+  const [docked, setDocked] = useState(false);
+  const dockedNow = useRef(false);
+  dockedNow.current = docked;
   const session = useRef(null), call = useRef(null), lines = useRef([]), started = useRef(0), face = useRef(null), endButton = useRef(null);
 
   // Once per call: tell the site it ended (it counts the minutes from the voice service's own record), and put what
@@ -894,7 +902,7 @@ function VoiceMode({ onClose }) {
       setProblem({ text, retry }); setState('failed');
     };
     started.current = 0; call.current = null; lines.current = [];
-    setState('mic'); setProblem({ text: '', retry: true }); setSeconds(0); setMuted(false); setMode('listening');
+    setState('mic'); setProblem({ text: '', retry: true }); setSeconds(0); setMuted(false); setMode('listening'); setDocked(false);
     (async () => {
       // The microphone first, asked only now that they tapped: a refusal gets a plain answer.
       try {
@@ -922,7 +930,12 @@ function VoiceMode({ onClose }) {
           clientTools: {
             ask_ken: async ({ request }) => {
               setWorking((n) => n + 1);
-              try { return (await api('/api/voice/ask', { json: { request }, timeout: 28000 })).answer; }
+              try {
+                const r = await api('/api/voice/ask', { json: { request }, timeout: 28000 });
+                if (r.done === false || !TALK_SHOWABLE.test(r.answer || '')) return r.answer;
+                if (!gone) setDocked(true);
+                return r.answer + TALK_SHOWN;
+              }
               catch { return 'Ken couldn’t be reached just now. Say so, and that it’s worth trying again in a moment.'; }
               finally { setWorking((n) => n - 1); }
             },
@@ -982,7 +995,7 @@ function VoiceMode({ onClose }) {
 
   useEffect(() => {
     endButton.current?.focus();
-    const key = (e) => { if (e.key === 'Escape') { hangUp(); onClose(); } };
+    const key = (e) => { if (e.key === 'Escape' && !dockedNow.current) { hangUp(); onClose(); } };
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
   }, []);
@@ -990,8 +1003,12 @@ function VoiceMode({ onClose }) {
   const mute = () => { const next = !muted; session.current?.setMicMuted(next); setMuted(next); };
   const line = state === 'live' ? (working ? TALK_LINES.working : muted ? 'Muted' : TALK_LINES[mode] || '') : TALK_LINES[state];
   const over = state === 'failed' || state === 'ended';
-  return html`<div class=${'talk ' + state + ' ' + (state === 'live' ? mode : '') + (working ? ' working' : '')} role="dialog" aria-modal="true" aria-label="Voice call with Ken">
-    <div class="talk-face" ref=${face}><img src="/ken.svg" alt=""/></div>
+  // Docked: Ken's face in the corner, the chat usable behind it; a click (or Enter) brings the call back.
+  const small = docked && !over;
+  const expand = small ? { role: 'button', tabIndex: 0, 'aria-label': 'Open the call', title: 'Open the call', onClick: () => setDocked(false),
+    onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDocked(false); } } } : {};
+  return html`<div class=${'talk ' + state + ' ' + (state === 'live' ? mode : '') + (working ? ' working' : '') + (small ? ' docked' : '')} role=${small ? 'region' : 'dialog'} aria-modal=${small ? null : 'true'} aria-label="Voice call with Ken">
+    <div class="talk-face" ref=${face} ...${expand}><img src="/ken.svg" alt=""/></div>
     <p class="talk-line" role="status">${line}</p>
     ${state === 'live' && html`<p class="talk-time">${durationLabel(seconds)}</p>`}
     ${problem.text && html`<p class="talk-problem" role="alert">${problem.text}</p>`}
