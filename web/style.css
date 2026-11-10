@@ -430,6 +430,7 @@ ol.conn-steps li { margin: 2px 0; }
 .apps-row .btn { flex-shrink: 0; }
 .apps-row .conn-on { font-size: var(--text-sm); font-weight: 400; }
 /* Telegram (hosted): a code to scan from a computer; a button on the phone. */
+.phone-tabs { margin: 0 0 var(--s4); }
 .tg-connect { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: var(--s6); border-radius: var(--r-card); background: var(--well); text-align: center; }
 .tg-connect .np-help { margin: 0; }
 .tg-qr { width: 200px; height: 200px; padding: var(--s2); border-radius: var(--r-md); background: #fff; }
