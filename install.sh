@@ -203,6 +203,8 @@ fi
 
 # ---------- 5. ai auth ----------
 say ""
+OAUTH_TOKEN=""  # only the Claude path fills these; .env is written either way
+API_KEY="${ANTHROPIC_API_KEY:-}"
 # Claude, OpenAI, or a server of their own that speaks the OpenAI API. An automated install sets KEN_AUTH_MODE or
 # KEN_OPENAI_BASE_URL; otherwise ask once, before any sign-in.
 if [ -z "$OPENAI_BASE_URL" ] && [ -z "${KEN_AUTH_MODE:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ] && (: < /dev/tty) 2>/dev/null; then
@@ -269,8 +271,6 @@ PROBE
 else
 say "── Connecting Claude ──"
 [ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
-OAUTH_TOKEN=""
-API_KEY="${ANTHROPIC_API_KEY:-}"
 if [ "${KEN_AUTH_MODE:-subscription}" = "api" ]; then
   if [ -z "$API_KEY" ]; then
     ask_secret "Paste your own Anthropic API key (billed to your account):"
