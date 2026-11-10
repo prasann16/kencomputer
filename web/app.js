@@ -171,6 +171,11 @@ const isPath = (s) => /^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) &
 let notify = () => {}, showDoc = () => {};
 // Ken on a computer in the cloud, used in the browser (from /api/meta): no Mac features, and its own browser if the plan has one.
 let HOSTED = false, HOSTED_BROWSER = false;
+// Ken in the cloud: its computer sleeps after 5 quiet minutes, and awake time counts against the plan. A tab nobody
+// has touched for this long (no typing, clicking, scrolling) stops talking to it, even while it's on screen.
+const IDLE_MS = 5 * 60000;
+let lastTouch = Date.now(), napping = false;
+const idleTab = () => HOSTED && (document.hidden || napping);
 const sharedUrl = (path) => `/api/file?path=${encodeURIComponent(path)}`;
 async function openFile(path) {
   try {
@@ -952,6 +957,7 @@ function VoiceMode({ onClose }) {
   useEffect(() => {
     if (state !== 'live') return;
     const tick = setInterval(() => {
+      lastTouch = Date.now();  // talking to Ken is using it, hands-free or not
       const secs = (Date.now() - started.current) / 1000;
       setSeconds(secs);
       const max = call.current?.max_seconds || 900;
@@ -2021,14 +2027,14 @@ function App() {
     loadMeta(); loadModel(); loadModelCatalog(); loadAwake();
     // In the cloud, Ken's computer stays awake while anything talks to it, and awake time counts against the plan:
     // a tab left in the background stops asking after a few minutes (see the events socket below).
-    const quiet = () => HOSTED && document.hidden;
-    const refresh = setInterval(() => { if (!quiet()) load(); }, 15000);
-    const plan = setInterval(() => { if (HOSTED && !document.hidden) loadMeta(); }, 300000);
+    const refresh = setInterval(() => { if (!idleTab()) load(); }, 15000);
+    const plan = setInterval(() => { if (!idleTab() && HOSTED) loadMeta(); }, 300000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); clearInterval(plan); };
   }, []);
   useEffect(() => { setModel(null); loadModel(); load(); loadProjectMeta(pid); }, [pid]);
   useEffect(() => {
     let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer, heard = Date.now();
+    const busy = new Set();  // chats Ken is answering right now: their tab keeps listening
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
       ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
@@ -2045,6 +2051,7 @@ function App() {
         if (ev.type === 'chat.tool') { setActivity((a) => ({ ...a, [project]: ev.text })); return; }
         if (ev.type === 'chat.busy') {
           generation.current++;
+          if (ev.busy) busy.add(project); else busy.delete(project);
           setChat((c) => c && c.pid === project ? { ...c, busy: ev.busy } : c);
           if (!ev.busy) { setStream((s) => ({ ...s, [project]: '' })); setActivity((a) => ({ ...a, [project]: '' })); }
           return;
@@ -2065,15 +2072,28 @@ function App() {
     connect();
     // Ken pings every 20 seconds: a line that's gone quiet for 50 was cut on the way without a close, so start again.
     const watchdog = setInterval(() => { if (!closed && !resting && ws && ws.readyState === WebSocket.OPEN && Date.now() - heard > 50000) { const dead = ws; dead.onclose = null; dead.close(); setOnline(false); connect(); } }, 10000);
-    // Ken in the cloud: hang up after 3 minutes in the background so its computer can sleep; pick up again on return.
+    // Ken in the cloud: hang up after 3 minutes in the background, or 5 untouched on screen (unless Ken is answering),
+    // so its computer can sleep; pick up again, and catch up, the moment they're back.
+    const rest = () => { if (resting) return; resting = true; clearTimeout(timer); if (ws) ws.close(); };
+    const wake = () => { napping = false; if (resting && !document.hidden) { resting = false; retry = 0; connect(); loadMeta(); load(); } };
     const visibility = () => {
       if (!HOSTED) return;
       clearTimeout(hiddenTimer);
-      if (document.hidden) hiddenTimer = setTimeout(() => { resting = true; clearTimeout(timer); if (ws) ws.close(); }, 180000);
-      else if (resting) { resting = false; retry = 0; connect(); loadMeta(); }
+      if (document.hidden) hiddenTimer = setTimeout(rest, 180000);
+      else { lastTouch = Date.now(); wake(); }
     };
+    const touched = () => { lastTouch = Date.now(); if (napping) wake(); };
+    const TOUCH = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'focus'];
+    let moved = 0;
+    const mousemove = () => { const now = Date.now(); if (now - moved > 5000) { moved = now; touched(); } };
+    TOUCH.forEach((t) => addEventListener(t, touched, { passive: true, capture: true }));
+    addEventListener('mousemove', mousemove, { passive: true });
+    const idleCheck = setInterval(() => {
+      if (HOSTED && !napping && !busy.size && Date.now() - lastTouch > IDLE_MS) { napping = true; rest(); }
+    }, 30000);
     document.addEventListener('visibilitychange', visibility);
-    return () => { closed = true; clearInterval(watchdog); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility); if (ws) ws.close(); };
+    return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
+      TOUCH.forEach((t) => removeEventListener(t, touched, { capture: true })); removeEventListener('mousemove', mousemove); if (ws) ws.close(); };
   }, []);
   const send = async (text, files, retryId, target = pid) => {
     if (!retryId && !files.length && await command(text)) return;
