@@ -550,6 +550,50 @@ class CodexOnboarding(Onboarding):
 AI_CHOICES = ("credits", "claude", "codex")
 
 
+class OpenAIOnboarding:
+    """An OpenAI-compatible endpoint: an address, a key and a model, kept in ~/.ken/.env. Nothing to sign in to."""
+
+    active = False
+
+    def __init__(self, home: Path, on_connected: Callable) -> None:
+        self.env_file, self.on_connected = home / ".env", on_connected
+        self.error = ""
+
+    def status(self) -> dict:
+        return {"connected": bool(os.environ.get("KEN_OPENAI_BASE_URL")), "backend": "openai", "how": "key",
+                **({"error": self.error} if self.error else {})}
+
+    async def connect(self, url: str, key: str = "", model: str = "") -> dict:
+        """Save the endpoint once it answers, so a wrong address or key is caught here and not on the next message."""
+        import openai_brain
+
+        url, key, model = url.strip().rstrip("/"), key.strip(), model.strip()
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("That isn’t a web address. It starts with http:// or https://.")
+        try:
+            offered = await openai_brain.models(url, key)
+        except Exception as e:
+            log.warning("OpenAI-compatible endpoint didn't answer: %s", e)
+            raise ValueError("Couldn’t reach that address. Check it and the key, then try again.") from e
+        save_env(self.env_file, "KEN_OPENAI_BASE_URL", url)
+        if key:
+            save_env(self.env_file, "KEN_OPENAI_API_KEY", key)
+        if model or offered:
+            save_env(self.env_file, "KEN_OPENAI_MODEL", model or offered[0])
+        self.error = ""
+        await self.on_connected()
+        return self.status()
+
+    async def disconnect(self) -> dict:
+        for name in ("KEN_OPENAI_BASE_URL", "KEN_OPENAI_API_KEY", "KEN_OPENAI_MODEL"):
+            drop_env(self.env_file, name)
+        await self.on_connected()
+        return self.status()
+
+    def stop(self) -> None:
+        pass
+
+
 class BrainOnboarding:
     """Both accounts stay connected; each chat chooses its own runtime."""
 
@@ -558,10 +602,9 @@ class BrainOnboarding:
         self.fresh = fresh  # a brand-new Ken: it hasn't said its first words yet
 
     def own_connected(self) -> bool:
-        """Their own Claude or ChatGPT is in (Ken AI credits don't count)."""
+        """Their own AI is in (Ken AI credits don't count)."""
         own_claude = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
-        codex = self.providers.get("codex")
-        return own_claude or bool(codex and codex.status().get("connected"))
+        return own_claude or any(p.status().get("connected") for n, p in self.providers.items() if n != "claude")
 
     def ask_ai(self) -> bool:
         """Never asked any more: a brand-new Ken in the cloud just starts on Ken AI credits (the free taste, or the
@@ -588,7 +631,7 @@ class BrainOnboarding:
         try:
             return self.providers[self.backend() if backend is None else backend]
         except (KeyError, TypeError):
-            raise ValueError("Choose Claude or Codex.") from None
+            raise ValueError("Choose the AI Ken should run on.") from None
 
     @property
     def active(self):
@@ -628,6 +671,11 @@ class BrainOnboarding:
         await self.provider(backend).save_api_key(key)
         self._chose(backend)
         return self.status()
+
+    async def connect_openai(self, url: str, key: str = "", model: str = "") -> dict:
+        """The setup form's OpenAI-compatible endpoint: an address, a key, a model."""
+        result = await self.providers["openai"].connect(url, key, model)
+        return {**self.status(), **result}
 
     async def disconnect(self, backend=None):
         await self.provider(backend).disconnect()

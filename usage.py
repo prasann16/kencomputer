@@ -325,10 +325,10 @@ class Usage:
     def report(self, backend: str, now: float | None = None, mem: dict | None = None, ken: int | None = None) -> str:
         """/usage: each window's meter and when it resets, then this computer's memory."""
         now = time.time() if now is None else now
-        plan = PLAN_NAMES.get(backend, backend)
+        plan = PLAN_NAMES.get(backend, "")  # an OpenAI-compatible endpoint has no plan to meter: memory only
         windows = self.load().get(backend, {})
-        lines = [f"Your {plan} plan:"]
-        if not windows:
+        lines = [f"Your {plan} plan:"] if plan else []
+        if plan and not windows:
             lines.append(f"No reading yet. {plan} reports it as you chat, so ask again after a reply.")
         for name in sorted(windows, key=lambda k: list(WINDOW_NAMES).index(k) if k in WINDOW_NAMES else 99):
             w = windows[name]

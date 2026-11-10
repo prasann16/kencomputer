@@ -1006,13 +1006,15 @@ function VoiceMode({ onClose }) {
 
 // claude-sonnet-4-5-20250929 → Sonnet 4.5
 const modelName = (id) => { if (!id.startsWith('claude-')) return id; const [family, ...version] = id.replace(/^claude-/, '').replace(/-\d{8}$/, '').split('-'); return family[0].toUpperCase() + family.slice(1) + (version.length ? ' ' + version.join('.') : ''); };
+// What to call each brain on screen.
+const brainName = (id) => ({ claude: 'Claude', codex: 'ChatGPT', openai: 'OpenAI' }[id] || id);
 
 function ModelPicker({ model, catalog, disabled, onChange }) {
   // On Ken AI credits Ken picks the model itself: no menu. Their own Claude or ChatGPT gets the full menu.
   if (model.credits) return null;
   return html`<select class="model-select" aria-label="Brain and model" title="Choose a brain and model for this chat" disabled=${disabled} value=${JSON.stringify([model.backend, model.current || ''])} onChange=${(e) => { const [backend, model] = JSON.parse(e.target.value); onChange({backend, model}); }}>
     ${model.providers.map((backend) => {
-      const label = backend === 'codex' ? 'Codex' : 'Claude';
+      const label = brainName(backend);
       const active = backend === model.backend;
       const choices = [...new Set([...(active ? model.choices : catalog[backend] || []), ...(active && model.current ? [model.current] : [])])];
       return html`<optgroup label=${label}><option value=${JSON.stringify([backend, ''])}>${label} · Default</option>${choices.map((id) => html`<option value=${JSON.stringify([backend, id])}>${modelName(id)}</option>`)}</optgroup>`;
@@ -1084,27 +1086,51 @@ function LocalConnect({ onDone, backend = 'claude', start = false, tab = null, o
   </div>`;
 }
 
+// An OpenAI-compatible endpoint: an address, a key and a model, the way OpenAI, OpenRouter, Ollama or a local server
+// are set up. Saved in ~/.ken/.env; nothing to sign in to.
+function OpenAICompatible({ onConnected, onBack }) {
+  const [url, setUrl] = useState(''), [key, setKey] = useState(''), [model, setModel] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const field = (label, placeholder, value, set, type = 'text') => html`<label class="np-label">${label}<input class="connect-input" type=${type} autocomplete="off" placeholder=${placeholder} value=${value} onInput=${(e) => set(e.target.value)}/></label>`;
+  const connect = async () => {
+    setBusy(true); setError('');
+    try { onConnected(await api('/api/setup', { json: { action: 'openai', url: url.trim(), key: key.trim(), model: model.trim() }, timeout: 60000 })); }
+    catch (e) { setError(e.message); setBusy(false); }
+  };
+  return html`<div class="connect"><img src="/ken.svg" alt=""/><h1>OpenAI-compatible AI</h1>
+    <p>Any address that speaks the OpenAI API. Ken uses it exactly like an account.</p>
+    ${field('Address', 'https://api.openai.com/v1', url, setUrl)}
+    ${field('Key', 'Leave empty if the address needs none', key, setKey, 'password')}
+    ${field('Model', 'Leave empty to use the first one it offers', model, setModel)}
+    <button class="btn primary" disabled=${busy || !/^https?:\/\/\S+$/.test(url.trim())} onClick=${connect}>${busy ? 'Checking…' : 'Connect'}</button>
+    ${onBack && html`<button class="text-action" disabled=${busy} onClick=${onBack}>Back</button>`}
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+  </div>`;
+}
+
 // Ken on a computer in the cloud: there's no browser on that computer, so every way in works from wherever you are.
 // Claude: sign in and paste the code Claude shows, paste a token from `claude setup-token`, or an API key.
 // ChatGPT: open a page, type the code shown here; or an API key.
 
 // First run, nothing connected yet: Ken runs on a Claude or a ChatGPT account. The other can be added later in Settings.
 function FirstConnect({ onPick, onDone }) {
-  const [backend, setBackend] = useState(''), tab = useRef(null);
+  const [backend, setBackend] = useState(''), [compat, setCompat] = useState(false), tab = useRef(null);
   // In a browser, the sign-in tab has to be opened by the click itself; Connect points it at Claude or OpenAI.
   const pick = (b) => { tab.current = window.kenDesktop ? null : window.open('', '_blank'); setBackend(b); onPick(b); };
+  const useCompat = (r) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend: 'openai' } }).catch(() => r).then(onDone);
+  if (compat) return html`<${OpenAICompatible} onConnected=${useCompat} onBack=${() => setCompat(false)}/>`;
   if (backend) return html`<${Connect} key=${backend} backend=${backend} start tab=${tab.current} onDone=${onDone} onBack=${() => setBackend('')}/>`;
   return html`<div class="connect first-connect"><img src="/ken.svg" alt=""/><h1>Connect Ken</h1>
-    <p>Ken runs on your Claude or ChatGPT subscription. Sign in once and you’re set.</p>
+    <p>Ken runs on your Claude or ChatGPT subscription, or on any OpenAI-compatible address. Set it up once and you’re set.</p>
     <button class="btn primary" onClick=${() => pick('claude')}>Connect Claude</button>
     <button class="btn primary" onClick=${() => pick('codex')}>Connect ChatGPT</button>
+    <button class="btn primary" onClick=${() => setCompat(true)}>Use an OpenAI-compatible address</button>
     <p class="first-connect-note">You can add the other one later in Settings.</p></div>`;
 }
 
 // A brand-new Ken in the cloud, before its first words: how should it think? Their own Claude or ChatGPT (the same
 // Connect as above), or Ken AI credits (free to try, or the plan's). Asked once (setup.json "ai"); Settings → AI later.
 function FirstThink({ usage, onPick, onConnected, onCredits }) {
-  const [backend, setBackend] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), tab = useRef(null);
+  const [backend, setBackend] = useState(''), [compat, setCompat] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), tab = useRef(null);
   const pick = (b) => { tab.current = window.open('', '_blank'); setBackend(b); onPick(b); };
   const credits = async () => {
     setBusy(true); setError('');
@@ -1112,12 +1138,14 @@ function FirstThink({ usage, onPick, onConnected, onCredits }) {
   };
   if (backend) return html`<${Connect} key=${backend} backend=${backend} start tab=${tab.current} onBack=${() => setBackend('')}
     onDone=${(r) => api('/api/setup', { json: { action: 'ai', ai: backend } }).catch(() => r).then(onConnected)}/>`;
+  if (compat) return html`<${OpenAICompatible} onConnected=${(r) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend: 'openai' } }).catch(() => r).then(onConnected)} onBack=${() => setCompat(false)}/>`;
   const free = !usage || usage.free;
   const option = (label, sub, onClick, primary) => html`<button class=${'think-option' + (primary ? ' primary' : '')} disabled=${busy} onClick=${onClick}><b>${label}</b><span>${sub}</span></button>`;
   return html`<div class="connect first-connect first-think"><img src="/ken.svg" alt=""/><h1>How should Ken think?</h1>
     <div class="think-options" role="group" aria-label="How Ken thinks">
       ${option('Connect Claude', 'Use your Claude subscription', () => pick('claude'))}
       ${option('Connect ChatGPT', 'Use your ChatGPT subscription', () => pick('codex'))}
+      ${option('Use an OpenAI-compatible address', 'OpenAI, OpenRouter, Ollama, your own server', () => setCompat(true))}
       ${(() => {
         // None left (a used-up trial or month): don't offer them; a paid plan can add more instead.
         const none = usage?.credits_left && !(parseFloat(usage.credits_left.replace(/[^0-9.]/g, '')) > 0);
@@ -1615,17 +1643,21 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
-      const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      own.openai = !!setup?.providers?.openai?.connected;
+      const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : own.openai ? 'openai' : HOSTED ? 'credits' : '';
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
       const rows = [['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => html`<div>${name(id, label)}<span class="ai-state">${own[id] ? `Connected${inUse === id ? ' · in use' : ''}` : 'Not connected'}</span>
         <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
         ${own[id] && limits && html`<${PlanLimits} windows=${limits[id] || []} label=${label}/>`}</div>`);
+      rows.push(html`<div>${name('openai', 'OpenAI-compatible')}<span class="ai-state">${own.openai ? `Connected${inUse === 'openai' ? ' · in use' : ''}` : 'Not connected'}</span>
+        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect('openai')}>${own.openai ? 'Change' : 'Connect'}</button>${own.openai && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: 'openai' } }).then((r) => { onConnected(r); toast('OpenAI-compatible AI disconnected.'); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span></div>`);
       const usage = meta.usage || {};
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
         <span class="ai-actions">${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
       return rows;
     })()}</div>
-    ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
+    ${reconnect === 'openai' && html`<${OpenAICompatible} onConnected=${(r) => { setReconnect(''); onConnected(r); toast('AI connected.'); }} onBack=${() => setReconnect('')}/>`}
+    ${reconnect && reconnect !== 'openai' && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', 'Phone', HOSTED ? html`<${HostedPhone}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
@@ -2178,7 +2210,7 @@ function App() {
   if (opened.current.pid !== pid) opened.current = { pid, ts: seenAt[pid] || 0 };
   const visibleChat = chat && chat.pid === pid ? { ...chat, messages: [...chat.messages, ...outbox.filter((m) => m.project === pid && !chat.messages.some((saved) => saved.client_id === m.client_id))] } : null;
   // Claude Code or Codex being downloaded (the Mac app gets them when first needed), or a failed download.
-  const getting = model && setup?.runtimes?.[model.backend], brainLabel = model?.backend === 'codex' ? 'ChatGPT' : 'Claude';
+  const getting = model && setup?.runtimes?.[model.backend], brainLabel = brainName(model?.backend);
   const brainConnected = !setup || (model && (setup.providers?.[model.backend]?.connected ?? setup.connected));
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);

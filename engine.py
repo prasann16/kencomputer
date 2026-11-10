@@ -24,7 +24,7 @@ import uuid
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from brains import AIUnavailable, Brain
+from brains import AIUnavailable, Brain, model_file
 import crash
 import usage
 
@@ -96,7 +96,7 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
     no Claude Code or SDK wording, status codes or model ids. The real error goes to the log."""
     from onboarding import included_ai_in_use
 
-    name = "ChatGPT" if brain.lower() == "codex" else "Claude"
+    name = {"codex": "ChatGPT", "openai": "OpenAI"}.get(brain.lower(), "Claude")
     included = included_ai_in_use() and brain.lower() == "claude"
     text = str(e)
     try:
@@ -585,8 +585,8 @@ class Engine:
     def get_agent(self, pid: str) -> dict:
         meta = self._agent_metadata(pid)
         meta["backend"] = self.backend(pid)
-        if meta["backend"] == "codex":
-            meta["model"] = meta.get("model_codex", "")
+        if meta["backend"] in ("codex", "openai"):
+            meta["model"] = meta.get(f"model_{meta['backend']}", "")
         return meta
 
     def list_agents(self) -> list[dict]:
@@ -610,7 +610,7 @@ class Engine:
 
     def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "", backend=None) -> dict:
         if backend is not None and (not isinstance(backend, str) or backend not in self.brains):
-            raise ValueError("Choose Claude or Codex.")
+            raise ValueError("Choose the AI Ken should run on.")
         name = name.strip()[:60]
         if not name:
             raise ValueError("an agent needs a name")
@@ -654,7 +654,7 @@ class Engine:
             raise ValueError("an agent needs a name")
         for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
-                key = "model_codex" if k == "model" and self.backend(pid) == "codex" else k
+                key = f"model_{self.backend(pid)}" if k == "model" and self.backend(pid) in ("codex", "openai") else k
                 meta[key] = str(fields[k]).strip()[:60 if k == "name" else 500]
         if path is not None:
             self.chats.pop(pid, None)  # the next message gets the new folder in its prompt
@@ -1242,7 +1242,7 @@ class Engine:
         if pid != HOME:
             return self.get_agent(pid).get("model", "")
         try:
-            return (self.home / ("model-codex" if self.backend(pid) == "codex" else "model")).read_text().strip()
+            return model_file(self.home, self.backend(pid)).read_text().strip()
         except OSError:
             return ""
 
@@ -1277,7 +1277,7 @@ class Engine:
             self._adir(pid)
         backend = self.backend(pid) if backend is None else backend
         if not isinstance(backend, str) or backend not in self.brains:
-            raise ValueError("Choose Claude or Codex.")
+            raise ValueError("Choose the AI Ken should run on.")
         if model is not None and (not isinstance(model, str) or len(model) > 500):
             raise ValueError("Invalid model.")
         on_credits = bool(self.credits_model and self.credits_model(backend))
@@ -1299,14 +1299,15 @@ class Engine:
                     await session.close()
             if model is not None:
                 if pid == HOME:
-                    (self.home / ("model-codex" if backend == "codex" else "model")).write_text(model.strip() + "\n")
+                    model_file(self.home, backend).write_text(model.strip() + "\n")
                 else:
                     self.update_agent(pid, model=model)
             self.broadcast("chat.runtime", pid, backend=backend)
 
     def session_key(self, pid: str, backend=None) -> str:
         # Keep legacy Claude IDs usable; other runtimes own separate resume tokens.
-        return f"session:codex:{pid}" if (backend or self.backend(pid)) == "codex" else f"session:{pid}"
+        backend = backend or self.backend(pid)
+        return f"session:{backend}:{pid}" if backend in ("codex", "openai") else f"session:{pid}"
 
     def _chat_session(self, pid: str):
         s = self.chats.get(pid)
@@ -1528,7 +1529,7 @@ class Engine:
                 if not text.strip() and not job and not log_user and action == "retry":
                     return False
                 self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
-                                 **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
+                                 **({"brain": self.backend(pid)}), **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(msg)
             finally:
