@@ -35,7 +35,7 @@ function Env-Value($name) {
 
 Say ""
 Say "  ken *  - give your AI its own computer"
-Dim "  You'll need Telegram and a Claude subscription."
+Dim "  You'll need Telegram, plus a Claude subscription or any AI that speaks the OpenAI API."
 Say ""
 
 # ---------- 0. prerequisites ----------
@@ -96,12 +96,16 @@ if (-not (Test-Path (Join-Path $HOME ".cache\huggingface\hub\models--Systran--fa
 }
 Ok "Voice transcription ready"
 
-# Claude Code ships inside the Agent SDK Ken just installed.
+# Claude Code ships inside the Agent SDK Ken just installed. It's only needed when Ken runs on Claude: an
+# OpenAI-compatible address (KEN_OPENAI_BASE_URL, with a key and a model) is enough on its own.
 $Claude = & $Python -c "import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / '_bundled' / 'claude.exe')"
 if (-not (Test-Path $Claude)) {
   $c = Get-Command claude -ErrorAction SilentlyContinue
-  if ($c) { $Claude = $c.Source } else { Fail "Couldn't find Claude Code. Run this again." }
+  $Claude = if ($c) { $c.Source } else { "" }
 }
+$OpenAiBase = ($(if ($env:KEN_OPENAI_BASE_URL) { $env:KEN_OPENAI_BASE_URL } else { Env-Value "KEN_OPENAI_BASE_URL" })).Trim()
+$OpenAiKey = ($(if ($env:KEN_OPENAI_API_KEY) { $env:KEN_OPENAI_API_KEY } else { Env-Value "KEN_OPENAI_API_KEY" })).Trim()
+$OpenAiModel = ($(if ($env:KEN_OPENAI_MODEL) { $env:KEN_OPENAI_MODEL } else { Env-Value "KEN_OPENAI_MODEL" })).Trim()
 
 # ---------- 4. telegram bot ----------
 $script:BotToken = Env-Value "TELEGRAM_BOT_TOKEN"
@@ -161,25 +165,72 @@ if ($script:BotToken -and -not $env:KEN_SETUP) {  # `ken setup` walks through it
   try { Tg ("sendMessage?chat_id=$UserId&text=" + [uri]::EscapeDataString("Got you, $FirstName. Finishing setup - I'll say hi in a minute.")) | Out-Null } catch {}
 }
 
-# ---------- 5. claude auth ----------
+# ---------- 5. ai auth ----------
 Say ""
-Say "-- Connecting Claude --"
-$OauthToken = ""
-& $Claude -p "Reply with exactly OK" --model haiku 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0 -and -not $env:KEN_SETUP) {
-  $OauthToken = Env-Value "CLAUDE_CODE_OAUTH_TOKEN"
-  Ok "Claude is already signed in on this computer"
-} else {
-  Dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
-  Dim "  A browser window will open - approve there. If Claude shows a code, paste it here."
+$OauthToken = ""  # only the Claude path fills this; .env is written either way
+# Claude, OpenAI, or a server of their own that speaks the OpenAI API. An automated install sets
+# KEN_OPENAI_BASE_URL; otherwise ask once, before any sign-in.
+if (-not $OpenAiBase -and -not $env:KEN_AUTH_MODE -and -not $env:ANTHROPIC_API_KEY) {
+  Say "-- How should Ken think? --"
+  Dim "  1) Claude        your Claude subscription or an Anthropic API key"
+  Dim "  2) OpenAI        your OpenAI account's API key"
+  Dim "  3) Self-hosted   Ollama, LM Studio, vLLM or any OpenAI-compatible server"
+  $choice = Read-Host -Prompt "Choose 1, 2 or 3 [1]"
+  switch -Regex ($choice) {
+    "^2|^op" {
+      $OpenAiBase = "https://api.openai.com/v1"
+      $OpenAiKey = (Ask-Secret "OpenAI API key:").Trim()
+      if (-not $OpenAiKey) { Fail "An OpenAI API key is required" }
+      $OpenAiModel = (Read-Host -Prompt "Model [gpt-4o]").Trim()
+      if (-not $OpenAiModel) { $OpenAiModel = "gpt-4o" }
+    }
+    "^3|^s|^l|^ol" {
+      $OpenAiBase = (Read-Host -Prompt "Address (for example http://localhost:11434/v1)").Trim()
+      $OpenAiKey = (Ask-Secret "Key (Enter if the server needs none)").Trim()
+      $OpenAiModel = (Read-Host -Prompt "Model (Enter for the first one it offers)").Trim()
+    }
+  }
   Say ""
-  & $Claude setup-token 2>&1 | Tee-Object -Variable lines
-  $out = ($lines | Out-String)
-  $m = [regex]::Matches($out, "sk-ant-oat[A-Za-z0-9_-]+")
-  if ($m.Count -gt 0) { $OauthToken = $m[$m.Count - 1].Value }
-  if (-not $OauthToken) { $OauthToken = (Ask-Secret "Paste the token (starts with sk-ant-oat...)").Trim() }
-  if (-not $OauthToken) { Fail "No Claude token - run the installer again." }
-  Ok "Claude connected"
+}
+if ($OpenAiBase) {
+  Say "-- Connecting your AI --"
+  if (-not (Test-Path (Join-Path $App "openai_brain.py"))) { Fail "This copy of Ken has no OpenAI-compatible brain yet - update $App and re-run" }
+  # One tiny message: proves the address, the key and the model all work, here rather than on the first reply.
+  Dim "  Checking $OpenAiBase..."
+  $base = $OpenAiBase.TrimEnd("/")
+  $headers = @{ "Content-Type" = "application/json" }
+  if ($OpenAiKey) { $headers["Authorization"] = "Bearer $OpenAiKey" }
+  try {
+    if (-not $OpenAiModel) {  # none named: the first one it offers, the way the model menu would
+      $offered = Invoke-RestMethod -Uri "$base/models" -Headers $headers -TimeoutSec 30
+      $OpenAiModel = $offered.data | ForEach-Object { $_.id } | Select-Object -First 1
+    }
+    if (-not $OpenAiModel) { throw "it lists no models - name one when asked" }
+    $probe = @{ model = $OpenAiModel; messages = @(@{ role = "user"; content = "Say OK" }); max_tokens = 1 } | ConvertTo-Json -Depth 5
+    Invoke-RestMethod -Uri "$base/chat/completions" -Method Post -Headers $headers -Body $probe -TimeoutSec 60 | Out-Null
+  } catch {
+    Fail "Could not use $OpenAiBase - $($_.Exception.Message)"
+  }
+  Ok "Ken runs on $OpenAiBase ($OpenAiModel)"
+} else {
+  Say "-- Connecting Claude --"
+  if (-not $Claude) { Fail "Couldn't find Claude Code. Run this again." }
+  & $Claude -p "Reply with exactly OK" --model haiku 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0 -and -not $env:KEN_SETUP) {
+    $OauthToken = Env-Value "CLAUDE_CODE_OAUTH_TOKEN"
+    Ok "Claude is already signed in on this computer"
+  } else {
+    Dim "  Ken runs on your Claude subscription. We'll create a long-lived token."
+    Dim "  A browser window will open - approve there. If Claude shows a code, paste it here."
+    Say ""
+    & $Claude setup-token 2>&1 | Tee-Object -Variable lines
+    $out = ($lines | Out-String)
+    $m = [regex]::Matches($out, "sk-ant-oat[A-Za-z0-9_-]+")
+    if ($m.Count -gt 0) { $OauthToken = $m[$m.Count - 1].Value }
+    if (-not $OauthToken) { $OauthToken = (Ask-Secret "Paste the token (starts with sk-ant-oat...)").Trim() }
+    if (-not $OauthToken) { Fail "No Claude token - run the installer again." }
+    Ok "Claude connected"
+  }
 }
 
 # ---------- 6. config + memory ----------
@@ -191,6 +242,9 @@ Write-Utf8 (Join-Path $KenHome ".env") (@(
   "CLAUDE_CODE_OAUTH_TOKEN=$OauthToken",
   "ANTHROPIC_API_KEY=",
   "CLAUDE_MODEL=",
+  "KEN_OPENAI_BASE_URL=$OpenAiBase",
+  "KEN_OPENAI_API_KEY=$OpenAiKey",
+  "KEN_OPENAI_MODEL=$OpenAiModel",
   "WORKSPACE=$Work",
   "WHISPER_MODEL=small",
   "TASK_TIMEOUT_SECONDS=1800"
@@ -210,7 +264,7 @@ if (-not (Test-Path $Hosting)) {
     "",
     "- The human installed Ken themselves, on a Windows computer they control, with the open-source install script. Nobody at kencomputer.dev has any access to it.",
     "- Everything lives here: SOUL.md, memory, history, files, credentials. Voice notes are transcribed on this machine.",
-    "- What leaves this machine: calls to the Claude API (Anthropic) to run you, on their own Claude subscription, and whatever a connected service is told to fetch or send.",
+    "- What leaves this machine: calls to the AI they connected (Anthropic's Claude API, or their OpenAI-compatible address) to run you, and whatever a connected service is told to fetch or send.",
     "- Backups: nothing automatic. If this machine dies, ~/.ken is gone unless they back it up themselves. Say so if asked."
   ) -join "`n")
 }
