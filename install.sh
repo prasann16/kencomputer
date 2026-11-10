@@ -231,13 +231,41 @@ if [ -z "$OPENAI_BASE_URL" ] && [ -z "${KEN_AUTH_MODE:-}" ] && [ -z "${ANTHROPIC
 fi
 if [ -n "$OPENAI_BASE_URL" ]; then
   say "── Connecting your AI ──"
-  # Ask it for its models: catches a wrong address or key here, not on the first message.
+  [ -f "$KEN_HOME/app/openai_brain.py" ] || fail "This copy of Ken has no OpenAI-compatible brain yet — update $KEN_HOME/app and re-run"
+  # One tiny message: proves the address, the key and the model all work, here rather than on the first reply.
+  # Plain python3 (no SDK, no Ken install): it says what went wrong even when the app copy or its packages are older.
   dim "  Checking $OPENAI_BASE_URL…"
-  OFFERED="$(KEN_OPENAI_BASE_URL="$OPENAI_BASE_URL" KEN_OPENAI_API_KEY="$OPENAI_API_KEY" "$KEN_HOME/venv/bin/python" -c \
-    "import sys, asyncio; sys.path.insert(0, '$KEN_HOME/app'); import openai_brain; m = asyncio.run(openai_brain.models()); print(m[0] if m else '')" \
-    2>/dev/null)" || fail "$OPENAI_BASE_URL didn't answer — check the address, its key, and the network"
-  OPENAI_MODEL="${OPENAI_MODEL:-$OFFERED}"
-  ok "Ken runs on $OPENAI_BASE_URL${OPENAI_MODEL:+ ($OPENAI_MODEL)}"
+  if ! OPENAI_MODEL="$(KEN_OPENAI_BASE_URL="$OPENAI_BASE_URL" KEN_OPENAI_API_KEY="$OPENAI_API_KEY" \
+      KEN_OPENAI_MODEL="$OPENAI_MODEL" python3 - 2>&1 <<'PROBE'
+import json, os, sys, urllib.error, urllib.request
+
+base, key = os.environ["KEN_OPENAI_BASE_URL"].rstrip("/"), os.environ.get("KEN_OPENAI_API_KEY", "")
+model = os.environ.get("KEN_OPENAI_MODEL", "")
+
+
+def ask(path, body=None):
+    headers = {"Content-Type": "application/json", **({"Authorization": "Bearer " + key} if key else {})}
+    request = urllib.request.Request(base + path, None if body is None else json.dumps(body).encode(), headers)
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)
+
+
+try:
+    if not model:  # none named: the first one it offers, the way the model menu would
+        model = next((m["id"] for m in ask("/models").get("data", [])), "")
+        if not model:
+            sys.exit("it lists no models — name one when asked")
+    ask("/chat/completions", {"model": model, "messages": [{"role": "user", "content": "Say OK"}], "max_tokens": 1})
+except urllib.error.HTTPError as error:
+    sys.exit(f"it answered HTTP {error.code}: {error.read()[:300].decode(errors='replace')}")
+except Exception as error:
+    sys.exit(f"{type(error).__name__}: {error}")
+print(model)
+PROBE
+  )"; then
+    fail "Couldn't use $OPENAI_BASE_URL — $OPENAI_MODEL"
+  fi
+  ok "Ken runs on $OPENAI_BASE_URL ($OPENAI_MODEL)"
 else
 say "── Connecting Claude ──"
 [ -n "$CLAUDE_BIN" ] || fail "couldn't find Claude Code — re-run the installer"
