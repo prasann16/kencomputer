@@ -767,3 +767,35 @@ async def test_a_heavy_conversation_rolls_over_into_memory_and_a_fresh_session(e
     assert "fresh session" in engine.brain.asks[-1]["prompt"] and "Porto" in engine.brain.asks[-1]["prompt"]
     await engine.send_message(HOME, "ok")
     assert "fresh session" not in engine.brain.asks[-1]["prompt"]  # once
+
+
+async def test_a_voice_note_is_its_words_not_a_file_to_open(engine):
+    """The words of a voice note are already written out; Ken shouldn't go open the recording."""
+    await engine.send_message(HOME, "Which trip is cheaper?", files=["voice-17943.m4a", "IMG_1.heic"])
+    prompt = engine.brain.asks[-1]["prompt"]
+    assert "voice note" in prompt and "Attached in" in prompt
+    attached = prompt.split("(Attached in", 1)[1].split(")", 1)[0]
+    assert "IMG_1.heic" in attached and "voice-17943.m4a" not in attached
+
+
+def test_steps_say_what_the_tool_is_working_on():
+    from brains import describe_tool
+    say = lambda cmd: describe_tool("Bash", {"command": cmd})
+    assert say("ffmpeg -i IMG_5672.heic /tmp/a.jpg") == "Looking at your picture"
+    assert say("ffprobe voice-1.m4a") == "Listening to the recording"
+    assert say("ffmpeg -i clip.MOV -ss 3 cut.mp4") == "Editing your video"
+    assert say("python3 ken.py --video-cut plan.json") == "Editing your video"
+
+
+async def test_an_iphone_photo_reaches_ken_as_a_jpg(engine, tmp_path, monkeypatch):
+    """The AI can't read HEIC: Ken gets a JPG of it, so it doesn't spend a step converting."""
+    import engine as engine_mod
+    tool = tmp_path / "convert"
+    tool.write_text('#!/bin/sh\nfor a; do last="$a"; done\necho jpg > "$last"\n')
+    tool.chmod(0o755)
+    monkeypatch.setattr(engine_mod.shutil, "which", lambda name: str(tool) if name == "convert" else None)
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    (engine.files_dir(HOME) / "IMG_5672.heic").write_bytes(b"heic")
+    await engine.send_message(HOME, "How's this", files=["IMG_5672.heic"])
+    assert "IMG_5672.jpg" in engine.brain.asks[-1]["prompt"]
+    assert (engine.files_dir(HOME) / "IMG_5672.jpg").read_text().strip() == "jpg"

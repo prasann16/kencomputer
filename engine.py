@@ -751,6 +751,34 @@ class Engine:
                 return r
         raise KeyError(ref)
 
+    async def _readable_picture(self, pid: str, name: str) -> str:
+        """An iPhone photo (HEIC) as a JPG next to it, so Ken can look at it at once. The AI can't read HEIC, so
+        otherwise Ken spends a step converting it (and the app says 'Editing your video'). Anything else, or a
+        computer without a converter, stays as it is."""
+        src = self.files_dir(pid) / name
+        if src.suffix.lower() not in (".heic", ".heif") or not src.is_file():
+            return name
+        out = src.with_suffix(".jpg")
+        if out.exists():
+            return out.name
+        tool = shutil.which("magick") or shutil.which("convert")
+        if tool:
+            cmd = [tool, str(src), "-auto-orient", "-resize", "2048x2048>", "-quality", "85", str(out)]
+        elif shutil.which("sips"):  # a Mac
+            cmd = ["sips", "-s", "format", "jpeg", "-Z", "2048", str(src), "--out", str(out)]
+        else:
+            return name
+        try:
+            proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except (OSError, asyncio.TimeoutError):
+            with contextlib.suppress(Exception):
+                proc.kill()
+        if out.is_file() and out.stat().st_size > 0:
+            return out.name
+        out.unlink(missing_ok=True)
+        return name
+
     def file_path(self, pid: str, name: str) -> Path:
         clean = safe_filename(name)
         p = self.files_dir(pid) / clean
@@ -1473,7 +1501,13 @@ class Engine:
             self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))
         body = prompt if prompt is not None else text
         if files and prompt is None:
-            body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(files)})"
+            files = [await self._readable_picture(pid, f) for f in files]
+            said = [f for f in files if re.match(r"voice-.*\.(m4a|webm|ogg|oga|mp3|wav)$", f, re.I)] if text.strip() else []
+            others = [f for f in files if f not in said]
+            if others:
+                body += f"\n\n(Attached in {self.files_dir(pid)}: {', '.join(others)})"
+            if said:  # a voice note: the words above are already what they said, no need to open the recording
+                body += f"\n\n(They said this in a voice note; it's already written out above. The recording is in {self.files_dir(pid)}: {', '.join(said)}, only if they ask about how it sounds.)"
         lock = self.chat_locks.setdefault(pid, asyncio.Lock())
         session = self.chats.get(pid)
         if steer and lock.locked() and session is not None and session.busy:
