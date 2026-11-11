@@ -127,7 +127,7 @@ async def test_when_it_arrives_ken_carries_on_and_answers_in_telegram(hosted, mo
     phone = bot.Phone()
     phone.app = SimpleNamespace(bot=FakeBot())
     assert phone.waiting_file(token) == {"kind": "a video", "name": "IMG_0042.MOV", "caption": "make a reel of this", "size": 180 * MB,
-                                         "files": [{"kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB}]}
+                                         "files": [{"kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB}], "asked": False}
     path = tmp_path / "IMG_0042.MOV"
     assert await phone.file_arrived(token, path)
     await asyncio.gather(*bot.ENGINE._bg)
@@ -319,3 +319,41 @@ def test_a_reply_never_shows_a_path_a_ken_at_home_sends_the_file(monkeypatch, tm
     assert bot.no_paths(f"Here it is: [the reel]({reel})") == "Here it is: the reel"
     assert bot.no_paths(f"Here: {reel}") == "Here: reel.mp4"
     assert (tmp_path / "outbox" / "reel.mp4").read_bytes() == b"reel"
+
+
+async def test_ken_makes_a_link_itself_when_it_needs_a_file_at_full_quality(monkeypatch, tmp_path):
+    """Telegram shrinks videos: Ken runs `--upload-link`, gives them the link, and carries on in Telegram when it arrives."""
+    import subprocess
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {**os.environ, "KEN_HOME": str(home), "KEN_KEEPALIVE_URL": f"{SITE}/box/checkin"}
+    out = subprocess.run([sys.executable, str(Path(bot.__file__)), "--upload-link", "the original video, full quality"],
+                         env=env, capture_output=True, text=True, timeout=60)
+    token = re.fullmatch(rf"{SITE}/send/([0-9a-f]{{24}})\n", out.stdout).group(1)
+    monkeypatch.setattr(bot, "BIG_FILES", home / "telegram-big-files.json")
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 555)
+    sent, asked = [], {}
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kw):
+            sent.append((chat_id, text))
+
+    async def send_message(pid, text, files=None, **kw):
+        asked.update(pid=pid, text=text, files=files, **kw)
+        await kw["listener"]("Starting the edit.")
+        return True
+
+    monkeypatch.setattr(bot, "ENGINE", SimpleNamespace(_bg=[], send_message=send_message))
+    monkeypatch.setattr(bot, "log_history", lambda *a: None)
+    monkeypatch.setattr(bot, "flush_outbox", lambda *a, **k: asyncio.sleep(0))
+    phone = bot.Phone()
+    phone.app = SimpleNamespace(bot=FakeBot())
+    assert phone.waiting_file(token) | {} == {"kind": "", "name": "", "caption": "the original video, full quality", "size": 0, "files": [], "asked": True}
+    assert await phone.file_arrived(token, tmp_path / "IMG_1.MOV")
+    await asyncio.gather(*bot.ENGINE._bg)
+    assert sent == [(555, "Starting the edit.")] and asked["via"] == "telegram"
+    # on a computer of its own there's no link: it says to ask where the file is
+    off = subprocess.run([sys.executable, str(Path(bot.__file__)), "--upload-link"], env={**env, "KEN_KEEPALIVE_URL": ""},
+                         capture_output=True, text=True, timeout=60)
+    assert off.returncode == 1 and "ask them where the file is" in off.stdout
+    assert "--upload-link" in bot.HOSTED_FILES_PROMPT and "Never ask them to resend it as a file" in bot.HOSTED_FILES_PROMPT
