@@ -34,7 +34,7 @@ def test_nothing_is_written_for_ken_its_next_turn_is_told(engine):
     assert engine.context_file(HOME).read_text() == before
     assert not (engine.memory_dir(HOME) / "about-them.md").exists()
     told = engine.kv_get(f"onboarding:said:{HOME}")
-    for part in ("call them: Sam", "their work: runs a two-person design studio", "want off their plate, first pick first: a rebrand",
+    for part in ("call them: Sam", "their work: runs a two-person design studio", "would like help with: a rebrand",
                  "how to talk to them: short and direct"):
         assert part in told
 

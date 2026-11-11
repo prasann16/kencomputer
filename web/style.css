@@ -559,7 +559,7 @@ ol.conn-steps li { margin: 2px 0; }
 .ken-off h2 { margin: 0; font-size: var(--text-lg); }
 .ken-off .quiet-copy { max-width: 340px; text-align: center; }
 .ken-off img { animation: none; opacity: 0.55; filter: grayscale(1); }
-.off-row { margin-top: var(--s5); }
+.off-row { margin-top: 10px; } /* the same gap as between the cards above */
 .off-btn { border-color: var(--danger); color: var(--danger); }
 .off-ask { margin: var(--s3) 0 0 50px; }
 .off-ask p { margin: 0 0 var(--s2); color: var(--ink-2); font-size: var(--text-ui); }

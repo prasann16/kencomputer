@@ -2192,7 +2192,7 @@ class Engine:
         covered = [item for item, value in (("ken-name", ken), ("style", style), ("call-you", call), ("work", work), ("tools", apps),
                                             ("brief-time", brief)) if value]
         said = "; ".join(f"{k}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
-                         ("want off their plate, first pick first", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
+                         ("would like help with", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
         if said:
             self.kv_set(f"onboarding:said:{HOME}", said)
         # A Home chat already open: reopen it (it resumes the same conversation), so the next reply gets the note.
