@@ -726,6 +726,24 @@ async def test_a_session_that_never_answers_starts_over_fresh_with_the_last_mess
     assert engine.messages(HOME)[-1]["text"] == "did it"
 
 
+@pytest.mark.parametrize("tokens, window, rolls", [
+    (40_000, 200_000, False),   # a normal thread keeps its session
+    (60_000, 200_000, True),    # past 50K, fresh, though the model could take far more
+    (60_000, 1_000_000, True),  # a huge window doesn't raise it
+    (40_000, 64_000, True),     # a small model: half its window, if that's less
+])
+async def test_a_conversation_starts_fresh_past_50k_tokens_to_keep_messages_cheap(engine, monkeypatch, tokens, window, rolls):
+    real = FakeSession.ask
+
+    async def sized(self, prompt, on_text, on_tool=None, on_delta=None):
+        self.context_tokens, self.context_window = tokens, window
+        return await real(self, prompt, on_text, on_tool, on_delta)
+    monkeypatch.setattr(FakeSession, "ask", sized)
+    await engine.send_message(HOME, "hello")
+    await asyncio.gather(*engine._bg)
+    assert (engine.kv_get(f"session:{HOME}") is None) is rolls
+
+
 async def test_a_heavy_conversation_rolls_over_into_memory_and_a_fresh_session(engine, monkeypatch):
     real = FakeSession.ask
 

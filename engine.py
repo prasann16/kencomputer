@@ -70,6 +70,10 @@ IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
 NO_ANSWER_LIMIT = 2 * 60
 DEFAULT_WINDOW = 200_000  # tokens a model takes at once, when the AI doesn't say
+# A conversation past this many tokens starts a fresh session (what mattered goes to memory, the last few messages
+# come along): every step re-reads the whole context, so a long thread costs more each message. Half a small
+# model's window, if that's less.
+ROLL_OVER_TOKENS = 50_000
 # Ken AI credits run on Haiku only (about 14x cheaper than Sonnet, and it did every real task in testing). Ken picks it;
 # there's no menu on credits. The site enforces it too.
 CREDIT_MODELS = ("claude-haiku-5-5",)
@@ -1538,7 +1542,7 @@ class Engine:
                 if session.session_id:
                     self.kv_set(self.session_key(pid, backend), session.session_id)
                     self.kv_set(f"brain:{pid}", backend)
-                if outcome == "ok" and session.context_tokens > (session.context_window or DEFAULT_WINDOW) / 2:
+                if outcome == "ok" and session.context_tokens > min(ROLL_OVER_TOKENS, (session.context_window or DEFAULT_WINDOW) / 2):
                     self._roll_over(pid, session)  # heavy: slower and dearer every message, and slow to pick up again
                 if outcome != "stopped" or not self.stopping:
                     self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
