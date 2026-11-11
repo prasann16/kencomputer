@@ -365,6 +365,7 @@ class Engine:
         self.history_hook: Callable[[str, str], None] | None = None
         self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
         self._greeting: set[str] = set()
+        self._booted = time.time()  # turns started after this belong to this run, never "cut off by a restart"
         self.run_tasks: dict[str, asyncio.Task] = {}
         self.run_sessions: dict[str, object] = {}
         self._aside: dict[str, list[str]] = {}  # answered on the side while the chat was busy, for the chat to hear next
@@ -1591,13 +1592,16 @@ class Engine:
     async def resume_interrupted(self) -> list[str]:
         """On start: carry on with every chat whose last turn was cut off. Returns those chats."""
         turns = self._turns()
-        self._write_turns({})
+        # Only what an earlier run left behind; a turn this run already started stays recorded until it ends.
+        self._write_turns({pid: t for pid, t in turns.items() if float(t.get("since", 0)) >= self._booted})
         resumed = []
         for pid, turn in turns.items():
             if pid != HOME and pid not in {a["id"] for a in self.list_agents()}:
                 continue
             if time.time() - float(turn.get("since", 0)) > 6 * 3600:
                 continue  # long ago: picking it up now would surprise them more than help
+            if float(turn.get("since", 0)) >= self._booted:
+                continue  # started since this run began (a first hello while Ken was still starting up): not cut off
             via = turn.get("via") or None
             asked = turn.get("asked") or "(their last message in this chat)"
             prompt = (
