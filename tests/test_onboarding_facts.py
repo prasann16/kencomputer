@@ -49,7 +49,7 @@ async def test_an_open_chat_picks_it_up_and_the_next_reply_is_told(engine):
     assert engine.chats[HOME].session_id == "sess-1"
     ask = engine.brain.asks[-1]
     assert "they told the site" in ask["prompt"] and "call them: Sam" in ask["prompt"] and "your name: Juno" in ask["prompt"]
-    assert "isn't saved anywhere yet" in ask["prompt"] and "SOUL.md" in ask["prompt"]
+    assert "update your SOUL.md" in ask["prompt"]
     await engine.send_message(HOME, "thanks")
     assert "they told the site" not in engine.brain.asks[-1]["prompt"]  # once
 

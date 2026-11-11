@@ -1213,9 +1213,9 @@ class Engine:
         told = self.kv_get(f"onboarding:said:{pid}")
         if told:
             self.kv_set(f"onboarding:said:{pid}", "")
-            parts.append("while your computer was being set up they told the site this. It isn't saved anywhere yet: save what's worth "
-                         "keeping where you'd keep it (what changes how you talk to them every time, like their name and how they "
-                         "like to be talked to, belongs in SOUL.md), then use it and don't ask again: " + told)
+            parts.append("while your computer was being set up they told the site this. It isn't saved anywhere yet: update your SOUL.md "
+                         "with it now, in your own words (who they are, what they want from you, how they like to be talked to), "
+                         "then use it and don't ask again: " + told)
         call = self.kv_get(f"voice:said:{pid}")
         if call:
             self.kv_set(f"voice:said:{pid}", "")
