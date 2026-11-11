@@ -76,6 +76,21 @@ async def test_a_reply_they_stopped_isnt_picked_up_again(engine, monkeypatch):
 
 
 async def test_a_turn_cut_off_long_ago_or_in_a_removed_agent_is_left(engine):
-    engine._write_turns({HOME: {"since": time.time() - 7 * 3600, "asked": "old"}, "gone-agent": {"since": time.time(), "asked": "x"}})
+    engine._write_turns({HOME: {"since": time.time() - 7 * 3600, "asked": "old"}, "gone-agent": {"since": engine._booted - 1, "asked": "x"}})
     assert await engine.resume_interrupted() == []
     assert not (engine.home / "turns-in-progress.json").exists()
+
+
+async def test_a_first_hello_started_while_ken_starts_up_isnt_taken_for_a_cut_off_reply(engine, monkeypatch):
+    """A new computer: the page opens while Ken is still starting, so its first hello begins before the restart
+    check runs. That hello belongs to this run: it isn't repeated with "Sorry, I was interrupted"."""
+    monkeypatch.setattr(engine.brain, "session", lambda **kw: SlowSession(engine.brain, kw["cwd"], kw["system"], kw.get("resume")))
+    task = asyncio.create_task(engine.send_message(HOME, "", log_user=False, prompt="(first contact)"))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if engine.brain.asks:
+            break
+    assert await engine.resume_interrupted() == []
+    assert len(engine.brain.asks) == 1
+    assert (engine.home / "turns-in-progress.json").exists()  # still this run's, until it ends
+    task.cancel()
