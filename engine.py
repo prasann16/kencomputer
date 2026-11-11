@@ -332,6 +332,21 @@ def _day_and_time(t=None) -> str:
     hour = t.tm_hour % 12 or 12
     return f"{time.strftime('%A, %B', t)} {t.tm_mday}, {hour}:{time.strftime('%M %p', t)}"
 
+def _temp_roots() -> list[Path]:
+    """The temp folders Ken may save a quick file in: the system's, and /tmp where there is one."""
+    import tempfile
+    roots = {Path(tempfile.gettempdir()).resolve()}
+    if Path("/tmp").is_dir():
+        roots.add(Path("/tmp").resolve())
+    return list(roots)
+
+
+def _owned(p: Path) -> bool:
+    """Made by this user (Ken runs as them), not someone else's file in a shared temp folder."""
+    getuid = getattr(os, "getuid", None)
+    return getuid is None or p.stat().st_uid == getuid()
+
+
 class Engine:
     def __init__(self, home: Path, brain: Brain, *, brains: dict[str, Brain] | None = None) -> None:
         self.home = Path(home)
@@ -713,7 +728,8 @@ class Engine:
 
     def shared_file(self, ref: str) -> Path:
         """A file or folder Ken named in the chat, if it's one they may open: anything in Ken's work, inbox,
-        outbox or agents, or in their own home outside hidden folders. Never Ken's keys or settings."""
+        outbox or agents, in their own home outside hidden folders, or a file Ken made in the temp folder (a quick
+        picture it shows, like a before/after; else the chat shows an empty box). Never Ken's keys or settings."""
         ref = ref.strip().strip("`").removeprefix("file://")
         p = Path(os.path.expanduser(ref))
         tries = [p] if p.is_absolute() else [self.home_cwd / p, self.home / p]
@@ -728,6 +744,10 @@ class Engine:
                 return r
             if r.is_relative_to(user) and not r.is_relative_to(ken) and not any(
                     part.startswith(".") for part in r.relative_to(user).parts):
+                return r
+            if r.is_file() and not r.is_relative_to(ken) and _owned(r) and any(
+                    r.is_relative_to(t) and not any(part.startswith(".") for part in r.relative_to(t).parts)
+                    for t in _temp_roots()):
                 return r
         raise KeyError(ref)
 
