@@ -598,6 +598,13 @@ def test_files_named_in_chat_open_but_never_keys_or_hidden_folders(engine, tmp_p
     (engine.home / ".env").write_text("TOKEN=x")
     engine.keys_dir(HOME).mkdir(parents=True)
     (engine.keys_dir(HOME) / "keys.json").write_text("{}")
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as quick:  # a before/after Ken made in the temp folder
+        quick.write(b"jpg")
+    try:
+        assert engine.shared_file(quick.name) == Path(quick.name).resolve()
+    finally:
+        os.unlink(quick.name)
     for bad in ("~/.ssh/id_rsa", str(engine.home / ".env"), str(engine.keys_dir(HOME) / "keys.json"),
                 "reports/../../.env", "/etc/hosts", "missing.md"):
         with pytest.raises(KeyError):
