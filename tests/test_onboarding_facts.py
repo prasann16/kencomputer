@@ -40,7 +40,7 @@ def test_soul_and_memory(engine):
     note = (engine.memory_dir(HOME) / "about-them.md").read_text()
     assert note.startswith("About them: work, what's on their plate, the apps they use\n")
     assert f"From setting Ken up ({engine_mod._short_date()}):" in note
-    for line in ("- Eating their time this week: a rebrand for a bakery, due Friday", "- Apps they live in: Gmail, Slack, Notion", "- Morning brief: 08:00"):
+    for line in ("- Wants off their plate (first one first): a rebrand for a bakery, due Friday", "- Apps they live in: Gmail, Slack, Notion", "- Morning brief: 08:00"):
         assert line in note
     c = engine.voice_context()
     assert c["ken_name"] == "Juno" and "design studio" in c["about_you"]

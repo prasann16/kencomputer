@@ -2221,7 +2221,7 @@ class Engine:
         f.write_text("\n".join(lines).rstrip() + "\n")
         covered += [item for item, value in (("call-you", call), ("work", work), ("tools", apps), ("brief-time", brief)) if value]
         # The rest goes into memory, dated, where Ken looks things up.
-        notes = [f"- Work: {work}" if work else "", f"- Eating their time this week: {busy}" if busy else "",
+        notes = [f"- Work: {work}" if work else "", f"- Wants off their plate (first one first): {busy}" if busy else "",
                  f"- Apps they live in: {apps}" if apps else "",
                  f"- Morning brief: {'none' if brief == 'no' else brief}" if brief else ""]
         if any(notes):
@@ -2233,7 +2233,7 @@ class Engine:
         # A Home chat already open keeps the soul it started with: reopen it (it resumes the same conversation) so
         # the next reply uses the new one, and tell that reply what changed.
         said = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
-                         ("this week", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
+                         ("want off their plate, first pick first", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
         if said:
             self.kv_set(f"onboarding:said:{HOME}", said)
         s = self.chats.get(HOME)
