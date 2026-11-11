@@ -1651,7 +1651,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <div class="tool-list off-row">${row(icon('M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'), 'Turn Ken off', 'Stops everything Ken is doing right now, mid-step. No replies, briefs or jobs until you turn it back on.',
     !offAsk && html`<button class="btn sm off-btn" onClick=${() => setOffAsk(true)}>Turn off</button>`,
     offAsk && html`<div class="off-ask"><p>Your plan, memory and files are kept. Turn Ken on again from the app any time.</p>
-      <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>`
+      <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>
   ${HOSTED && me?.signedIn && html`<div class="tool-list off-row">
   ${HOSTED && me?.signedIn && row(icon('M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13'), 'Delete account', 'Deletes Ken\u2019s computer with its memory, chats and files, and cancels your plan. You\u2019ll be asked to confirm.',
       html`<a class="btn sm danger" href="/account/delete">Delete…</a>`)}
