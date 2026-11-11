@@ -816,7 +816,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       onScroll=${() => { if (thread.current && atEnd(thread.current)) setBelow(false); }}>
       <div class="thread conversation-thread">
         ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
-          : html`<p class="quiet-copy" role="status">Loading your conversation…</p>`)}
+          : html`<div class="chat-skeleton" role="status" aria-label="Loading your conversation"><i class="you"></i><i class="ken"></i><i class="ken short"></i><i class="you short"></i><i class="ken"></i></div>`)}
         ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
           <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}><${Safe} where="message">${item.el}<//></div>`)}
@@ -1857,10 +1857,16 @@ function NewAgent({ onClose, onCreated, setup }) {
   <//>`;
 }
 
+// The last look at each chat and at setup, kept in this browser so opening Ken shows them at once (then refreshed from
+// Ken). Only the newest messages; the site clears it when they sign out.
+const CACHE_MESSAGES = 40;
+const cached = (key) => { try { return JSON.parse(localStorage.getItem('ken-cache:' + key) || 'null'); } catch { return null; } };
+const keep = (key, value) => { try { localStorage.setItem('ken-cache:' + key, JSON.stringify(value)); } catch {} };
 function App() {
   const [route, setRoute] = useState(parseHash());
   const [today, setToday] = useState(null);
-  const [chat, setChat] = useState(null);
+  const [chat, setChat] = useState(() => { const pid = parseHash().pid || 'home', c = cached('chat:' + pid); return c && c.pid === pid ? { ...c, cached: true, busy: false } : null; });
+  useEffect(() => { if (chat && !chat.cached) keep('chat:' + chat.pid, { pid: chat.pid, name: chat.name, cleared_at: chat.cleared_at, messages: chat.messages.slice(-CACHE_MESSAGES) }); }, [chat]);
   const [stream, setStream] = useState({});
   const [activity, setActivity] = useState({});
   const [meta, setMeta] = useState({});
@@ -1881,7 +1887,8 @@ function App() {
     catch(e){toast(e.message);}finally{setChangingBrain(false);}
   };
   const [awake,setAwake]=useState(null);
-  const [setup,setSetup]=useState(null);
+  const [setup,setSetup]=useState(() => cached('setup'));
+  useEffect(() => { if (setup) keep('setup', setup); }, [setup]);
   const [chats,setChats]=useState([]);
   const [newProject,setNewProject]=useState(false);
   const [projectDialog,setProjectDialog]=useState(null); // {kind:'rename'|'remove', project}
@@ -1958,7 +1965,8 @@ function App() {
   const [online, setOnline] = useState(false);
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
-  useEffect(() => { if (online) { setOffline(false); return; } const t = setTimeout(() => setOffline(true), 1200); return () => clearTimeout(t); }, [online]);
+  const everOnline = useRef(false); if (online) everOnline.current = true;
+  useEffect(() => { if (online) { setOffline(false); return; } const t = setTimeout(() => setOffline(true), everOnline.current ? 1200 : 8000); return () => clearTimeout(t); }, [online]);
   // ...and if it stays down, say so plainly with a way out instead of reconnecting forever.
   const [lost, setLost] = useState(false);
   const [reconnecting, setReconnecting] = useState(false), loadFailingSince = useRef(0);
@@ -1999,7 +2007,8 @@ function App() {
       if (pidRef.current !== current || generation.current !== version) return;
       // Ken's computer waking up or restarting into an update answers with errors for a little while: keep trying
       // quietly ("Reconnecting…") for about a minute before saying Ken can't be reached.
-      if (Date.now() - (loadFailingSince.current ||= Date.now()) < 60000) { setReconnecting(true); setTimeout(() => load({ extras }), 3000); return; }
+      const failing = Date.now() - (loadFailingSince.current ||= Date.now());
+      if (failing < 60000) { if (failing > 8000) setReconnecting(true); setTimeout(() => load({ extras }), 3000); return; }
       setReconnecting(false); setLoadError(e.message);
     });
     api('/api/chats').then(setChats).catch(() => {});
@@ -2031,7 +2040,11 @@ function App() {
     const plan = setInterval(() => { if (!idleTab() && HOSTED) loadMeta(); }, 300000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); clearInterval(plan); };
   }, []);
-  useEffect(() => { setModel(null); loadModel(); load(); loadProjectMeta(pid); }, [pid]);
+  useEffect(() => {
+    // Another chat: show its last look at once (if this browser has one) while it loads.
+    setChat((c) => { if (c && c.pid === pid) return c; const k = cached('chat:' + pid); return k && k.pid === pid ? { ...k, cached: true, busy: false } : c; });
+    setModel(null); loadModel(); load(); loadProjectMeta(pid);
+  }, [pid]);
   useEffect(() => {
     let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer, heard = Date.now();
     const busy = new Set();  // chats Ken is answering right now: their tab keeps listening
@@ -2203,9 +2216,9 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? 'Reconnecting…' : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
-    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : !setup && !setupFailed ? html`<section class="conversation-body"><div class="starting"><img src="/ken.svg" alt=""/><p class="quiet-copy" role="status">Starting Ken…</p></div></section>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
+    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>
     ${docFile && html`<${Safe} where="DocViewer"><${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/><//>`}
     ${runId && html`<${Safe} where="RunDrawer"><${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/><//>`}
