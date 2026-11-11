@@ -743,6 +743,7 @@ function CreditChoices({ onConnect, usage }) {
 
 function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toast, onPreview, draft, onDraftUsed, openRun, projects, onSend, onVoice, choices, onChoice, voiceSetup, loadError, onReload, onAIAccounts, onConnect, onTalk, usage }) {
   const thread = useRef(null);
+  const [examples] = useState(someExamples);
   const [dragging, setDragging] = useState(false);
   // Drop files anywhere in the window, or paste them, to attach to the message.
   useEffect(() => {
@@ -817,8 +818,8 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       <div class="thread conversation-thread">
         ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
           : html`<div class="chat-skeleton" role="status" aria-label="Loading your conversation"><i class="you"></i><i class="ken"></i><i class="ken short"></i><i class="you short"></i><i class="ken"></i></div>`)}
-        ${chat && !messages.length && !busy && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
-          <div class="chat-examples">${EXAMPLES.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
+        ${chat && !messages.length && !busy && chat.cleared_at && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
+          <div class="chat-examples">${examples.map((t) => html`<button class="btn sm" onClick=${() => { sent(); onSend(t, []).catch((e) => toast(e.message)); }}>${t}</button>`)}</div></div>`}
         ${timeline.map((item) => html`<div key=${item.key} data-key=${item.key}><${Safe} where="message">${item.el}<//></div>`)}
         ${!busy && failed && (last.action === 'credits' ? html`<${CreditChoices} onConnect=${onConnect} usage=${usage}/>` : html`<div class="msg-actions">${last.action === 'retry'
           ? html`<button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>`
@@ -1650,11 +1651,11 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <div class="tool-list off-row">${row(icon('M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'), 'Turn Ken off', 'Stops everything Ken is doing right now, mid-step. No replies, briefs or jobs until you turn it back on.',
     !offAsk && html`<button class="btn sm off-btn" onClick=${() => setOffAsk(true)}>Turn off</button>`,
     offAsk && html`<div class="off-ask"><p>Your plan, memory and files are kept. Turn Ken on again from the app any time.</p>
-      <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>`)}
+      <div class="row np-actions"><button class="btn ghost" onClick=${() => setOffAsk(false)}>Cancel</button><button class="btn danger" onClick=${() => api('/api/power', { json: { on: false } }).then(onClose, (e) => setError(e.message))}>Turn Ken off</button></div></div>`)}</div>`
   ${HOSTED && me?.signedIn && html`<div class="tool-list off-row">
   ${HOSTED && me?.signedIn && row(icon('M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13'), 'Delete account', 'Deletes Ken\u2019s computer with its memory, chats and files, and cancels your plan. You\u2019ll be asked to confirm.',
-      html`<a class="btn sm light" href="/account/delete">Delete…</a>`)}
-  </div>`}
+      html`<a class="btn sm danger" href="/account/delete">Delete…</a>`)}
+  </div>`}`)}
   ${error && html`<p class="connect-error" role="alert">${error}</p>`}
   ${update && html`<footer class="sp-foot"><span class="settings-version">Ken ${update.version} · ${update.ready
       ? html`<button class="text-action" onClick=${() => window.kenDesktop.installUpdate()}>Restart to update to ${update.ready}</button>`
@@ -1751,7 +1752,9 @@ function Keys({ pid, initial }) {
   </div>`;
 }
 
-const EXAMPLES = ['Turn my video into reels', 'Find a laptop under $1,000', 'Send me news every morning'];
+// What an empty chat suggests: three of these at random each time it's opened.
+const EXAMPLES = ['Turn my video into reels', 'Find a laptop under $1,000', 'Send me news every morning', 'Plan a weekend trip for me', 'Write a birthday message for my mom', 'Sort out my inbox', 'Draft a reply to a tricky email', 'Make a meal plan for this week', 'Find cheap flights to New York', 'Summarize a PDF for me', 'Remind me to call the bank on Friday', 'Compare phone plans for me', 'Write a post for LinkedIn', 'Make me a beginner workout plan', 'Tell me when a price drops', 'Plan my week', 'Write a cover letter for a job', 'Find gift ideas under $50', 'Turn my notes into a to-do list', 'Make a slide deck from my notes'];
+const someExamples = () => [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
 const TOOL_NAMES = { browser: 'Chrome', email: 'Email', calendar: 'Calendar' };
 
 // Ken's Brain: who it is (SOUL.md), its memory notes, tools, keys, jobs and files. A calm overview

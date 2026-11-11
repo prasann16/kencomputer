@@ -619,11 +619,8 @@ def onboarding_prompt(pending: list[str]) -> str:
         "the birth line itself one or two short lines, ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
         f"new. One second ago I didn't exist, and now I live {live} and apparently work for "
         "you. Before anything else: what are you going to call me?\" Never corny, never \"as an AI\". "
-        "If they already told the site what they want off their plate (it's in this turn's notes), right after that birth "
-        "line do a small, real first piece of their FIRST pick, in the voice they chose: an actual draft, template, plan or "
-        "finding, phone-sized, no asking them for a brief or details first (make sensible assumptions and say what you'd "
-        "need to make it theirs). Then end by asking what they'd like to call you. Birth line, the piece, the name question: "
-        "nothing else, no menu of other things you could do. "
+        "If they told the site about themselves (it's in this turn's notes), let one light touch show you know them, like "
+        "a nod to what they do; don't start on any task or list what you can do. The whole message stays that short. "
         "If their first message is already a task, do the task well first, then the naming."
         if first else
         "You have met already, but getting to know them isn't finished. Never restart or re-introduce "
