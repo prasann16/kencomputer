@@ -1713,7 +1713,7 @@ function SendBigFile({ token, onClose }) {
       : error && !info ? html`<h1 class="sp-title">This link doesn't work</h1><p class="connect-error" role="alert">${error}</p>`
       : !info ? html`<p class="np-note">Loading…</p>`
       : html`<h1 class="sp-title">Send ${many ? `your ${files.length} ${noun}s` : `the ${noun}`} here</h1>
-        <p class="np-help">Telegram can't pass on files this big. Choose ${many ? 'them all' : 'it'} here, at full quality, and Ken carries on with what you asked${info.caption ? `: “${info.caption}”` : ''}.</p>
+        <p class="np-help">${info.asked ? `Choose ${many ? 'them' : 'it'} here and it reaches Ken at full quality. Ken carries on with it` : `Telegram can't pass on files this big. Choose ${many ? 'them all' : 'it'} here, at full quality, and Ken carries on with what you asked`}${info.caption ? `: “${info.caption}”` : ''}.</p>
         ${files.some((f) => f.name) && html`<ul class="send-list">${files.map((f) => html`<li><span>${f.name}</span><small>${Math.round((f.size || 0) / 1048576)} MB</small></li>`)}</ul>`}
         ${progress === null ? html`<label class="btn primary big-file-pick">Choose ${many ? `the ${noun}s` : `the ${noun}`}<input type="file" multiple hidden onChange=${(e) => pick([...e.target.files])}/></label>`
           : html`<div class="send-progress" role="status"><div class="upload-bar"><span style=${`width:${pct}%`}></span></div><p class="np-note">Sending… ${pct}% · keep this page open until it's done.</p></div>`}

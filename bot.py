@@ -22,6 +22,27 @@ if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["-
     video_kit.main(sys.argv[1:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))))
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a file at full quality (the too_big page)
+    import json as _json, os as _os, secrets as _secrets, time as _time
+    from pathlib import Path as _Path
+    _home = _Path(_os.environ.get("KEN_HOME", str(_Path.home() / ".ken")))
+    _url = _os.environ.get("KEN_KEEPALIVE_URL", "")
+    _site = _url.rsplit("/box/", 1)[0] if _url.startswith("https://") and "/box/" in _url else ""
+    if not _site:
+        print("Upload links are for Ken in the cloud. Here, ask them where the file is on this computer.")
+        raise SystemExit(1)
+    _file = _home / "telegram-big-files.json"
+    try:
+        _waiting = _json.loads(_file.read_text())
+    except (OSError, ValueError):
+        _waiting = {}
+    _token = _secrets.token_hex(12)
+    _waiting[_token] = {"chat_id": None, "message_id": None, "caption": " ".join(sys.argv[2:])[:300], "files": [], "kind": "",
+                        "name": "", "size": 0, "asked": True, "replied": True, "ts": _time.time()}
+    _file.write_text(_json.dumps(_waiting))
+    print(f"{_site}/send/{_token}")
+    raise SystemExit(0)
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -155,6 +176,14 @@ APPS_PROMPT = (
     "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
     "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
     "toward their plan's monthly app actions, so don't loop over hundreds of items without asking. " + MULTI_ACCOUNT
+)
+
+# Hosted Ken on Telegram: photos and videos arrive shrunk, so a file that has to be full quality comes through a link.
+HOSTED_FILES_PROMPT = (
+    "FILES FROM THEIR PHONE: Telegram shrinks the photos and videos they send, and it can't pass on anything over "
+    "20 MB. When you need a file at full quality (a video to edit, a photo to print), or it's too big, run "
+    f"`{KEN_CMD} --upload-link \"<what you need, in a few words>\"` and give them the link it prints: they choose the "
+    "file there and you carry on with it when it arrives. Never ask them to resend it as a file or through another app."
 )
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
@@ -874,6 +903,8 @@ def build_system() -> str:
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
+        if host_site():
+            system += "\n\n" + HOSTED_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
@@ -2823,7 +2854,7 @@ class Phone:
         """What a send-it-here link (too_big) is waiting for: shown on the web app's page for it."""
         info = waiting_big_file(token)
         return info and {"kind": info["kind"], "name": info["name"], "caption": info["caption"], "size": info["size"],
-                         "files": _files_of(info)}
+                         "files": [] if info.get("asked") else _files_of(info), "asked": bool(info.get("asked"))}
 
     async def file_arrived(self, token: str, paths: Path | list[Path]) -> bool:
         """The files that were too big for Telegram came in through the web app: Ken carries on with what they asked,
@@ -2832,7 +2863,9 @@ class Phone:
         info = take_big_file(token)
         if info is None:
             return False
-        bot, chat_id = self.bot, info["chat_id"]
+        # A link Ken made itself (--upload-link) goes back to their Telegram chat, if it's linked, else to the app.
+        chat_id = info["chat_id"] or (ALLOWED_USER_ID if info.get("asked") else None)
+        bot = self.bot if chat_id else None
 
         async def deliver(text: str) -> None:
             if bot is None:
@@ -2846,7 +2879,7 @@ class Phone:
 
         if len(paths) == 1:
             log_history("you", f"[sent {info['kind']}: {paths[0].name}]")
-            prompt = file_prompt(info["kind"], paths[0], info["caption"])
+            prompt = file_prompt(info["kind"] or "a file", paths[0], info["caption"])
         else:
             log_history("you", f"[sent {len(paths)} files: {', '.join(p.name for p in paths)}]")
             prompt = files_prompt(paths, info["caption"])
