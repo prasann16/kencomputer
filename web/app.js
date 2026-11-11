@@ -1747,7 +1747,7 @@ function Keys({ pid, initial }) {
   </div>`;
 }
 
-const EXAMPLES = ['Plan my day', 'Catch me up on my email', 'Set up a morning brief'];
+const EXAMPLES = ['Turn my video into reels', 'Find a laptop under $1,000', 'Send me news every morning'];
 const TOOL_NAMES = { browser: 'Chrome', email: 'Email', calendar: 'Calendar' };
 
 // Ken's Brain: who it is (SOUL.md), its memory notes, tools, keys, jobs and files. A calm overview
