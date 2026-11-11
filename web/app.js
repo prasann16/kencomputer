@@ -787,7 +787,18 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const sent = () => { following.current = true; reply.current = { after: lastMine() }; setBelow(false); };
   const atEnd = (box) => box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const toEnd = () => { const box = thread.current; if (box) { following.current = true; setBelow(false); box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); } };
-  useLayoutEffect(() => {
+  // Follow (or land) again whenever the conversation changes height on its own: pictures and videos finishing
+  // loading, a cached chat swapped for the fresh one. Otherwise the view stops partway up and you scroll down yourself.
+  const place = useRef(() => {});
+  useEffect(() => {
+    const box = thread.current, inner = box && box.firstElementChild;
+    if (!inner || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => place.current());
+    watch.observe(inner);
+    return () => watch.disconnect();
+  }, []);
+  useLayoutEffect(() => { place.current = pin; pin(); });
+  function pin() {
     const box = thread.current;
     if (!box || !chat) return;
     const offset = (el) => el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
@@ -808,13 +819,13 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
     const grew = timeline.length !== seen.current.n || (stream || '') !== seen.current.stream;
     seen.current = { n: timeline.length, stream: stream || '' };
     if (grew && !atEnd(box) && !following.current && !below) setBelow(true);
-  });
+  }
   // Scrolling up yourself always wins over following.
   const leave = () => { following.current = false; };
   return html`<section class="conversation-body" aria-label="Conversation"
 >
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
-      onScroll=${() => { if (thread.current && atEnd(thread.current)) setBelow(false); }}>
+      onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">
         ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
           : html`<div class="chat-skeleton" role="status" aria-label="Loading your conversation"><i class="you"></i><i class="ken"></i><i class="ken short"></i><i class="you short"></i><i class="ken"></i></div>`)}
