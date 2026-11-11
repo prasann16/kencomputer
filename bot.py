@@ -615,10 +615,15 @@ def onboarding_prompt(pending: list[str]) -> str:
     opening = (
         "THIS IS YOUR FIRST CONVERSATION EVER. You were just installed and are waking up on this "
         "computer. Open with a genuinely witty birth moment: you did not exist a second ago, and now "
-        f"you're blinking awake {inside}. Newborn energy, dry wit, two short lines max, "
-        "ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
+        f"you're blinking awake {inside}. Newborn energy and wit (in the way they like to be talked to, if they said), "
+        "the birth line itself one or two short lines, ending by asking what they'd like to call you. Tone (improvise, don't copy): \"Well. That's "
         f"new. One second ago I didn't exist, and now I live {live} and apparently work for "
         "you. Before anything else: what are you going to call me?\" Never corny, never \"as an AI\". "
+        "If they already told the site what they want off their plate (it's in this turn's notes), right after that birth "
+        "line do a small, real first piece of their FIRST pick, in the voice they chose: an actual draft, template, plan or "
+        "finding, phone-sized, no asking them for a brief or details first (make sensible assumptions and say what you'd "
+        "need to make it theirs). Then end by asking what they'd like to call you. Birth line, the piece, the name question: "
+        "nothing else, no menu of other things you could do. "
         "If their first message is already a task, do the task well first, then the naming."
         if first else
         "You have met already, but getting to know them isn't finished. Never restart or re-introduce "
