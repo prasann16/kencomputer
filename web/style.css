@@ -590,3 +590,16 @@ ol.conn-steps li { margin: 2px 0; }
 .send-page .send-list span { min-width: 0; overflow-wrap: anywhere; }
 .send-page .send-list small { flex-shrink: 0; color: var(--muted); }
 .send-page .send-progress .upload-bar { max-width: none; height: 6px; color: var(--ink); }
+/* Opening a chat that isn't in this browser yet: its shape, softly pulsing, never a bare "Loading…". */
+.chat-skeleton { display: flex; flex-direction: column; gap: var(--s7); padding-top: var(--s4); }
+.chat-skeleton i { display: block; height: 52px; width: 72%; border-radius: 14px; background: var(--well); animation: skeleton 1.4s ease-in-out infinite; }
+.chat-skeleton i.you { align-self: flex-end; width: 46%; height: 44px; border-radius: 22px 22px 6px 22px; }
+.chat-skeleton i.short { width: 34%; }
+.chat-skeleton i.ken { height: 66px; background: linear-gradient(var(--well) 0 14px, transparent 14px 26px, var(--well) 26px 40px, transparent 40px 52px, var(--well) 52px 66px); border-radius: 7px; }
+.chat-skeleton i.ken.short { height: 40px; background: linear-gradient(var(--well) 0 14px, transparent 14px 26px, var(--well) 26px 40px); }
+.chat-skeleton i:nth-child(2) { animation-delay: .15s; } .chat-skeleton i:nth-child(3) { animation-delay: .3s; }
+.chat-skeleton i:nth-child(4) { animation-delay: .45s; } .chat-skeleton i:nth-child(5) { animation-delay: .6s; }
+@keyframes skeleton { 50% { opacity: .45; } }
+.conversation-thread > div[data-key] { animation: msg-in .22s ease-out both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .chat-skeleton i, .conversation-thread > div[data-key] { animation: none; } }
