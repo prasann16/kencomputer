@@ -1213,8 +1213,9 @@ class Engine:
         told = self.kv_get(f"onboarding:said:{pid}")
         if told:
             self.kv_set(f"onboarding:said:{pid}", "")
-            parts.append("while your computer was being set up they told the site (already in SOUL.md and memory/about-them.md; "
-                         "use it, don't ask again): " + told)
+            parts.append("while your computer was being set up they told the site this. It isn't saved anywhere yet: save what's worth "
+                         "keeping where you'd keep it (what changes how you talk to them every time, like their name and how they "
+                         "like to be talked to, belongs in SOUL.md), then use it and don't ask again: " + told)
         call = self.kv_get(f"voice:said:{pid}")
         if call:
             self.kv_set(f"voice:said:{pid}", "")
@@ -2178,8 +2179,9 @@ class Engine:
     ONBOARDING_KEYS = ("call_name", "work", "busy", "apps", "brief", "ken_name", "style")
 
     def apply_onboarding(self, facts: dict) -> list[str]:
-        """What they told the hosting site about themselves while their computer was set up (each a few plain words):
-        into the soul file and memory, where Ken keeps such things. Returns the getting-to-know items it answers."""
+        """What they told the hosting site about themselves while their computer was set up (each a few plain words).
+        Nothing is written for Ken: its next turn is told, and Ken files what's worth keeping where it belongs (soul file
+        or memory), as with anything else it learns. Returns the getting-to-know items it answers."""
         def clean(key: str, limit: int = 300) -> str:
             value = facts.get(key)
             value = ", ".join(map(str, value)) if isinstance(value, list) else str(value or "")
@@ -2187,55 +2189,13 @@ class Engine:
 
         call, work, busy, apps, brief, style = (clean(k) for k in ("call_name", "work", "busy", "apps", "brief", "style"))
         ken = re.sub(r"[^\w .'-]", "", clean("ken_name", 40)).strip()
-        covered = []
-        f = self.context_file(HOME)
-        try:
-            soul = f.read_text()
-        except OSError:
-            soul = "# You are Ken\n\nYou are their personal assistant.\n"
-        if call:
-            soul = soul.replace("my human", call)
-        lines = soul.rstrip("\n").splitlines() or ["# You are Ken"]
-        if ken:
-            lines[0] = f"# You are {ken}"
-            covered.append("ken-name")
-
-        def add(heading_prefix: str, new: list[str], heading: str) -> None:
-            at = next((i for i, ln in enumerate(lines) if ln.startswith(heading_prefix)), None)
-            if at is None:
-                lines.extend(["", heading, *new])
-                return
-            end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("#")), len(lines))
-            body = [ln for ln in lines[at + 1:end] if ln.strip() not in ("(Nothing yet.)",)]
-            while body and not body[-1].strip():
-                body.pop()
-            lines[at + 1:end] = [*body, *new, ""]
-
-        about = [f"- Call them {call}." if call else "", f"- Work: {work}" if work else ""]
-        if any(about):
-            add("## About", [a for a in about if a], f"## About {call or 'them'}")
-        if style:
-            add("## Style", [f"- How they like to be talked to: {style}"], "## Style")
-            covered.append("style")
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text("\n".join(lines).rstrip() + "\n")
-        covered += [item for item, value in (("call-you", call), ("work", work), ("tools", apps), ("brief-time", brief)) if value]
-        # The rest goes into memory, dated, where Ken looks things up.
-        notes = [f"- Work: {work}" if work else "", f"- Wants off their plate (first one first): {busy}" if busy else "",
-                 f"- Apps they live in: {apps}" if apps else "",
-                 f"- Morning brief: {'none' if brief == 'no' else brief}" if brief else ""]
-        if any(notes):
-            m = self.memory_dir(HOME) / "about-them.md"
-            m.parent.mkdir(parents=True, exist_ok=True)
-            head = "" if m.exists() else "About them: work, what's on their plate, the apps they use\n\n"
-            with m.open("a") as out:
-                out.write(head + f"From setting Ken up ({_short_date()}):\n" + "\n".join(n for n in notes if n) + "\n\n")
-        # A Home chat already open keeps the soul it started with: reopen it (it resumes the same conversation) so
-        # the next reply uses the new one, and tell that reply what changed.
-        said = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
+        covered = [item for item, value in (("ken-name", ken), ("style", style), ("call-you", call), ("work", work), ("tools", apps),
+                                            ("brief-time", brief)) if value]
+        said = "; ".join(f"{k}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
                          ("want off their plate, first pick first", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
         if said:
             self.kv_set(f"onboarding:said:{HOME}", said)
+        # A Home chat already open: reopen it (it resumes the same conversation), so the next reply gets the note.
         s = self.chats.get(HOME)
         if s is not None and not s.busy:
             self.chats.pop(HOME)
