@@ -1639,6 +1639,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   ${section('account', 'Account', html`<div class="tool-list">
     ${me?.signedIn && row(icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'), me.name || 'Signed in', me.email,
       meta.logout_url && html`<a class="btn sm light" href=${meta.logout_url}>Sign out</a>`)}
+    ${HOSTED && me?.signedIn && row(icon('M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13'), 'Delete account', 'Deletes Ken\u2019s computer with its memory, chats and files, and cancels your plan. You\u2019ll be asked to confirm.',
+      html`<a class="btn sm light" href="/account/delete">Delete…</a>`)}
     ${row(icon('M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z'), 'Appearance', 'Light, dark, or the same as your computer.',
       html`<div class="segmented" role="radiogroup" aria-label="Appearance">${[['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([id, label]) => html`<button role="radio" aria-checked=${appearance === id} onClick=${() => window.kenTheme.setPreference(id)}>${label}</button>`)}</div>`)}
     ${privacy && row(icon('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z'), 'Share anonymous crash reports and usage',
