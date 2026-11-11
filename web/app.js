@@ -1578,12 +1578,22 @@ function ReportProblem({ onClose }) {
 
 // Settings → AI, under their own Claude or ChatGPT: how much of each limit is used and when it resets. The numbers
 // come with Ken's replies, so showing them costs nothing; before the first reply there's nothing to show yet.
+// When a limit resets, in this browser's own time zone (Ken's computer may be on another, a hosted one is on UTC):
+// "today 22:00", "Fri 19:50" this week, "Nov 23" later.
+function resetsWhen(w) {
+  if (!w.resets_at) return w.reset;
+  const t = new Date(w.resets_at * 1000), now = new Date();
+  const clock = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (t.toDateString() === now.toDateString()) return `today ${clock}`;
+  if (t - now < 6 * 86400000) return `${t.toLocaleDateString([], { weekday: 'short' })} ${clock}`;
+  return t.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 function PlanLimits({ windows, label }) {
   if (!windows.length) return html`<div class="ai-limits"><span class="ai-note">How much of your ${label} plan is used shows here after Ken’s next reply.</span></div>`;
   return html`<div class="ai-limits">${windows.map((w) => html`<div class=${'ai-limit' + (w.near ? ' near' : '')}>
     <span class="ai-limit-name">${w.label}</span>
     <span class="ai-bar" role="meter" aria-label=${`${w.label} limit used`} aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(w.pct ?? 0)}><i style=${`width:${Math.min(100, Math.round(w.pct ?? 0))}%`}></i></span>
-    <span class="ai-limit-text">${w.pct == null ? 'Near the limit' : `${Math.round(w.pct)}%`} · resets ${w.reset}</span></div>`)}</div>`;
+    <span class="ai-limit-text">${w.pct == null ? 'Near the limit' : `${Math.round(w.pct)}%`} · resets ${resetsWhen(w)}</span></div>`)}</div>`;
 }
 
 // An app name too long for its tile (past two lines) ends in "…"; hovering or tapping it shows the whole name.
