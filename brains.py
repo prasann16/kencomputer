@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import deque
 from typing import Awaitable, Callable
@@ -101,7 +102,7 @@ class Brain:
 _SHELL_WORDS = [  # (any of these in the command, what it means), first match wins
     (("--video-render",), "Rendering your video"),
     (("--video-stills",), "Checking how the video looks"),
-    (("--video-cut", "ffmpeg", "ffprobe"), "Editing your video"),
+    (("--video-cut",), "Editing your video"),
     (("transcribe",), "Transcribing"),
     (("remotion", "npx remotion"), "Rendering your video"),
     (("curl ", "wget ", "http://", "https://"), "Checking online"),
@@ -129,6 +130,14 @@ def describe_tool(name: str, args: dict) -> str:
         raw = args.get("command")
         command = " ".join(map(str, raw)) if isinstance(raw, list) else text("command") or text("cmd")
         low = f" {command.lower()} "
+        if "ffmpeg" in low or "ffprobe" in low:  # the same tool turns a phone's HEIC photo into a JPG: say what it's on
+            if re.search(r"\.(mp4|mov|m4v|webm|mkv|avi)\b", low):
+                return "Editing your video"
+            if re.search(r"\.(heic|heif|jpe?g|png|webp|gif)\b", low):
+                return "Looking at your picture"
+            if re.search(r"\.(m4a|mp3|wav|ogg|oga|opus|aac|flac)\b", low):
+                return "Listening to the recording"
+            return "Editing your video"
         for needles, words in _SHELL_WORDS:
             if any(n in low for n in needles):
                 return words
