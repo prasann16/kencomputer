@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plug a camera into a Raspberry Pi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=block" rel="stylesheet">
+<style>
+  /* One look for every explainer. Change the palette only when the subject has its own colours
+     (a brand, a real part: a green Raspberry Pi board, a grey jet). */
+  :root {
+    --paper: #F6F4EF;   /* background */
+    --card: #FFFFFF;    /* things that sit on the paper */
+    --ink: #15171C;     /* text and outlines */
+    --muted: #5C6370;   /* secondary text */
+    --rule: #D8D4CB;    /* hairlines, grid, inactive */
+    --accent: #1D5FD1;  /* THE thing to look at. Use it in 1 to 3 places */
+    --accent-soft: #DCE6F8;
+    --warm: #D9841F;    /* a second idea only when there are two (input vs output, before vs after) */
+    --warm-soft: #F7E6CC;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--paper); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  main { width: 100%; height: 100%; padding: 72px 72px 64px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 32px; }
+  h1 { font-size: 64px; line-height: 1.05; font-weight: 600; letter-spacing: -0.02em; max-width: 900px; text-wrap: balance; }
+  .sub { margin-top: 16px; font-size: 30px; line-height: 1.35; color: var(--muted); max-width: 880px; text-wrap: pretty; }
+  .fig { width: 100%; height: 100%; min-height: 0; display: block; overflow: visible; }
+  footer { border-top: 2px solid var(--rule); padding-top: 24px; min-height: 107px; font-size: 30px; line-height: 1.35; text-wrap: pretty; }
+  footer b { font-weight: 600; color: var(--accent); }
+
+  /* SVG vocabulary. Text sizes are in px at 1080 wide: on a phone screen 32 px reads like 12 pt. */
+  svg text { font-family: var(--sans); fill: var(--ink); }
+  .label { font-size: 32px; font-weight: 600; }
+  .text  { font-size: 28px; }
+  .note  { font-size: 26px; fill: var(--muted); }
+  .mono  { font-family: var(--mono); font-size: 28px; }
+  .num   { font-family: var(--mono); font-size: 26px; font-weight: 600; fill: #fff; }
+  .box   { fill: var(--card); stroke: var(--ink); stroke-width: 3; }
+  .box.soft { fill: var(--accent-soft); stroke: var(--accent); }
+  .box.warm { fill: var(--warm-soft); stroke: var(--warm); }
+  .line  { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .line.accent { stroke: var(--accent); stroke-width: 5; }
+  .line.dash { stroke: var(--muted); stroke-dasharray: 8 10; stroke-width: 2.5; }
+  .arrow { marker-end: url(#arrow); }
+  .arrow.accent { marker-end: url(#arrow-accent); }
+  .dot   { fill: var(--accent); }
+  .hit   { fill: var(--accent); }
+
+  /* Steps. Tag parts with data-step="N" (they appear from step N on) and step captions with data-only="N"
+     (shown only in step N). data-full is shown only in the full picture. render.py --steps draws
+     visual.png (everything) plus step-1.png ... and steps.mp4. */
+  body.stepping [data-full] { display: none; }
+  body:not(.stepping) [data-only] { display: none; }
+  body.stepping [data-step].later, body.stepping [data-only].other { display: none; }
+  body.stepping [data-step].past { opacity: .38; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Plug a camera into a Raspberry Pi</h1>
+    <p class="sub">Raspberry Pi 4 and Camera Module 3. It takes a minute, and the only trick is which way the cable faces.</p>
+  </header>
+
+  <!-- The figure. viewBox is 936 wide (the frame minus its margins) and about 880 tall with a 2 line title,
+       subtitle and footer; keep everything inside it. -->
+  <svg class="fig" viewBox="0 0 936 880" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker>
+      <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+    </defs>
+    <!-- figure -->
+    <g data-step="1" data-keep>
+      <rect x="40" y="8" width="510" height="336" rx="18" fill="#2F7D4F" stroke="var(--ink)" stroke-width="3"/>
+      <circle cx="61.0" cy="29.0" r="10" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/><circle cx="409.0" cy="29.0" r="10" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/><circle cx="61.0" cy="323.0" r="10" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/><circle cx="409.0" cy="323.0" r="10" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="82" y="14" width="306" height="30" rx="3" fill="#20242B"/>
+      <circle cx="89.80000000000001" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="89.80000000000001" cy="37.04" r="3" fill="#C9A646"/><circle cx="105.03999999999999" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="105.03999999999999" cy="37.04" r="3" fill="#C9A646"/><circle cx="120.28" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="120.28" cy="37.04" r="3" fill="#C9A646"/><circle cx="135.52" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="135.52" cy="37.04" r="3" fill="#C9A646"/><circle cx="150.76" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="150.76" cy="37.04" r="3" fill="#C9A646"/><circle cx="166.0" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="166.0" cy="37.04" r="3" fill="#C9A646"/><circle cx="181.24" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="181.24" cy="37.04" r="3" fill="#C9A646"/><circle cx="196.48000000000002" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="196.48000000000002" cy="37.04" r="3" fill="#C9A646"/><circle cx="211.72" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="211.72" cy="37.04" r="3" fill="#C9A646"/><circle cx="226.96" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="226.96" cy="37.04" r="3" fill="#C9A646"/><circle cx="242.20000000000002" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="242.20000000000002" cy="37.04" r="3" fill="#C9A646"/><circle cx="257.44" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="257.44" cy="37.04" r="3" fill="#C9A646"/><circle cx="272.68" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="272.68" cy="37.04" r="3" fill="#C9A646"/><circle cx="287.9200000000001" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="287.9200000000001" cy="37.04" r="3" fill="#C9A646"/><circle cx="303.15999999999997" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="303.15999999999997" cy="37.04" r="3" fill="#C9A646"/><circle cx="318.40000000000003" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="318.40000000000003" cy="37.04" r="3" fill="#C9A646"/><circle cx="333.64" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="333.64" cy="37.04" r="3" fill="#C9A646"/><circle cx="348.88" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="348.88" cy="37.04" r="3" fill="#C9A646"/><circle cx="364.12" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="364.12" cy="37.04" r="3" fill="#C9A646"/><circle cx="379.36" cy="21.799999999999997" r="3" fill="#C9A646"/><circle cx="379.36" cy="37.04" r="3" fill="#C9A646"/>
+      <rect x="172" y="122" width="90" height="90" rx="4" fill="#BFC3C8" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="436" y="23.0" width="129.0" height="81.0" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="436" y="131.0" width="129.0" height="81.0" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="436" y="236" width="129.0" height="96" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="80.2" y="308" width="54" height="45.0" rx="6" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="175.0" y="308" width="42" height="45.0" rx="3" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="256" y="308" width="42" height="45.0" rx="3" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/>
+      <rect x="343.0" y="284" width="36" height="75.0" rx="3" fill="#20242B"/>
+      <rect x="298" y="170" width="24" height="126" rx="2" fill="#20242B"/>
+      <text class="note" x="107.19999999999999" y="400" text-anchor="middle">Power</text>
+      <text class="note" x="236.5" y="400" text-anchor="middle">HDMI</text>
+      <text class="note" x="373.0" y="400" text-anchor="middle">Audio</text>
+      <circle cx="18" cy="456" r="18" class="hit"/><text class="num" x="18" y="465" text-anchor="middle">1</text>
+      <text class="label" x="48" y="466" style="font-size:28px">Unplug the power</text>
+    </g>
+    <g data-step="2">
+      <rect x="320" y="182" width="380" height="96" fill="var(--warm-soft)" stroke="var(--warm)" stroke-width="3" opacity=".92"/>
+      <rect x="292" y="164" width="36" height="138" rx="6" fill="none" stroke="var(--accent)" stroke-width="5"/>
+      <rect x="700" y="155.0" width="150" height="150" rx="10" fill="#2F7D4F" stroke="var(--ink)" stroke-width="3"/>
+      <rect x="745" y="185.0" width="60" height="60" rx="6" fill="#20242B"/>
+      <circle cx="775" cy="215.0" r="20" fill="#3A4150" stroke="#C7CBD1" stroke-width="3"/>
+      <text class="label" x="775" y="345.0" text-anchor="middle">Camera</text>
+      <text class="note" x="632.5" y="239.0" text-anchor="middle" style="fill:#8A5A12">cable</text>
+      <path class="line" style="stroke:var(--accent);stroke-width:2.5" d="M310,302 V438"/>
+      <circle cx="344" cy="456" r="18" class="hit"/><text class="num" x="344" y="465" text-anchor="middle">2</text>
+      <text class="label" x="374" y="466" style="font-size:28px;fill:var(--accent)">Find the camera port</text>
+    </g>
+    <g data-step="3" transform="translate(0,556)"><circle cx="18" cy="0" r="18" class="hit"/><text class="num" x="18" y="9" text-anchor="middle">3</text><text class="label" x="48" y="10" style="font-size:28px">Lift the latch</text><rect x="0" y="170" width="280" height="18" fill="#2F7D4F" stroke="var(--ink)" stroke-width="2.5"/><rect x="14" y="125" width="56" height="45" rx="4" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/><text class="note" x="42" y="218" text-anchor="middle">HDMI</text><rect x="140" y="134" width="26" height="36" fill="#20242B"/><rect x="184" y="134" width="26" height="36" fill="#20242B"/><rect x="166" y="156" width="18" height="14" fill="#20242B"/><rect x="132" y="92" width="86" height="16" rx="3" fill="#E9E6DF" stroke="var(--ink)" stroke-width="2.5"/><path class="line dash" d="M140,134 V108 M210,134 V108"/><path class="line accent arrow accent" d="M250,128 V60"/><text class="text" x="0" y="268">Pull up both ends,</text><text class="text" x="0" y="304">about 1 mm.</text></g>
+    <g data-step="4" transform="translate(328,556)"><circle cx="18" cy="0" r="18" class="hit"/><text class="num" x="18" y="9" text-anchor="middle">4</text><text class="label" x="48" y="10" style="font-size:28px">Slide the cable in</text><rect x="0" y="170" width="280" height="18" fill="#2F7D4F" stroke="var(--ink)" stroke-width="2.5"/><rect x="14" y="125" width="56" height="45" rx="4" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/><text class="note" x="42" y="218" text-anchor="middle">HDMI</text><rect x="140" y="134" width="26" height="36" fill="#20242B"/><rect x="184" y="134" width="26" height="36" fill="#20242B"/><rect x="166" y="156" width="18" height="14" fill="#20242B"/><rect x="132" y="92" width="86" height="16" rx="3" fill="#E9E6DF" stroke="var(--ink)" stroke-width="2.5"/><path class="line dash" d="M140,134 V108 M210,134 V108"/><rect x="170" y="36" width="10" height="130" fill="var(--warm-soft)" stroke="var(--warm)" stroke-width="2.5"/><rect x="180" y="106" width="7" height="60" fill="#4A8FD9"/><path d="M170,116 V162" stroke="#8C949E" stroke-width="5"/><path class="line accent arrow accent" d="M250,40 V112"/><path class="line" style="stroke-width:2" d="M166,120 L106,84"/><text class="note" x="100" y="80" text-anchor="end">contacts</text><text class="note" x="196" y="218">blue tab</text><path class="line" style="stroke-width:2" d="M206,194 L186,150"/><text class="text" x="0" y="268">Silver contacts face</text><text class="text" x="0" y="304">the HDMI ports.</text></g>
+    <g data-step="5" transform="translate(656,556)"><circle cx="18" cy="0" r="18" class="hit"/><text class="num" x="18" y="9" text-anchor="middle">5</text><text class="label" x="48" y="10" style="font-size:28px">Press it shut</text><rect x="0" y="170" width="280" height="18" fill="#2F7D4F" stroke="var(--ink)" stroke-width="2.5"/><rect x="14" y="125" width="56" height="45" rx="4" fill="#C7CBD1" stroke="var(--ink)" stroke-width="2"/><text class="note" x="42" y="218" text-anchor="middle">HDMI</text><rect x="140" y="134" width="26" height="36" fill="#20242B"/><rect x="184" y="134" width="26" height="36" fill="#20242B"/><rect x="166" y="156" width="18" height="14" fill="#20242B"/><rect x="132" y="120" width="86" height="16" rx="3" fill="#E9E6DF" stroke="var(--ink)" stroke-width="2.5"/><rect x="170" y="36" width="10" height="130" fill="var(--warm-soft)" stroke="var(--warm)" stroke-width="2.5"/><rect x="180" y="106" width="7" height="60" fill="#4A8FD9"/><path d="M170,116 V162" stroke="#8C949E" stroke-width="5"/><path class="line accent arrow accent" d="M250,46 V116"/><text class="text" x="0" y="268">Push the latch down.</text><text class="text" x="0" y="304">The cable stays put.</text></g>
+    <!-- end figure -->
+  </svg>
+
+  <footer>
+    <p data-full>Then power on and run <b>rpicam-hello</b>. A live preview means it worked.</p>
+    <p data-only="1"><b>1.</b> Unplug the USB C power. Never plug a camera into a running Pi.</p>
+    <p data-only="2"><b>2.</b> Find the port marked CAMERA, between the HDMI ports and the audio jack.</p>
+    <p data-only="3"><b>3.</b> Gently lift the latch. It slides up, it doesn&#8217;t come off.</p>
+    <p data-only="4"><b>4.</b> Push the cable all the way in, silver contacts toward the HDMI ports.</p>
+    <p data-only="5"><b>5.</b> Press the latch down to lock it.</p>
+    <p data-only="6"><b>6.</b> Power on and run <b>rpicam-hello</b>. A live preview means it worked.</p>
+  </footer>
+</main>
+<script>
+  // #step=N (render.py --steps) shows the picture as it is at step N: earlier parts dimmed, later ones hidden.
+  const m = location.hash.match(/step=(\d+)/);
+  if (m) {
+    const n = +m[1];
+    document.body.classList.add("stepping");
+    document.querySelectorAll("[data-step]").forEach(el => {
+      const s = +el.dataset.step;
+      el.classList.toggle("later", s > n);
+      el.classList.toggle("past", s < n && !el.hasAttribute("data-keep"));
+    });
+    document.querySelectorAll("[data-only]").forEach(el => el.classList.toggle("other", +el.dataset.only !== n));
+  }
+</script>
+</body>
+</html>

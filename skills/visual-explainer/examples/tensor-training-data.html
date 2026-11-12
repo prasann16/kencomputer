@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How text becomes an LLM's training data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=block" rel="stylesheet">
+<style>
+  /* One look for every explainer. Change the palette only when the subject has its own colours
+     (a brand, a real part: a green Raspberry Pi board, a grey jet). */
+  :root {
+    --paper: #F6F4EF;   /* background */
+    --card: #FFFFFF;    /* things that sit on the paper */
+    --ink: #15171C;     /* text and outlines */
+    --muted: #5C6370;   /* secondary text */
+    --rule: #D8D4CB;    /* hairlines, grid, inactive */
+    --accent: #1D5FD1;  /* THE thing to look at. Use it in 1 to 3 places */
+    --accent-soft: #DCE6F8;
+    --warm: #D9841F;    /* a second idea only when there are two (input vs output, before vs after) */
+    --warm-soft: #F7E6CC;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--paper); }
+  body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  main { width: 100%; height: 100%; padding: 72px 72px 64px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 32px; }
+  h1 { font-size: 64px; line-height: 1.05; font-weight: 600; letter-spacing: -0.02em; max-width: 900px; text-wrap: balance; }
+  .sub { margin-top: 16px; font-size: 30px; line-height: 1.35; color: var(--muted); max-width: 880px; text-wrap: pretty; }
+  .fig { width: 100%; height: 100%; min-height: 0; display: block; overflow: visible; }
+  footer { border-top: 2px solid var(--rule); padding-top: 24px; font-size: 30px; line-height: 1.35; text-wrap: pretty; }
+  footer b { font-weight: 600; color: var(--accent); }
+
+  /* SVG vocabulary. Text sizes are in px at 1080 wide: on a phone screen 32 px reads like 12 pt. */
+  svg text { font-family: var(--sans); fill: var(--ink); }
+  .label { font-size: 32px; font-weight: 600; }
+  .text  { font-size: 28px; }
+  .note  { font-size: 26px; fill: var(--muted); }
+  .mono  { font-family: var(--mono); font-size: 28px; }
+  .num   { font-family: var(--mono); font-size: 26px; font-weight: 600; fill: #fff; }
+  .box   { fill: var(--card); stroke: var(--ink); stroke-width: 3; }
+  .box.soft { fill: var(--accent-soft); stroke: var(--accent); }
+  .box.warm { fill: var(--warm-soft); stroke: var(--warm); }
+  .line  { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .line.accent { stroke: var(--accent); stroke-width: 5; }
+  .line.dash { stroke: var(--muted); stroke-dasharray: 8 10; stroke-width: 2.5; }
+  .arrow { marker-end: url(#arrow); }
+  .arrow.accent { marker-end: url(#arrow-accent); }
+  .dot   { fill: var(--accent); }
+  .hit   { fill: var(--accent); }
+
+  /* Steps. Tag parts with data-step="N" (they appear from step N on) and step captions with data-only="N"
+     (shown only in step N). data-full is shown only in the full picture. render.py --steps draws
+     visual.png (everything) plus step-1.png ... and steps.mp4. */
+  body.stepping [data-full] { display: none; }
+  body:not(.stepping) [data-only] { display: none; }
+  body.stepping [data-step].later, body.stepping [data-only].other { display: none; }
+  body.stepping [data-step].past { opacity: .38; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>How text becomes an LLM&#8217;s training data</h1>
+    <p class="sub">Text turns into numbers, and every position becomes a lesson: given what came before, guess the next token.</p>
+  </header>
+
+  <!-- The figure. viewBox is 936 wide (the frame minus its margins); keep everything inside it. -->
+  <svg class="fig" viewBox="0 0 936 880" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker>
+      <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+    </defs>
+    <!-- figure -->
+    <g data-step="1" data-keep><circle cx="38" cy="30" r="18" class="hit"/><text class="num" x="38" y="39" text-anchor="middle">1</text><text class="label" x="70" y="40" style="font-size:28px">The text</text></g>
+    <g data-step="1"><text class="mono" x="20" y="108" style="font-size:44px">The cat sat on the mat.</text></g>
+    <g data-step="2" data-keep><circle cx="38" cy="180" r="18" class="hit"/><text class="num" x="38" y="189" text-anchor="middle">2</text><text class="label" x="70" y="190" style="font-size:28px">Tokens</text></g>
+    <g data-step="2"><rect class="box" x="20" y="214" width="116" height="72" rx="10"/><text class="mono" x="78.0" y="260" text-anchor="middle" style="font-size:30px">The</text><rect class="box" x="150" y="214" width="116" height="72" rx="10"/><text class="mono" x="208.0" y="260" text-anchor="middle" style="font-size:30px">·cat</text><rect class="box" x="280" y="214" width="116" height="72" rx="10"/><text class="mono" x="338.0" y="260" text-anchor="middle" style="font-size:30px">·sat</text><rect class="box" x="410" y="214" width="116" height="72" rx="10"/><text class="mono" x="468.0" y="260" text-anchor="middle" style="font-size:30px">·on</text><rect class="box" x="540" y="214" width="116" height="72" rx="10"/><text class="mono" x="598.0" y="260" text-anchor="middle" style="font-size:30px">·the</text><rect class="box" x="670" y="214" width="116" height="72" rx="10"/><text class="mono" x="728.0" y="260" text-anchor="middle" style="font-size:30px">·mat</text><rect class="box" x="800" y="214" width="116" height="72" rx="10"/><text class="mono" x="858.0" y="260" text-anchor="middle" style="font-size:30px">.</text><text class="note" x="20" y="326">GPT-2 tokenizer. A dot marks the space each token carries.</text></g>
+    <g data-step="3" data-keep><circle cx="38" cy="390" r="18" class="hit"/><text class="num" x="38" y="399" text-anchor="middle">3</text><text class="label" x="70" y="400" style="font-size:28px">Token IDs, the numbers the model sees</text></g>
+    <g data-step="3"><text class="mono" x="78.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">464</text><text class="mono" x="208.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">3797</text><text class="mono" x="338.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">3332</text><text class="mono" x="468.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">319</text><text class="mono" x="598.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">262</text><text class="mono" x="728.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">2603</text><text class="mono" x="858.0" y="462" text-anchor="middle" style="font-size:32px;font-weight:600">13</text></g>
+    <g data-step="4" data-keep><circle cx="38" cy="538" r="18" class="hit"/><text class="num" x="38" y="547" text-anchor="middle">4</text><text class="label" x="70" y="548" style="font-size:28px">Shift by one: input x, target y</text></g>
+    <g data-step="4"><rect class="box soft" x="20" y="572" width="116" height="68" rx="10"/><text class="mono" x="78.0" y="616" text-anchor="middle">464</text><rect class="box soft" x="150" y="572" width="116" height="68" rx="10"/><text class="mono" x="208.0" y="616" text-anchor="middle">3797</text><rect class="box soft" x="280" y="572" width="116" height="68" rx="10"/><text class="mono" x="338.0" y="616" text-anchor="middle">3332</text><rect class="box soft" x="410" y="572" width="116" height="68" rx="10"/><text class="mono" x="468.0" y="616" text-anchor="middle">319</text><rect class="box soft" x="540" y="572" width="116" height="68" rx="10"/><text class="mono" x="598.0" y="616" text-anchor="middle">262</text><rect class="box soft" x="670" y="572" width="116" height="68" rx="10"/><text class="mono" x="728.0" y="616" text-anchor="middle">2603</text><text class="label" x="812" y="604" style="font-size:36px">x</text><text class="note" x="812" y="632">ids[0:6]</text></g>
+    <g data-step="5"><rect class="box warm" x="150" y="736" width="116" height="68" rx="10"/><text class="mono" x="208.0" y="780" text-anchor="middle">3797</text><rect class="box warm" x="280" y="736" width="116" height="68" rx="10"/><text class="mono" x="338.0" y="780" text-anchor="middle">3332</text><rect class="box warm" x="410" y="736" width="116" height="68" rx="10"/><text class="mono" x="468.0" y="780" text-anchor="middle">319</text><rect class="box warm" x="540" y="736" width="116" height="68" rx="10"/><text class="mono" x="598.0" y="780" text-anchor="middle">262</text><rect class="box warm" x="670" y="736" width="116" height="68" rx="10"/><text class="mono" x="728.0" y="780" text-anchor="middle">2603</text><rect class="box warm" x="800" y="736" width="116" height="68" rx="10"/><text class="mono" x="858.0" y="780" text-anchor="middle">13</text><path class="line arrow" style="stroke:var(--muted);stroke-width:2.5" d="M92.0,644 L194.0,728"/><path class="line arrow" style="stroke:var(--muted);stroke-width:2.5" d="M222.0,644 L324.0,728"/><path class="line arrow accent" style="" d="M352.0,644 L454.0,728"/><path class="line arrow" style="stroke:var(--muted);stroke-width:2.5" d="M482.0,644 L584.0,728"/><path class="line arrow" style="stroke:var(--muted);stroke-width:2.5" d="M612.0,644 L714.0,728"/><path class="line arrow" style="stroke:var(--muted);stroke-width:2.5" d="M742.0,644 L844.0,728"/><text class="label" x="124" y="768" text-anchor="end" style="font-size:36px;fill:var(--warm)">y</text><text class="note" x="124" y="796" text-anchor="end">ids[1:7]</text><text class="text" x="20" y="856">Each arrow is one lesson. After <tspan class="mono" style="font-weight:600;fill:var(--accent)">The cat sat</tspan>, the answer is <tspan class="mono" style="font-weight:600;fill:var(--warm)">·on</tspan>.</text></g>
+    <!-- end figure -->
+  </svg>
+
+  <footer>
+    <p data-full>Stack B rows like this and you get a <b>(B, T) tensor</b> of integers: here T is 6, so one row holds 6 next token lessons.</p>
+    <p data-only="1"><b>1.</b> Start with plain text from the training set.</p>
+    <p data-only="2"><b>2.</b> The tokenizer cuts it into common chunks of characters.</p>
+    <p data-only="3"><b>3.</b> Each token is swapped for its ID in a fixed vocabulary of 50,257.</p>
+    <p data-only="4"><b>4.</b> A window of T = 6 IDs becomes the input row x.</p>
+    <p data-only="5"><b>5.</b> The same window moved one to the right is the answer row y.</p>
+  </footer>
+</main>
+<script>
+  // #step=N (render.py --steps) shows the picture as it is at step N: earlier parts dimmed, later ones hidden.
+  const m = location.hash.match(/step=(\d+)/);
+  if (m) {
+    const n = +m[1];
+    document.body.classList.add("stepping");
+    document.querySelectorAll("[data-step]").forEach(el => {
+      const s = +el.dataset.step;
+      el.classList.toggle("later", s > n);
+      el.classList.toggle("past", s < n && !el.hasAttribute("data-keep"));
+    });
+    document.querySelectorAll("[data-only]").forEach(el => el.classList.toggle("other", +el.dataset.only !== n));
+  }
+</script>
+</body>
+</html>
