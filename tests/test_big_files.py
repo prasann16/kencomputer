@@ -292,6 +292,30 @@ async def test_a_big_video_plays_from_a_small_streaming_ready_copy(engine, aioht
     assert await (await client.get(f"/api/chats/{HOME}/files/reel.mov")).read() == original  # saving gets the original
 
 
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+async def test_a_reel_ken_names_is_ready_to_watch_before_anyone_presses_play(engine, aiohttp_client, hosted):  # noqa: F811
+    """The watching copy is made when Ken's reply names the video (in code, a link, or a bare path), not on the first
+    play, which on a phone meant a long black box. Your own messages and files that aren't videos start nothing."""
+    import subprocess
+    app, client = await signed_in(engine, aiohttp_client)
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    reel = engine.files_dir(HOME) / "reel.mov"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30:duration=1",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(reel)], check=True)
+    (engine.files_dir(HOME) / "notes.txt").write_text("x")
+    engine.log_message(HOME, "you", f"edit `{reel}` please")
+    await asyncio.sleep(0.3)
+    assert not list(app.previews.glob("*.mp4"))  # what they said: nothing made
+    engine.log_message(HOME, "ken", f"Done, here it is: `{reel}`. Notes in {engine.files_dir(HOME) / 'notes.txt'}.")
+    for _ in range(100):
+        if list(app.previews.glob("*.mp4")) and not list(app.previews.glob("*.part.mp4")):
+            break
+        await asyncio.sleep(0.1)
+    assert len(list(app.previews.glob("*.mp4"))) == 1
+    await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    assert len(list(app.previews.glob("*.mp4"))) == 1  # the phone gets that same copy, not a second one
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
 def test_a_reply_never_shows_a_path_a_cloud_ken_links_the_file(monkeypatch, tmp_path):
     import bot
