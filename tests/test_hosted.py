@@ -121,13 +121,14 @@ async def test_meta_says_hosted_and_passes_plan_usage(engine, aiohttp_client, ho
     app, client = await signed_in(engine, aiohttp_client)
     usage = {"plan": "Basic", "lines": [{"label": "Awake time", "left": "4 h", "of": "10 h"},
                                         {"label": "AI", "left": "$0.50", "low": True}, {"nope": 1}],
-             "manage_url": "javascript:alert(1)"}
+             "manage_url": "javascript:alert(1)", "note": "Running low on awake time. " + "x" * 150 + " when it all resets."}
     meta = await (await client.get("/api/meta", headers={"X-Ken-Usage": json.dumps(usage)})).json()
     assert meta["hosted"] is True and meta["account_url"] == "/account" and meta["voice"] is False
     assert meta["logout_url"] == "/auth/logout"  # Settings' Sign out: the host's, beside its account page
     assert meta["usage"]["plan"] == "Basic" and len(meta["usage"]["lines"]) == 2
     assert meta["usage"]["lines"][1] == {"label": "AI", "left": "$0.50", "of": "", "low": True}
     assert meta["usage"]["manage_url"] == ""  # only a web or relative link
+    assert meta["usage"]["note"].endswith("when it all resets.")  # the whole note, not cut mid-word
     for bad in ("not json", "[1, 2]", "{" * 5000):
         assert (await (await client.get("/api/meta", headers={"X-Ken-Usage": bad})).json())["usage"] is None
     assert (await (await client.get("/api/meta")).json())["usage"] is None
