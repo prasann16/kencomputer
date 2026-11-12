@@ -557,6 +557,9 @@ async def test_background_jobs_start_while_the_computer_has_room_and_ken_can_sto
         await asyncio.sleep(0.05)
         assert [engine._run_row(r["id"])["status"] for r in runs] == ["running", "running", "queued"]
         assert f'{runs[0]["id"]} "Job 0"' in await engine.state(HOME)
+        # Asked how a job is going, Ken sees what it's actually doing (its latest steps), not just its name.
+        engine.emit("run.text", project=HOME, run=runs[0]["id"], text="Checked 40 of 84 profiles, going slowly")
+        assert "latest steps: 0m ago: Checked 40 of 84 profiles, going slowly" in await engine.state(HOME)
         engine.handle_request({"type": "stop", "run": runs[2]["id"]})
         await asyncio.sleep(0.05)
         assert engine._run_row(runs[2]["id"])["status"] == "stopped"
