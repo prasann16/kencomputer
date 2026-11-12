@@ -1129,6 +1129,50 @@ def restart_would_cut_in() -> bool:
     return ENGINE.busy() or time.monotonic() - LAST_INCOMING < HEARD_WAIT
 
 
+QUIET_BEFORE_UPDATE = 120  # seconds with nobody using Ken; its computer sleeps after 300
+QUIET_CHECK_EVERY = 20
+
+
+async def update_when_quiet(app_dir: Path) -> None:
+    """Hosted Ken: its computer sleeps after 5 minutes without requests, and waking resumes it exactly as it was, so
+    it would never start fresh to pick up a new version (ken-supervise pulls only when Ken starts). So once nobody has
+    used it for 2 minutes (no page open, nothing running, no message coming in), it looks for a new version and, when
+    the engine changed, exits: ken-supervise pulls and starts the new one before the computer goes to sleep. Nobody is
+    ever cut off, and the next visit finds the newest Ken."""
+    global RUNNING_REV
+    import web as web_module
+
+    quiet = lambda: web_module.quiet_seconds() >= QUIET_BEFORE_UPDATE and not restart_would_cut_in()
+    checked = 0.0
+    while True:
+        await asyncio.sleep(QUIET_CHECK_EVERY)
+        try:
+            if not quiet() or (checked and time.monotonic() - checked < 600):
+                continue
+            checked = time.monotonic()
+            fetch = await asyncio.create_subprocess_exec(
+                "git", "-C", str(app_dir), "fetch", "-q", stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(fetch.communicate(), 60)
+            head = await asyncio.create_subprocess_exec(
+                "git", "-C", str(app_dir), "rev-parse", "@{u}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await head.communicate()
+            newest = out.decode().strip()
+            if not newest or newest == RUNNING_REV:
+                continue
+            if not await engine_changed(app_dir, RUNNING_REV, newest):  # only screens or docs: no restart needed
+                pull = await asyncio.create_subprocess_exec(
+                    "git", "-C", str(app_dir), "pull", "--ff-only", "-q", stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await pull.communicate()
+                if pull.returncode == 0:
+                    RUNNING_REV = newest
+                continue
+            if quiet():
+                log.info("quiet: updating %s -> %s (restarting)", RUNNING_REV[:8], newest[:8])
+                os._exit(0)  # ken-supervise pulls the new version and starts it
+        except Exception as e:
+            log.warning("update check failed: %r", e)
+
+
 async def self_update() -> None:
     """Pull-based updates: check the repo hourly, restart into the new version.
 
@@ -1138,11 +1182,10 @@ async def self_update() -> None:
     global RUNNING_REV
     if os.environ.get("KEN_NO_AUTOUPDATE") or FROZEN:  # the Mac app updates itself
         return
-    if host_site():
-        # Hosted Ken updates as its computer wakes (ken-supervise pulls before Ken starts), and it sleeps whenever its
-        # person is away, so it never restarts itself mid-reply, mid-job or mid-file.
-        return
     app_dir = KEN_HOME / "app"
+    if host_site():
+        await update_when_quiet(app_dir)
+        return
     await asyncio.sleep(300)  # settle after boot
     while True:
         try:

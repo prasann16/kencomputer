@@ -129,6 +129,17 @@ VOICE_FOLLOW_UP = (
     "save or do, reply exactly NOTHING_TO_SAY.)\n\nThe call:\n"
 )
 
+# Whether anyone is using this Ken right now: when someone last asked it anything, and the pages open on it.
+# Hosted Ken updates itself only in a quiet spell (bot.py update_when_quiet).
+LAST_ASKED = time.monotonic()
+OPEN_PAGES: set = set()
+
+
+def quiet_seconds() -> float:
+    """How long nobody has asked this Ken anything, with no page open on it (0 while one is)."""
+    return 0.0 if OPEN_PAGES else time.monotonic() - LAST_ASKED
+
+
 class WebApp:
     def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
@@ -161,11 +172,13 @@ class WebApp:
 
     @web.middleware
     async def auth_mw(self, request: web.Request, handler):
+        global LAST_ASKED
         path = request.path
         origin = request.headers.get("Origin")
         if origin and origin not in trusted_origins(request):
             return _json({"error": "Untrusted origin."}, 403)
         if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
+            LAST_ASKED = time.monotonic()
             return await handler(request)
         if path.startswith("/api/"):
             return _json({"error": "not signed in"}, 401)
@@ -1115,6 +1128,7 @@ class WebApp:
         ws = web.WebSocketResponse(heartbeat=25)
         await ws.prepare(request)
         self.websockets.add(ws)
+        OPEN_PAGES.add(ws)
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -1137,6 +1151,7 @@ class WebApp:
             pumping.cancel()
             self.engine.unsubscribe(q)
             self.websockets.discard(ws)
+            OPEN_PAGES.discard(ws)
             await asyncio.gather(pumping, return_exceptions=True)
         return ws
 
