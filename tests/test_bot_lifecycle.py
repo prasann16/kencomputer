@@ -183,14 +183,53 @@ async def test_every_telegram_message_is_heard(monkeypatch):
     assert bot.time.monotonic() - bot.LAST_INCOMING < 5
 
 
-async def test_hosted_ken_never_restarts_itself_for_an_update(monkeypatch):
+async def test_hosted_ken_takes_the_quiet_update_path(monkeypatch):
+    """Hosted Ken never runs the hourly pull-and-restart (it could cut someone off); it waits for a quiet spell."""
     import bot
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://app.example.dev/box/checkin")
     monkeypatch.setattr(bot, "FROZEN", False); monkeypatch.delenv("KEN_NO_AUTOUPDATE", raising=False)
-    slept = []
+    went = []
 
-    async def sleep(s):
-        slept.append(s)
-    monkeypatch.setattr(bot.asyncio, "sleep", sleep)
-    await bot.self_update()  # returns at once: its computer updates it on waking
-    assert slept == []
+    async def quiet(app_dir):
+        went.append(app_dir)
+    monkeypatch.setattr(bot, "update_when_quiet", quiet)
+    await bot.self_update()
+    assert went == [bot.KEN_HOME / "app"]
+
+
+async def test_hosted_ken_updates_in_a_quiet_spell_never_while_in_use(tmp_path, monkeypatch):
+    """A hosted computer wakes exactly as it slept, so Ken restarts into a new engine itself, but only once nobody has
+    used it for a while: never with a page open or a message coming in."""
+    import subprocess
+    import web
+    run = lambda cwd, *a: subprocess.run(["git", "-C", str(cwd), *a], check=True, capture_output=True, text=True).stdout.strip()
+    origin, app = tmp_path / "origin", tmp_path / "app"
+    origin.mkdir()
+    run(origin, "init", "-q", "-b", "main"); run(origin, "config", "user.email", "t@t"); run(origin, "config", "user.name", "t")
+    (origin / "engine.py").write_text("1"); run(origin, "add", "."); run(origin, "commit", "-qm", "a")
+    subprocess.run(["git", "clone", "-q", str(origin), str(app)], check=True)
+    monkeypatch.setattr(bot, "RUNNING_REV", run(app, "rev-parse", "HEAD"))
+    (origin / "engine.py").write_text("2"); run(origin, "add", "."); run(origin, "commit", "-qm", "b")
+
+    class Restarted(BaseException):  # like os._exit, nothing after it runs
+        pass
+
+    def exit_(code):
+        raise Restarted
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(bot, "QUIET_CHECK_EVERY", 0.01)
+    monkeypatch.setattr(bot.os, "_exit", exit_)
+    monkeypatch.setattr(bot, "restart_would_cut_in", lambda: False)
+
+    page = object()
+    web.OPEN_PAGES.add(page)  # someone has Ken open: no update, however long
+    monkeypatch.setattr(web, "LAST_ASKED", 0.0)
+    task = asyncio.ensure_future(bot.update_when_quiet(app))
+    await real_sleep(0.3)
+    assert not task.done()
+    task.cancel()
+
+    web.OPEN_PAGES.discard(page)  # they left, and it's been quiet: restart into the new version
+    with pytest.raises(Restarted):
+        await asyncio.wait_for(bot.update_when_quiet(app), 10)
