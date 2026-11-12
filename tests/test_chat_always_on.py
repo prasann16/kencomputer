@@ -7,6 +7,8 @@ website deploy (ken-hosted's build runs it on the screens it ships). Each case i
   extras_fail  every request but the chat itself fails (settings, limits, lists, apps...): chat still shows and sends
   restarting   Ken answers nothing for 8 seconds (waking, updating): the chat appears once it's back, no error bar
   noisy_page   a browser extension throws "Script error." over and over: no error bar, no flood of reports (2026-11-12)
+  quiet_page   an open, connected page stops re-asking every 15 seconds (98% of the site's requests, 2026-11-12), and
+               a new message from Ken still shows at once over the live line
 
 Skipped where there's no Chrome."""
 import asyncio
@@ -55,7 +57,7 @@ class Ken:
         from engine import Engine, HOME
         from test_engine import FakeBrain
         from web import WebApp
-        self.case, self.reports, self.started = case, 0, time.monotonic()
+        self.case, self.reports, self.started, self.chat_loads = case, 0, time.monotonic(), 0
         home.mkdir(parents=True, exist_ok=True)
         e = Engine(home, FakeBrain())
         e.configure_home(home / "work", lambda: "KEN SOUL", lambda: "KEN AT WORK")
@@ -68,6 +70,7 @@ class Ken:
                 (pics / f"p{i}.png").write_bytes(png(300, 400, 20 * (i % 10)))
                 text += f" Here it is: `{pics}/p{i}.png`"
             e.log_message(HOME, "ken" if i % 2 else "you", text)
+        self.engine = e
         self.app = WebApp(e, home, rev="check")
         built = self.app.build()
         built.middlewares.insert(0, self.misbehave)
@@ -78,6 +81,8 @@ class Ken:
         path = request.path
         if path == "/api/ui-error":
             self.reports += 1
+        if path == "/api/chats/home" and request.method == "GET":
+            self.chat_loads += 1
         if self.case == "restarting" and path.startswith("/api/") and time.monotonic() - self.started < 8:
             return aioweb.Response(status=502, text="Ken is restarting")
         if self.case == "extras_fail" and path.startswith("/api/") and not path.startswith(CHAT) and path != "/api/ui-error":
@@ -244,5 +249,22 @@ async def test_a_noisy_browser_extension_changes_nothing(tmp_path):
         await asyncio.sleep(1)
         assert ken.reports == 1, f"{ken.reports} error reports sent (one real error, sent once, is right)"
         await sends_and_gets_a_reply(chrome)
+    finally:
+        await close()
+
+
+async def test_an_open_page_listens_instead_of_asking(tmp_path):
+    from engine import HOME
+    ken, chrome, close = await open_chat("quiet_page", tmp_path)
+    try:
+        assert await chrome.until(f"{MESSAGES} >= 12", 10), "the chat didn't show"
+        await asyncio.sleep(2)
+        before = ken.chat_loads
+        await asyncio.sleep(33)  # two 15-second rounds
+        assert ken.chat_loads == before, f"asked for the chat {ken.chat_loads - before} more times while connected"
+        ken.engine.log_message(HOME, "ken", "Pushed over the live line")
+        assert await chrome.until("document.body.textContent.includes('Pushed over the live line')", 5), \
+            "a new message from Ken didn't show without asking"
+        assert not chrome.errors, chrome.errors
     finally:
         await close()

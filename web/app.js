@@ -1999,6 +1999,8 @@ function App() {
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
   const everOnline = useRef(false); if (online) everOnline.current = true;
+  const live = useRef(false); live.current = online;  // the live line is up: no need to keep asking
+  const loadedAt = useRef(0);
   useEffect(() => { if (online) { setOffline(false); return; } const t = setTimeout(() => setOffline(true), everOnline.current ? 1200 : 8000); return () => clearTimeout(t); }, [online]);
   // ...and if it stays down, say so plainly with a way out instead of reconnecting forever.
   const [lost, setLost] = useState(false);
@@ -2030,6 +2032,7 @@ function App() {
       : c);
   };
   const load = useCallback(({extras = true} = {}) => {
+    loadedAt.current = Date.now();
     const current = pidRef.current, version = ++generation.current;
     // Chat never waits on a filesystem scan or dashboard data.
     api(`/api/chats/${current}`).then((conversation) => {
@@ -2069,7 +2072,10 @@ function App() {
     loadMeta(); loadModel(); loadModelCatalog(); loadAwake();
     // In the cloud, Ken's computer stays awake while anything talks to it, and awake time counts against the plan:
     // a tab left in the background stops asking after a few minutes (see the events socket below).
-    const refresh = setInterval(() => { if (!idleTab()) load(); }, 15000);
+    // The live line (/api/events) brings every message and change the moment it happens, so asking again is only
+    // for when it's down (every 15 seconds), plus a slow look every 5 minutes for anything that changed without a
+    // word. Asking every 15 seconds regardless was ~98% of all requests to the site (2026-11-12).
+    const refresh = setInterval(() => { if (!idleTab() && (!live.current || Date.now() - loadedAt.current > 300000)) load(); }, 15000);
     const plan = setInterval(() => { if (!idleTab() && HOSTED) loadMeta(); }, 300000);
     return () => { removeEventListener('hashchange', onHash); clearInterval(refresh); clearInterval(plan); };
   }, []);
