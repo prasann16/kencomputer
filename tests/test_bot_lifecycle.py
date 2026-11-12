@@ -1,6 +1,7 @@
 """The engine starts on Windows and drains its work on supported shutdown paths."""
 import asyncio
 import signal
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -224,7 +225,7 @@ async def test_hosted_ken_updates_in_a_quiet_spell_never_while_in_use(tmp_path, 
 
     page = object()
     web.OPEN_PAGES.add(page)  # someone has Ken open: no update, however long
-    monkeypatch.setattr(web, "LAST_ASKED", 0.0)
+    monkeypatch.setattr(web, "LAST_ASKED", time.monotonic() - 10_000)  # last asked long ago (not "since boot": CI boots just before)
     task = asyncio.ensure_future(bot.update_when_quiet(app))
     await real_sleep(0.3)
     assert not task.done()
