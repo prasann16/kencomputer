@@ -135,6 +135,7 @@ class WebApp:
         self.token = load_token(home)
         self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
         self._preview_locks: dict[str, asyncio.Lock] = {}
+        self._warming = asyncio.Semaphore(1)  # made ahead one at a time, so Ken's own editing keeps the computer
         self.rev = rev
         self.transcribe = transcribe
         self.commands = commands or {}
@@ -831,6 +832,46 @@ class WebApp:
         return self._serve(path, download="download" in request.query)
 
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+    # Where a reply names a file: `in code`, a [link](target), or a bare path (the same places the apps look).
+    NAMED_RE = re.compile(r"`([^`\n]+)`|\]\(<?([^()<>\n]+?)>?\)|((?:~|/)[^\s`'\"()<>\]]+)")
+
+    async def _start_warming(self, app) -> None:
+        self._warmer = asyncio.create_task(self._warm_previews())
+
+    def _videos_named(self, text: str) -> list[Path]:
+        found: list[Path] = []
+        for m in self.NAMED_RE.finditer(text or ""):
+            ref = next(g for g in m.groups() if g).strip().rstrip(".,;:!?")
+            if Path(ref).suffix.lower() not in self.PREVIEW_SUFFIXES:
+                continue
+            try:
+                path = self.engine.shared_file(ref)
+            except KeyError:
+                continue
+            if path.is_file() and path not in found:
+                found.append(path)
+        return found[:3]
+
+    async def _warm_previews(self) -> None:
+        """A video Ken names in a reply gets its watching copy made right then, not when someone first presses play: by
+        the time the phone shows the reel, it starts at once."""
+        q = self.engine.subscribe()
+        try:
+            while True:
+                event = await q.get()
+                if event.get("type") != "message" or event.get("role") == "you":
+                    continue
+                for path in self._videos_named(str(event.get("text") or "")):
+                    self._spawn(self._warm(path))
+        finally:
+            self.engine.unsubscribe(q)
+
+    async def _warm(self, path: Path) -> None:
+        async with self._warming:
+            try:
+                await self._preview(path)
+            except Exception:  # only a head start: the phone asking makes it anyway
+                log.debug("preview warm-up failed for %s", path.name, exc_info=True)
 
     async def _preview(self, path: Path) -> Path:
         """A video's watching copy (?preview=1): what Telegram does, for the app and the web. Full-quality originals are
@@ -1114,10 +1155,13 @@ class WebApp:
         # An open app window must not hold engine shutdown until aiohttp's
         # request timeout expires. The frontend reconnects to the new engine.
         await asyncio.gather(*(ws.close(code=1001, message=b'Ken is restarting') for ws in list(self.websockets)), return_exceptions=True)
+        if warmer := getattr(self, "_warmer", None):
+            warmer.cancel()
 
     def build(self) -> web.Application:
         app = web.Application(middlewares=[self.auth_mw], client_max_size=MAX_UPLOAD)
         app.on_shutdown.append(self.shutdown)
+        app.on_startup.append(self._start_warming)
         r = app.router
         r.add_get("/", self.index)
         r.add_get("/login", self.login)
