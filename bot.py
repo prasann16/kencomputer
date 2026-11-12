@@ -72,13 +72,14 @@ from dotenv import load_dotenv
 import crash
 import runtimes
 
-from brains import ClaudeBrain
+from brains import ClaudeBrain, model_file
 from codex_brain import CodexBrain
 from engine import CREDIT_MODELS, HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
+from openai_brain import OpenAIBrain, configured as openai_configured
 from usage import Usage
 from web import WebApp
 from connections import Connections
-from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
+from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, OpenAIOnboarding, drop_env, included_ai_in_use, included_ai_key,
                         included_ai_model, save_env, use_included_ai, voice_installed)
 from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
@@ -252,6 +253,19 @@ CONNECTIONS = Connections(KEN_HOME, on_change=lambda: brain_connected())
 ACCOUNTS = None  # Claude and ChatGPT sign-in (BrainOnboarding), set when the app starts
 BRAINS = {"claude": ClaudeBrain(lambda: active_model("claude")),
           "codex": CodexBrain(lambda: active_model("codex"))}
+if openai_configured():  # any OpenAI-compatible endpoint set up in ~/.ken/.env
+    BRAINS["openai"] = OpenAIBrain(KEN_HOME, lambda: active_model("openai"))
+
+
+async def openai_ready() -> None:
+    """An OpenAI-compatible endpoint was just set up (or dropped): Ken can run on it from the next message."""
+    if openai_configured():
+        BRAINS.setdefault("openai", OpenAIBrain(KEN_HOME, lambda: active_model("openai")))
+    else:
+        BRAINS.pop("openai", None)
+        if ENGINE.backend(HOME) == "openai":
+            await ENGINE.set_runtime(HOME, backend="claude")
+    await brain_connected("openai")
 ENGINE = Engine(KEN_HOME, BRAINS["claude"], brains=BRAINS)
 # The AI plan's usage and the computer's memory: /usage, and a heads-up when either is nearly used up.
 USAGE = Usage(KEN_HOME, say=lambda text: ENGINE.log_message(HOME, "ken", text, via="background"),
@@ -273,7 +287,7 @@ if not ENGINE.kv_get("backend-migrated"):
 BORN_FLAG = KEN_HOME / ".born"
 BOTNAME_CACHE = KEN_HOME / ".botname"
 def models_file(backend):
-    return KEN_HOME / ("available-models-codex.txt" if backend == "codex" else "available-models.txt")
+    return KEN_HOME / (f"available-models-{backend}.txt" if backend in ("codex", "openai") else "available-models.txt")
 MODEL_REQUEST = KEN_HOME / "model-request"
 HISTORY_DIR = KEN_HOME / "history"
 SESSIONS_FILE = KEN_HOME / ".sessions.json"
@@ -2105,6 +2119,7 @@ async def start_engine() -> WebApp | None:
         "claude": Onboarding(KEN_HOME, lambda: bool(os.environ.get("ANTHROPIC_API_KEY") or get_oauth_token() or included_ai_key()),
                              lambda: brain_connected("claude"), voice_ready),
         "codex": codex_setup,
+        "openai": OpenAIOnboarding(KEN_HOME, openai_ready),
     }, lambda: ENGINE.backend(HOME), fresh=lambda: not BORN_FLAG.exists())
     global ACCOUNTS
     ACCOUNTS = setup
@@ -2256,6 +2271,10 @@ async def refresh_models_file(app=None, *, backend="claude") -> None:
     """Fetch the selected backend's model list; leave it on disk
     for the assistant to read when asked about switching."""
     try:
+        if backend == "openai":
+            import openai_brain
+            models_file(backend).write_text("\n".join(await openai_brain.models()) + "\n")
+            return
         if backend == "codex":
             from codex_brain import codex_client
             if runtimes.missing("codex"):
@@ -2380,7 +2399,7 @@ def decaf() -> str:
 
 def set_model(name: str, backend=None) -> None:
     backend = backend or ENGINE.backend(HOME)
-    (KEN_HOME / ("model-codex" if backend == "codex" else "model")).write_text(name + "\n")
+    (model_file(KEN_HOME, backend)).write_text(name + "\n")
     ENGINE.broadcast("chat.runtime", HOME, backend=backend)
     crash.track("model_changed", model=name)
 
@@ -2397,11 +2416,12 @@ def credits_model(backend=None) -> str:
 
 
 def usable_brains() -> list[str]:
-    """The AI Ken can run on now: their own Claude or ChatGPT when connected, or Claude on Ken AI credits."""
+    """The AI Ken can run on now: their own Claude or ChatGPT when connected, or Claude on Ken AI credits.
+    A brain with no account to connect (an OpenAI-compatible endpoint) is usable once it's set up."""
     if ACCOUNTS is None:
         return list(BRAINS)
     providers = ACCOUNTS.status().get("providers", {})
-    return [b for b in BRAINS if providers.get(b, {}).get("connected")]
+    return [b for b in BRAINS if b not in providers or providers[b].get("connected")]
 
 
 def active_model(backend=None) -> str:
@@ -2410,11 +2430,12 @@ def active_model(backend=None) -> str:
     if credits := credits_model(backend):
         return ENGINE.credits_choice() or credits  # on Ken AI credits: Haiku, or Sonnet if picked; their own pick waits
     try:
-        chosen = (KEN_HOME / ("model-codex" if backend == "codex" else "model")).read_text().strip()
+        chosen = model_file(KEN_HOME, backend).read_text().strip()
     except OSError:
         chosen = ""
-    return chosen or os.environ.get("CODEX_MODEL" if backend == "codex" else "CLAUDE_MODEL", "") or (
-        "" if backend == "codex" else next((m for m in available_models(backend) if "opus" in m), ""))
+    env = {"codex": "CODEX_MODEL", "openai": "KEN_OPENAI_MODEL"}.get(backend, "CLAUDE_MODEL")
+    return chosen or os.environ.get(env, "") or (
+        next((m for m in available_models(backend) if "opus" in m), "") if backend == "claude" else "")
 
 
 def available_models(backend=None) -> list[str]:
@@ -2449,9 +2470,12 @@ async def model_choices(backend):
 
 def models_login(backend) -> str:
     """Which login the model list belongs to, as a short fingerprint (never the secret itself)."""
+    import hashlib
     if backend == "codex":
         return "codex"
-    import hashlib
+    if backend == "openai":
+        endpoint = os.environ.get("KEN_OPENAI_BASE_URL", "") + os.environ.get("KEN_OPENAI_API_KEY", "")
+        return "openai:" + hashlib.sha256(endpoint.encode()).hexdigest()[:12]
     for kind, value in (("key", os.environ.get("ANTHROPIC_API_KEY", "")),
                         ("included", os.environ.get("ANTHROPIC_AUTH_TOKEN", "")),
                         ("oauth", os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))):

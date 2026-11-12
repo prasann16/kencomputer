@@ -12,11 +12,17 @@ import logging
 import re
 import time
 from collections import deque
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import runtimes
 
 log = logging.getLogger("ken")
+
+
+def model_file(home, backend: str) -> Path:
+    """Where a chat's chosen model for this brain is kept (Claude's own name predates the others)."""
+    return Path(home) / (f"model-{backend}" if backend in ("codex", "openai") else "model")
 # Claude Code's error when a model is newer than it supports ("...does not support this model;
 # version X or newer is required"). Ken retries on the default model instead of showing it.
 NEEDS_NEWER_CLI = "does not support this model"

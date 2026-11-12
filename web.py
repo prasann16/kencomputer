@@ -290,6 +290,9 @@ class WebApp:
                 return _json(await self.setup.save_token(str(b.get("token", ""))))
             if b.get("action") == "api-key":
                 return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
+            if b.get("action") == "openai":  # any OpenAI-compatible address, set up with its key and model
+                return _json(await self.setup.connect_openai(str(b.get("url", "")), str(b.get("key", "")),
+                                                             str(b.get("model", ""))))
             if b.get("action") == "disconnect":
                 return _json(await self.setup.disconnect(backend=b.get("backend")))
             if b.get("code"):
