@@ -787,6 +787,7 @@ def test_steps_say_what_the_tool_is_working_on():
     assert say("python3 ken.py --video-cut plan.json") == "Editing your video"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in converter is a shell script")
 async def test_an_iphone_photo_reaches_ken_as_a_jpg(engine, tmp_path, monkeypatch):
     """The AI can't read HEIC: Ken gets a JPG of it, so it doesn't spend a step converting."""
     import engine as engine_mod
