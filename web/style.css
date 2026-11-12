@@ -477,7 +477,23 @@ ol.conn-steps li { margin: 2px 0; }
 
 /* ------------------------------------------------------------------ voice mode: a calm full-screen call */
 .talk { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s3);
-  padding: var(--s6) var(--s4) calc(var(--s6) + env(safe-area-inset-bottom)); background: var(--bg); color: var(--ink); text-align: center; }
+  padding: var(--s6) var(--s4) calc(var(--s6) + env(safe-area-inset-bottom)); background: var(--bg); color: var(--ink); text-align: center;
+  transition: inset .5s cubic-bezier(.2, .8, .2, 1), border-radius .5s cubic-bezier(.2, .8, .2, 1), box-shadow .5s; }
+/* Docked, like a video call's face bubble: the whole call slides into the bottom-right corner (inset animates
+   because both ends are numbers), and only Ken's face and End are left. */
+.talk.docked { inset: calc(100% - 176px - env(safe-area-inset-bottom)) 24px calc(24px + env(safe-area-inset-bottom)) calc(100% - 176px);
+  padding: 0; gap: 0; border-radius: 50%; box-shadow: var(--shadow), 0 0 0 1px var(--line); }
+.talk.docked > :not(.talk-face, .talk-controls), .talk.docked .talk-controls > :not(.talk-end) { display: none; }
+.talk.docked .talk-face { width: 100%; height: 100%; margin: 0; cursor: pointer; border-radius: 50%; }
+.talk.docked .talk-face:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.talk.docked .talk-face img { width: 72px; height: 72px; }
+.talk.docked .talk-controls { position: absolute; bottom: -12px; margin: 0; }
+.talk.docked .talk-controls button { min-width: 0; min-height: 32px; padding: 0 var(--s4); font-size: var(--text-sm); }
+@media (max-width: 600px) {
+  .talk.docked { inset: calc(100% - 128px - env(safe-area-inset-bottom)) 16px calc(16px + env(safe-area-inset-bottom)) calc(100% - 128px); }
+  .talk.docked .talk-face img { width: 56px; height: 56px; }
+}
+@media (prefers-reduced-motion: reduce) { .talk { transition: none; } }
 /* Ken's face grows as Ken speaks; a soft ring follows their voice. */
 .talk-face { --out: 0; --in: 0; position: relative; display: grid; place-items: center; width: 160px; height: 160px; margin-bottom: var(--s4); }
 .talk-face::before { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--well); transform: scale(calc(1 + var(--in) * .3)); transition: transform .09s linear; }
