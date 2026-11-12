@@ -871,7 +871,7 @@ class Engine:
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
             "conversation that matters. When it finishes, its report comes back to you as a message; tell them the result "
             "then. As many run at once as this computer has room for, and the rest wait their turn; each stops after an hour. Running jobs are "
-            f'listed in the line at the top of each message, with how long they've run and their latest steps; to stop one, write {{"type": "stop", "run": "<id>"}} there '
+            f'listed in the line at the top of each message, with how long each has run and its latest steps; to stop one, write {{"type": "stop", "run": "<id>"}} there '
             "too. Quick things, and anything that needs their answers along the way, you do yourself, here.\n"
         )
         return background + (
