@@ -726,6 +726,21 @@ class Engine:
         ]
         return sorted(items, key=lambda f: -f["mtime"])
 
+    def _latest_steps(self, rid: str, n: int = 3) -> str:
+        """What a background job did last, newest first, so asked how it's going, Ken answers from what the job is
+        actually doing (the same steps the app shows) rather than guessing."""
+        rows = self.db.execute("SELECT ts, data FROM events WHERE run=? AND type IN ('run.text', 'run.tool') ORDER BY id DESC LIMIT ?",
+                               (rid, n)).fetchall()
+        steps = []
+        for ts, data in rows:
+            try:
+                text = " ".join(str(json.loads(data).get("text", "")).split())[:120]
+            except (ValueError, AttributeError):
+                continue
+            if text:
+                steps.append(f'{int((time.time() - ts) // 60)}m ago: {text}')
+        return "; latest steps: " + " | ".join(steps) if steps else ""
+
     def shared_file(self, ref: str) -> Path:
         """A file or folder Ken named in the chat, if it's one they may open: anything in Ken's work, inbox,
         outbox or agents, in their own home outside hidden folders, or a file Ken made in the temp folder (a quick
@@ -856,7 +871,7 @@ class Engine:
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "
             "conversation that matters. When it finishes, its report comes back to you as a message; tell them the result "
             "then. As many run at once as this computer has room for, and the rest wait their turn; each stops after an hour. Running jobs are "
-            f'listed in the line at the top of each message; to stop one, write {{"type": "stop", "run": "<id>"}} there '
+            f'listed in the line at the top of each message, with how long they've run and their latest steps; to stop one, write {{"type": "stop", "run": "<id>"}} there '
             "too. Quick things, and anything that needs their answers along the way, you do yourself, here.\n"
         )
         return background + (
@@ -1271,7 +1286,7 @@ class Engine:
             parts.append("since your last turn they talked with your voice side on a call: " + call)
         if jobs:
             parts.append("background jobs running: " + ", ".join(
-                f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m)' for r in jobs))
+                f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m{self._latest_steps(r["id"])})' for r in jobs))
         if pid != HOME:
             since = self._last_message_ts(pid)
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
