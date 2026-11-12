@@ -102,11 +102,11 @@ def plan_usage(request: web.Request) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    text = lambda v: str(v)[:120] if isinstance(v, (str, int, float)) else ""
+    text = lambda v, n=120: str(v)[:n] if isinstance(v, (str, int, float)) else ""
     lines = [{"label": text(l.get("label")), "left": text(l.get("left")), "of": text(l.get("of")), "low": bool(l.get("low"))}
              for l in data.get("lines", []) if isinstance(l, dict) and l.get("label")][:6]
     link = lambda k: (lambda u: u if u.startswith(("https://", "/")) else "")(text(data.get(k)))
-    return {"plan": text(data.get("plan")), "lines": lines, "note": text(data.get("note"))[:300],
+    return {"plan": text(data.get("plan")), "lines": lines, "note": text(data.get("note"), 300),
             "manage_url": link("manage_url"),
             # Ken AI credits: what's left (month plus added), added credits, the free trial, and where to add or upgrade.
             "credits_left": text(data.get("credits_left")), "added": text(data.get("added")), "free": bool(data.get("free")),
