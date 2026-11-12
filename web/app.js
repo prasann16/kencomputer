@@ -26,18 +26,23 @@ function remember(message) {
   if (RECENT_ERRORS.length > 5) RECENT_ERRORS.shift();
 }
 let openReport = null;  // set by App: opens Report a problem from anywhere
-addEventListener('error', (e) => { reportUiError(e.error || e.message, 'page'); showFailure(e.message); });
+// "Script error." is a script from another site (a browser extension) failing: nothing of Ken's broke, and it can
+// fire many times a second, so it's neither reported nor shown.
+addEventListener('error', (e) => { if (!e.error && /^Script error\.?$/.test(e.message || '')) return; reportUiError(e.error || e.message, 'page'); showFailure(e.message); });
 // A mouse click (on a button, tab or link) shouldn't leave a focus ring behind (it shows up on the next key press, like ⌘\).
 // Keyboard presses (detail 0) keep focus, so tabbing still shows where you are.
 addEventListener('click', (e) => { if (e.detail > 0) e.target.closest?.('button, a, [role="tab"]')?.blur(); });
 addEventListener('unhandledrejection', (e) => reportUiError(e.reason, 'background'));
 
 // A part of the page that breaks hides itself instead of taking the page down: chatting keeps working. The error goes to the console and, when crash reports are on, to Ken's crash reports.
+const REPORTED = new Set();  // each error is sent once per page, and at most 10 of them: a loop never floods the site
 function reportUiError(error, where) {
   console.error(`Ken page (${where}):`, error);
   try {
     const message = String(error?.stack || error?.message || error).slice(0, 4000);
     remember(message);
+    if (REPORTED.has(message) || REPORTED.size >= 10) return;
+    REPORTED.add(message);
     fetch('/api/ui-error', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ where, message }) }).catch(() => {});
   } catch {}
 }
