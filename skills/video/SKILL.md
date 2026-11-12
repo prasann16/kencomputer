@@ -111,18 +111,66 @@ one")? Fix the ranges and cut again until it reads like they said it that way.
 next word too (often a "yeah" or "so" they ran straight into) or end the range a phrase earlier, then cut again. If
 a warning survives two tries, accept it.
 
-## 3. Design it
+## 3. Design it (the same however it's built)
 
 Every reel gets infographics: that's what makes it more than captions over a talking head. What kind, how many,
-and how they look and move is your call, decided on the fly for this video and what they're saying (their style
-note wins where it says something). Show the real thing when they mention an app, tool or site (its real icon or
-screen).
+and how they look and move is your call, decided for this video and what they're saying (their style note wins
+where it says something). Show the real thing when they mention an app, tool or site (its real icon or screen).
 
-Also available: a hook over the first seconds (`hook`, star the word that matters), emphasized caption words
+- **Captions**: their exact words, a few at a time, the spoken word picked out. Plain text over the video unless
+  you choose otherwise for this reel; a few words can be emphasized.
+- **Hook**: a short line over the first seconds, with the word that matters marked.
+- **Your own design every time**: no preset or template looks (no ready-made caption styles or graphic packs). Lay
+  each graphic out as one column or row so nothing overlaps.
+- **Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
+  every word and graphic out of them.
+
+Then build it one of two ways: in HyperFrames (3a, new reels) or with Remotion (3b–5, reels made before HyperFrames).
+
+## 3a. Build it in HyperFrames
+
+New reels are HyperFrames projects: the captions and graphics are HTML, the person can change anything by hand
+from an edit link, and you render the finished video from the same project. The cut from step 2 (`cut.mp4`, with
+the words timed to it in `props.json`) is the footage. Always run HyperFrames as `npx -y hyperframes@0.9.25`.
+
+    cd videos/<short-name> && npx -y hyperframes@0.9.25 init edit --video cut.mp4 --resolution portrait --skip-transcribe --non-interactive --skip-skills
+
+That makes `edit/`, the project, with `cut.mp4` playing full screen and its sound kept (`data-has-audio="true"`;
+never mute it). **How** to build it is in your `hyperframes` skill: read its SKILL.md (the contract) and, for a reel,
+`references/types/vertical.md`, `references/captions.md`, `references/overlays.md` and `references/motion.md`.
+**What** to build is `plan.md`: this skill's plan replaces HyperFrames' own storylines and SPEC.md, and their
+approval of the plan is the go-ahead, so don't stop again for a preview.
+
+- **Captions**: their exact words from `props.json` `words` (already timed to `cut.mp4`), on one captions track,
+  designed as in step 3. Write them yourself; don't add a registry caption style.
+- **Graphics**: one scene per graphic, each its own sub-composition in `edit/compositions/` so it can be changed on
+  its own, designed as in step 3. The registry is for mechanics only (a transition, a counter's motion), never
+  for a look. Real things from their source: an app's real icon or screenshot, saved in `edit/assets/`.
+- **Fonts**: only HyperFrames' bundled fonts work by name; any other (their brand font, a Google font) needs its file
+  in `edit/assets/fonts/` with an `@font-face` (download it once with curl).
+- **Sound effects** on visible actions (a pop, a whoosh) are optional and quiet: `media-use` has free ones. Never
+  add music unless they asked.
+
+Check before rendering, in one go each: `npx -y hyperframes@0.9.25 check --json edit` (fix every error), then
+`npx -y hyperframes@0.9.25 snapshot edit --at 1.5,10,24` and look at the frames (cut-off text, a graphic over their
+face, anything in the safe zones). A render draws every frame in Chrome, about 2 minutes per 20 seconds of reel, so
+check with snapshots and render once, as a background job:
+
+    npx -y hyperframes@0.9.25 render edit --output reel.mp4 --quality delivery
+
+Then the same last checks as step 5 (the strip of frames, the cut read in order), and send `reel.mp4` with its edit
+link on its own line: `<ken> --video-edit <short-name>` prints it. Say it in one line, like "Want to change anything
+yourself? Edit it here: <link>". The link opens the editor in any browser, behind their Ken sign-in. They may change
+the reel there: before any later change, read `edit/` again (`npx -y hyperframes@0.9.25 timeline --json edit` shows what
+plays when) rather than assuming it's as you left it, and render from it.
+
+The rest of this skill (design, frames, render) is for reels made before HyperFrames: a `props.json` design and no
+`edit/` folder. Keep changing those that way.
+
+## 3b. Build it with Remotion (reels made before HyperFrames)
+
+The design is step 3's. Also available: a hook over the first seconds (`hook`, star the word that matters), emphasized caption words
 (`words[i].emph = true`), a push-in on a line (`zooms`: `{start, end}`).
-
-**Safe zones**: the apps put their own buttons over the top 250 px, the bottom 480 px and the right 140 px. Keep
-text and graphics out of them.
 
 **The toolbox.** `src/kit/tools.tsx` (it appears in the folder with the first `--video-stills`) has parts with no
 look of their own: `Place` (a spot in the safe zones, or x/y), `Text` (any Google font by name, any size, weight,
@@ -178,7 +226,7 @@ Keep `words`, `cuts` and `framing` from the cut in `props.json`, and fix mishear
   `<OffthreadVideo src={staticFile(src)} muted />`. Everything you need is here: don't read the kit's code.
 - Run `npx tsc -p .` in the folder and fix every error before checking frames.
 
-## 4. Check frames before rendering
+## 4. Check frames before rendering (reels made before HyperFrames)
 
 Checking frames takes seconds. Give all the times in **one** command (never run renders or stills in parallel:
 each opens Chrome and uses about a gigabyte):
@@ -192,7 +240,7 @@ their face at the wrong moment, captions colliding with an over-the-video graphi
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
-## 5. Render and check
+## 5. Render and check (reels made before HyperFrames)
 
     <ken> --video-render videos/<short-name>
 
@@ -220,7 +268,10 @@ download it to keep it."
 
 ## Changes later
 
-"Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
+A reel with an `edit/` folder (HyperFrames): change only what they asked in `edit/`, check, render again, and send it
+with its edit link. They may have changed it themselves in the editor, so read it first.
+
+Older reels: "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
 everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
 changed, render, check the strip once.
