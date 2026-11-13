@@ -37,6 +37,7 @@ from aiohttp import ClientSession, WSMsgType, web
 log = logging.getLogger("ken")
 
 TTL = 15 * 60
+WAIT = 45  # one wait_for_human call, in seconds
 VIEWER_JS = Path(__file__).parent / "web" / "live.js"
 # Keys a person may press that aren't text: (key, code, Windows virtual key code, text it types).
 KEYS = {
@@ -396,17 +397,19 @@ class LiveView:
         {"name": "request_human", "description": (
             "When a page in your browser needs the person (a captcha you can't pass, a sign-in, a code sent to their "
             "phone, 'confirm it's you'): returns a link that shows them that tab live, where they do the step "
-            "themselves. Send them the link with one line on what to do, then call wait_for_human. The link works for "
-            "15 minutes and ends when they press Done. Never use it to get their password typed for you to read."),
+            "themselves. Write them a message with the link and one line on what to do BEFORE you call wait_for_human "
+            "(they only see what you write). The link works for 15 minutes and ends when they press Done. Never use "
+            "it to get their password typed for you to read."),
          "inputSchema": {"type": "object", "properties": {
              "reason": {"type": "string", "description": "What they should do, in a few plain words, shown above the page."},
              "url": {"type": "string", "description": "The page that needs them (the tab already open there is used)."}},
              "required": ["reason"]}},
         {"name": "wait_for_human", "description": (
-            "Wait for the person to finish a live view from request_human. Returns 'done' (carry on in the same tab: "
-            "take a snapshot first), 'cancelled', 'expired', or still 'watching' / 'not opened yet' after `seconds`."),
+            "Wait up to 45 seconds for the person to finish a live view from request_human. Returns 'done' (carry on "
+            "in the same tab: take a snapshot first), 'cancelled', 'expired', or 'watching' / 'not opened yet' with "
+            "minutes_left: then call it again (quietly) until it ends; don't guess how long has passed."),
          "inputSchema": {"type": "object", "properties": {
-             "id": {"type": "string"}, "seconds": {"type": "integer", "description": "How long to wait, up to 600 (default 300)."}},
+             "id": {"type": "string"}, "seconds": {"type": "integer", "description": "Up to 45 (default 45)."}},
              "required": ["id"]}},
     ]
 
@@ -415,10 +418,13 @@ class LiveView:
         try:
             if name == "request_human":
                 out = await self.start(str(args.get("reason") or "Ken needs you for a moment"), str(args.get("url") or ""))
-                out["say"] = (f"Send them this link with one line on what to do: {out['link']} (works for "
-                              f"{out['expires_in_minutes']} minutes). Then call wait_for_human with id {out['id']}.")
+                out["say"] = (f"Now write them a message with this link and one line on what to do: {out['link']} "
+                              f"(works for {out['expires_in_minutes']} minutes). Then call wait_for_human with id {out['id']}.")
             else:
-                out = await self.wait(str(args.get("id", "")), float(args.get("seconds") or 300))
+                # Under the MCP client's own 60 second limit on a tool call: a longer wait is several calls.
+                out = await self.wait(str(args.get("id", "")), min(float(args.get("seconds") or WAIT), WAIT))
+                if out["status"] in ("watching", "not opened yet"):
+                    out["say"] = "Not finished yet. Call wait_for_human again."
             return {"content": [{"type": "text", "text": json.dumps(out)}]}
         except Exception as exc:
             return {"content": [{"type": "text", "text": f"Failed: {exc}"}], "isError": True}

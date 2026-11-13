@@ -543,7 +543,8 @@ HEADLESS_BROWSER_PROMPT = (
 LIVE_VIEW_PROMPT = (
     " When a page needs them (a captcha you can't get past, a sign-in, a code sent to their phone), call "
     "request_human with what they should do: it gives a link that shows them that tab live, where they do the step "
-    "themselves, from their computer or phone. Send them the link, call wait_for_human, then carry on in the same tab."
+    "themselves, from their computer or phone. Write them the link in a message first, then call wait_for_human until "
+    "it says done, then carry on in the same tab."
 )
 
 SKILLS_RULE = (

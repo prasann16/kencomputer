@@ -85,3 +85,15 @@ async def test_shared_browser_server_lists_and_answers_live_tools():
     assert [t["name"] for t in listed["result"]["tools"]] == ["click", "request_human", "wait_for_human"]
     called = await server.handle({"id": 2, "method": "tools/call", "params": {"name": "wait_for_human", "arguments": {"id": "nope"}}})
     assert "unknown" in called["result"]["content"][0]["text"] and sent == ["tools/list"]  # answered here, not by Chrome
+
+
+async def test_one_wait_stays_under_the_mcp_clients_minute(monkeypatch):
+    live = liveview.LiveView(KEY, cdp="http://127.0.0.1:1", base="https://ken.example")
+    asked = []
+
+    async def wait(sid, seconds):
+        asked.append(seconds)
+        return {"status": "not opened yet", "page": "", "minutes_left": 14}
+    live.wait = wait
+    out = await live.call("wait_for_human", {"id": "x", "seconds": 600})
+    assert asked == [liveview.WAIT] and liveview.WAIT < 60 and "again" in out["content"][0]["text"]
