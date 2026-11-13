@@ -438,6 +438,16 @@ class WebApp:
             return _json({"error": "A file didn't arrive. Try sending it again."}, 400)
         return _json({"ok": True}) if await self.phone.file_arrived(token, paths if "files" in body else paths[0]) else expired
 
+    async def drive_file(self, request):
+        """Hosted Ken: one finished video, for Google Drive to fetch while `ken --video-drive save` waits (drive_store.py).
+        The host passes Drive's request on through its own link; the token works for that one file, for 30 minutes."""
+        import drive_store
+        path = drive_store.linked_file(request.match_info["token"])
+        if path is None:
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
+                                               "Cache-Control": "no-store"})
+
     # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
     # talker that can make HTTP calls with Ken's web token can use them.
     async def voice_context(self, request):
@@ -1253,6 +1263,7 @@ class WebApp:
         r.add_post("/api/apps/connected", self.app_connected)
         r.add_post("/api/credits/low", self.credits_low)
         r.add_get("/api/telegram-files/{token}", self.big_file)
+        r.add_get("/api/drive-file/{token}", self.drive_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)

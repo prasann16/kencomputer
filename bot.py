@@ -43,6 +43,10 @@ if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a f
     print(f"{_site}/send/{_token}")
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--video-drive"]:  # hosted Ken: edited videos kept in their Google Drive, not here (drive_store.py)
+    import drive_store
+    raise SystemExit(drive_store.main(sys.argv[2:]))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -187,6 +191,17 @@ HOSTED_FILES_PROMPT = (
 )
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
+# Hosted Ken: an edited video is kept in their Google Drive, not on the computer (drive_store.py).
+HOSTED_VIDEO_DRIVE_PROMPT = (
+    f"VIDEOS IN THEIR DRIVE: before any video edit (a reel, captions, a cut), run `{KEN_CMD} --video-drive check`. If "
+    "Drive isn't connected, reply in one line with the link it prints (why: the finished video is kept in their own "
+    "Google Drive, not on this computer) and stop; start the edit when you're told it's connected. When the reel is "
+    "done and you've watched it: if it's under 45 MB, copy it to the outbox first; then run "
+    f"`{KEN_CMD} --video-drive save <project folder>`, which puts the reel and the original in their Drive, checks "
+    "both and deletes them here. Give them the Drive link it prints. For a change to a saved video, run "
+    f"`{KEN_CMD} --video-drive fetch <project folder>` first. Never delete a video it says wasn't saved."
+)
+
 HOSTED_APPS_PROMPT = (
     "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 1,700+ more). Never guess "
     f"what's connected: run `{KEN_CMD} --apps` to see. When they ask for something in an app, run `{KEN_CMD} --apps "
@@ -905,6 +920,8 @@ def build_system() -> str:
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
         if host_site():
             system += "\n\n" + HOSTED_FILES_PROMPT
+            if video_prompt():
+                system += "\n\n" + HOSTED_VIDEO_DRIVE_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
