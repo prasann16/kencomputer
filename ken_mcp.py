@@ -14,8 +14,9 @@ class SharedServer:
     It's for the browser: Chrome asks the user to allow each new connection, so one server that
     stays connected means one "Allow" per Chrome restart instead of one per chat."""
 
-    def __init__(self, command: str, args: list, env: dict | None = None):
+    def __init__(self, command: str, args: list, env: dict | None = None, extra=None):
         self.argv, self.env = [command, *args], env or {}
+        self.extra = extra  # tools answered here rather than by the server (liveview.LiveView: TOOLS, call)
         self.proc = self.info = None
         self.pending: dict[int, asyncio.Future] = {}
         self.ids = 0
@@ -73,9 +74,13 @@ class SharedServer:
                 reply = {"result": {**await self.ready(), "protocolVersion": params.get("protocolVersion", "2025-06-18")}}
             elif method == "ping":
                 reply = {"result": {}}
+            elif method == "tools/call" and self.extra and params.get("name") in {t["name"] for t in self.extra.TOOLS}:
+                reply = {"result": await self.extra.call(params["name"], params.get("arguments") or {})}
             elif method in ("tools/list", "tools/call"):
                 await self.ready()
                 reply = await self._send(method, params)
+                if method == "tools/list" and self.extra and "result" in reply:
+                    reply = {"result": {**reply["result"], "tools": [*reply["result"].get("tools", []), *self.extra.TOOLS]}}
             else:
                 reply = {"error": {"code": -32601, "message": f"Unknown method {method}"}}
         except Exception as exc:
