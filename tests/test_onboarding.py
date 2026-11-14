@@ -152,18 +152,6 @@ async def test_connecting_claude_while_on_ken_ai_credits_sends_the_code(tmp_path
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
 
 
-async def test_a_code_after_their_own_claude_is_in_changes_nothing(tmp_path, monkeypatch):
-    for k in ("KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
-        monkeypatch.delenv(k, raising=False)
-    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "got $code" >> "{tmp_path}/codes"\n')
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)  # their own Claude, already connected
-    setup = Onboarding(tmp_path, lambda: True, lambda: None, lambda: True)
-    await setup.start()
-    await setup.submit("late-code")
-    await asyncio.sleep(0.3)
-    assert not (tmp_path / "codes").exists()
-
-
 async def test_a_code_for_a_sign_in_that_went_away_opens_a_new_one_and_says_so(tmp_path, monkeypatch):
     # Connect shows this error (web/app.js shows r.error with the new sign-in link): never a dead end.
     for k in ("KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN"):
@@ -211,3 +199,38 @@ def test_the_browser_opener_never_calls_itself(tmp_path):
     assert not calls.exists()  # Linux with no screen (a computer in the cloud): nothing opens
     subprocess.run([str(opener), link], env={**env, "DISPLAY": ":0"}, timeout=10, check=True)
     assert calls.read_text().split() == ["xdg-open"]  # with a screen: xdg-open once, and it can't come back
+
+
+async def test_reconnecting_over_a_dead_sign_in_waits_for_the_code_and_takes_it(tmp_path, monkeypatch):
+    # A saved sign-in that Claude no longer accepts still counts as "connected": Reconnect must not see it and close
+    # before the box for the code shows, and the pasted code must replace it.
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "Your token: {TOKEN}"\n')
+    old = "sk-ant-oat01-" + "dead" * 12
+    onboarding.save_env(tmp_path / ".env", "CLAUDE_CODE_OAUTH_TOKEN", old)
+    setup, calls = make(tmp_path)
+    await setup.start()
+    assert setup.status()["connected"] is False and setup.status()["renewing"]
+    assert (await setup.submit("the-code"))["claude"]
+    assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == TOKEN and old not in (tmp_path / ".env").read_text()
+    assert calls == [1] and "renewing" not in setup.status()
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+
+async def test_a_sign_in_claude_no_longer_accepts_is_forgotten(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    setup, calls = make(tmp_path)
+    onboarding.save_env(tmp_path / ".env", "CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+
+    async def works(**_):
+        return ""
+
+    monkeypatch.setattr(onboarding, "check_claude", works)  # still good, or Anthropic out of reach: kept
+    assert not await setup.forget_if_dead() and setup.status()["claude"]
+
+    async def refused(**_):
+        return "Claude didn’t accept that."
+
+    monkeypatch.setattr(onboarding, "check_claude", refused)
+    assert await setup.forget_if_dead()
+    assert not setup.status()["claude"] and "CLAUDE_CODE_OAUTH_TOKEN" not in (tmp_path / ".env").read_text()
+    assert not await setup.forget_if_dead()  # nothing left to check

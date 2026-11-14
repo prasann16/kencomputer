@@ -2108,6 +2108,7 @@ async def start_engine() -> WebApp | None:
     }, lambda: ENGINE.backend(HOME), fresh=lambda: not BORN_FLAG.exists())
     global ACCOUNTS
     ACCOUNTS = setup
+    ENGINE.forget_dead_claude = setup.providers["claude"].forget_if_dead
     use_signed_in_account()
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
