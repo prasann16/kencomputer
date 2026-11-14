@@ -355,6 +355,7 @@ class Engine:
         self.model_choices = None  # async backend -> available model IDs
         self.plan_limits = None  # () -> {"claude": [window...], "codex": [...]}: Settings → AI's meters
         self.limit_resets = None  # backend -> "15:00" when a plan that hit its limit opens again, or ""
+        self.forget_dead_claude = None  # async () -> bool: forget a Claude sign-in Anthropic no longer accepts (bot.py)
         self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
         self.resume_listener = None  # via -> where a resumed reply also goes (Telegram), or None
         self.stopping = False  # set while Ken shuts down (close)
@@ -1300,6 +1301,22 @@ class Engine:
 
     # -------------------------------------------------------------------- chats
 
+    async def _dead_claude(self, msg: str, action: str) -> tuple[str, str]:
+        """Their own Claude refused: if its sign-in is dead, it's forgotten (Settings shows "Not connected" with a plain
+        Connect) and, when the plan has Ken AI credits, Ken carries on with those, so they're never stuck."""
+        from onboarding import included_ai_in_use
+
+        try:
+            if not (self.forget_dead_claude and await self.forget_dead_claude()):
+                return msg, action
+        except Exception:
+            log.exception("checking the Claude sign-in failed")
+            return msg, action
+        if included_ai_in_use():
+            return ("Your Claude sign-in stopped working, so I've switched to Ken AI credits. "
+                    "Connect Claude again in Settings → AI whenever you like."), "retry"
+        return "Your Claude sign-in stopped working. Connect it again to carry on.", "reconnect"
+
     def backend(self, pid: str) -> str:
         return self.kv_get(f"backend:{pid}") or self.brain.name
 
@@ -1594,6 +1611,8 @@ class Engine:
                 quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
                 msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
                                if quiet else explain_failure(e, self.backend(pid)))
+                if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
+                    msg, action = await self._dead_claude(msg, action)
                 if msg.startswith("You've reached your") and self.limit_resets and (at := self.limit_resets(self.backend(pid))):
                     msg = f"{msg[:-1]}. It resets at {at}."
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).

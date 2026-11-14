@@ -94,3 +94,32 @@ async def test_a_chat_on_telegram_never_pushes_to_the_app(monkeypatch):
         await asyncio.sleep(0.01)
     task.cancel()
     assert [s[1].get("text") for s in FakeClient.sent] == ["Brief", "Back in the app"]
+
+
+async def test_nothing_buzzes_while_the_phone_app_is_open(monkeypatch):
+    engine = FakeEngine()
+    monkeypatch.setattr(bot, "ENGINE", engine)
+    monkeypatch.setattr(bot.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("KEN_NOTIFY_URL", "https://example.test/app/notify")
+    monkeypatch.setenv("KEN_NOTIFY_TOKEN", "t0k")
+
+    class Web:
+        phones = {"the app's socket"}
+
+    web = Web()
+    FakeClient.sent = []
+    task = asyncio.create_task(bot.notify_app(web))
+    engine.q.put_nowait({"type": "message", "project": "home", "role": "ken", "text": "Seen on screen"})
+    engine.q.put_nowait({"type": "message", "project": "home", "role": "ken", "text": "Brief", "job": {"name": "b", "label": "Brief"}})
+    for _ in range(50):
+        if FakeClient.sent:
+            break
+        await asyncio.sleep(0.01)
+    web.phones = set()  # they left the app
+    engine.q.put_nowait({"type": "message", "project": "home", "role": "ken", "text": "Away now"})
+    for _ in range(50):
+        if len(FakeClient.sent) == 2:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    assert [s[1].get("text") for s in FakeClient.sent] == ["Brief", "Away now"]

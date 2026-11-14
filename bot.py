@@ -2115,12 +2115,13 @@ async def start_engine() -> WebApp | None:
     }, lambda: ENGINE.backend(HOME), fresh=lambda: not BORN_FLAG.exists())
     global ACCOUNTS
     ACCOUNTS = setup
+    ENGINE.forget_dead_claude = setup.providers["claude"].forget_if_dead
     use_signed_in_account()
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding)
     if os.environ.get("KEN_NOTIFY_URL"):
-        task = asyncio.create_task(notify_app())
+        task = asyncio.create_task(notify_app(web_app))
         APP_TASKS.add(task)
     host, port = os.environ.get("KEN_WEB_HOST", "127.0.0.1"), int(os.environ.get("KEN_WEB_PORT", "7777"))
     # After a restart the old process may hold the port for a moment; wait for it.
@@ -2209,9 +2210,10 @@ async def notify_telegram(app) -> None:
 APP_TASKS: set = set()
 
 
-async def notify_app() -> None:
+async def notify_app(web_app=None) -> None:
     """Ken in a phone app (hosted Ken): what would buzz on Telegram goes to the app's server as a push, sent to
-    KEN_NOTIFY_URL with the KEN_NOTIFY_TOKEN it gave this computer. The app shows it when it isn't open."""
+    KEN_NOTIFY_URL with the KEN_NOTIFY_TOKEN it gave this computer. None while the phone app is open on screen: they
+    see the reply there (a scheduled job's result still goes, for its email)."""
     url, token = os.environ.get("KEN_NOTIFY_URL", ""), os.environ.get("KEN_NOTIFY_TOKEN", "")
     q = ENGINE.subscribe()
     async with httpx.AsyncClient(timeout=10) as client:
@@ -2219,8 +2221,8 @@ async def notify_app() -> None:
             ev = await q.get()
             heard_from(ev)
             try:
-                if elsewhere("app") and not ev.get("job"):  # a scheduled job's result still reaches the site
-                    continue
+                if (elsewhere("app") or (web_app is not None and web_app.phones)) and not ev.get("job"):
+                    continue  # a scheduled job's result still reaches the site
                 pid = ev.get("project") or HOME
                 if ev["type"] == "approval.created":
                     pid = ev["approval"]["project"]
