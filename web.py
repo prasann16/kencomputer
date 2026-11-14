@@ -26,6 +26,7 @@ from aiohttp import WSMsgType, web
 
 import runtimes
 from engine import HOME, Engine
+from photos import INDEX_PROMPT, Photos
 
 log = logging.getLogger("ken")
 
@@ -157,6 +158,8 @@ class WebApp:
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
         self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
+        self.photos = Photos(home)  # shared from the phone app (photos.py)
+        self._photos_run = ""  # Ken looking at newly shared photos (a background job)
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
@@ -1173,6 +1176,104 @@ class WebApp:
         if warmer := getattr(self, "_warmer", None):
             warmer.cancel()
 
+    # ------------------------------------------------------------------ photos shared from the phone (photos.py)
+
+    async def photos_list(self, request):
+        """What's shared, newest first, and what Ken wants from the phone (full-size files, clean-up suggestions)."""
+        idx = self.photos.index()
+        items = sorted(idx.values(), key=lambda e: -(e.get("taken_at") or e.get("shared_at") or 0))
+        asks = self.photos.asks()
+        keep = lambda e: {k: e.get(k) for k in ("id", "asset_id", "kind", "taken_at", "duration", "note", "quality")}
+        return _json({
+            "photos": [keep(e) for e in items],
+            "originals": [{"id": i, "asset_id": idx[i].get("asset_id"), "kind": idx[i].get("kind")} for i in asks["originals"] if i in idx],
+            "remove": [{**keep(idx[i]), "why": why} for i, why in asks["remove"].items() if i in idx],
+            "looking": self._photos_looking(),
+        })
+
+    async def photos_add(self, request):
+        """One photo or video: a "meta" JSON part, then its thumbnail(s) ("frame" parts, ~512px JPEGs)."""
+        reader = await request.multipart()
+        meta, frames = {}, []
+        while (part := await reader.next()) is not None:
+            if part.name == "meta":
+                try:
+                    meta = json.loads(await part.text())
+                except ValueError:
+                    return _json({"error": "meta isn't JSON"}, 400)
+            elif part.name == "frame":
+                data = await part.read(decode=False)
+                if len(data) > 4 * 1024 * 1024:
+                    return _json({"error": "a thumbnail is at most 4 MB"}, 413)
+                frames.append(bytes(data))
+        if not (meta.get("id") or meta.get("asset_id")) or not frames:
+            return _json({"error": "need meta (with an id) and at least one frame"}, 400)
+        return _json(self.photos.add(meta, frames))
+
+    def _photos_looking(self) -> bool:
+        if not self._photos_run:
+            return False
+        try:
+            return self.engine.get_run(self._photos_run).get("status") in ("queued", "running")
+        except KeyError:
+            return False
+
+    async def photos_index(self, request):
+        """After sharing: Ken looks at the new ones in the background and notes what each is."""
+        new = self.photos.unnoted()
+        if not new or self._photos_looking():
+            return _json({"looking": self._photos_looking(), "new": len(new)})
+        try:
+            run = self.engine.start_run(HOME, "Looking at your photos", INDEX_PROMPT.format(n=len(new)), source="phone")
+        except ValueError as e:  # Ken is off
+            return _json({"error": str(e)}, 409)
+        self._photos_run = run["id"]
+        return _json({"looking": True, "new": len(new)})
+
+    async def photos_thumb(self, request):
+        p = self.photos.thumb(request.match_info["id"], int(request.query.get("n", "0") or 0))
+        if not p:
+            raise web.HTTPNotFound()
+        return web.FileResponse(p, headers={"Cache-Control": "private, max-age=86400"})
+
+    async def photos_original(self, request):
+        """A full-size file Ken asked for (photos_originals), sent by the phone as a "file" part."""
+        pid = request.match_info["id"]
+        reader = await request.multipart()
+        while (part := await reader.next()) is not None:
+            if part.name != "file":
+                continue
+            try:
+                dest = self.photos.original_path(pid, part.filename or "original.jpg")
+            except KeyError:
+                raise web.HTTPNotFound()
+            tmp, size = dest.with_name(dest.name + ".part"), 0
+            try:
+                with open(tmp, "wb") as f:
+                    while chunk := await part.read_chunk(1 << 16):
+                        size += len(chunk)
+                        if size > MAX_UPLOAD:
+                            raise web.HTTPRequestEntityTooLarge(max_size=MAX_UPLOAD, actual_size=size)
+                        f.write(chunk)
+                tmp.replace(dest)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            self.photos.got_original(pid, dest)
+            return _json({"saved": dest.name})
+        return _json({"error": "no file"}, 400)
+
+    async def photos_remove(self, request):
+        """They took it back in the app, or deleted it from the phone: Ken forgets it."""
+        if not self.photos.remove(request.match_info["id"]):
+            raise web.HTTPNotFound()
+        return _json({"ok": True})
+
+    async def photos_keep(self, request):
+        """They chose to keep one Ken suggested removing."""
+        self.photos.keep(request.match_info["id"])
+        return _json({"ok": True})
+
     def build(self) -> web.Application:
         app = web.Application(middlewares=[self.auth_mw], client_max_size=MAX_UPLOAD)
         app.on_shutdown.append(self.shutdown)
@@ -1258,6 +1359,13 @@ class WebApp:
         r.add_post("/api/connections/{kind}", self.connections_change)
         r.add_delete("/api/connections/{kind}", self.connections_change)
         r.add_post("/api/setup", self.setup_action)
+        r.add_get("/api/photos", self.photos_list)
+        r.add_post("/api/photos", self.photos_add)
+        r.add_post("/api/photos/look", self.photos_index)
+        r.add_get("/api/photos/{id}/thumb", self.photos_thumb)
+        r.add_post("/api/photos/{id}/original", self.photos_original)
+        r.add_delete("/api/photos/{id}", self.photos_remove)
+        r.add_post("/api/photos/{id}/keep", self.photos_keep)
         r.add_get("/api/events", self.events)
         r.add_route("*", "/mcp/{name}", self.mcp)
         r.add_get("/{name:.+}", self.static_file)
