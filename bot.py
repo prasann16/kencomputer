@@ -206,6 +206,13 @@ def media_mcp(backend="claude") -> dict:
     return {"media": external_server("media", KEN_HOME) if backend == "codex" else media_server()}
 
 
+def photos_mcp(backend="claude") -> dict:
+    """Photos and videos shared from the phone app (photos.py): find, look, note, get originals, suggest clean-ups."""
+    from photos import photos_server
+
+    return {"photos": external_server("photos", KEN_HOME) if backend == "codex" else photos_server(KEN_HOME)}
+
+
 def video_prompt() -> str:
     import shutil
 
@@ -2075,7 +2082,7 @@ async def brain_connected(backend=None) -> None:
 
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
-    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
+    ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **photos_mcp(backend), **apps_mcp(),
                                           **CONNECTIONS.mcp(only, backend=backend)}
     ENGINE.model_choices = model_choices
     ENGINE.usable_brains = usable_brains
