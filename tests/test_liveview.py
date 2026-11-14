@@ -97,3 +97,16 @@ async def test_one_wait_stays_under_the_mcp_clients_minute(monkeypatch):
     live.wait = wait
     out = await live.call("wait_for_human", {"id": "x", "seconds": 600})
     assert asked == [liveview.WAIT] and liveview.WAIT < 60 and "again" in out["content"][0]["text"]
+
+
+async def test_the_link_is_sent_by_ken_not_left_to_the_model():
+    sent = []
+    live = liveview.LiveView(KEY, cdp="http://127.0.0.1:1", base="https://ken.example",
+                             on_start=lambda session, link: sent.append((session.reason, link)))
+
+    async def pages():
+        return [{"type": "page", "id": "T", "url": "https://site.test/", "webSocketDebuggerUrl": "ws://x"}]
+    live._pages = pages
+    out = await live.call("request_human", {"reason": "Enter the code", "url": "https://site.test/"})
+    text = out["content"][0]["text"]
+    assert sent and sent[0][0] == "Enter the code" and sent[0][1] in text and "already in their chat" in text

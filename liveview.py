@@ -169,12 +169,14 @@ class Session:
 
 class LiveView:
     def __init__(self, key: str, cdp: str | None = None, base: str | None = None, owner: str | None = None,
-                 on_end: Callable[[Session], Awaitable[None]] | None = None):
+                 on_end: Callable[[Session], Awaitable[None]] | None = None,
+                 on_start: Callable[[Session, str], None] | None = None):
         self.key = key
         self.cdp = cdp or f"http://127.0.0.1:{cdp_port()}"
         self.base = base or public_base()
         self.owner = owner if owner is not None else os.environ.get("KEN_ANALYTICS_ID", "")
         self.on_end = on_end
+        self.on_start = on_start  # sends the person the link (bot.py): not left to the model to remember
         self.sessions: dict[str, Session] = {}
         self.tasks: set[asyncio.Task] = set()
 
@@ -202,8 +204,15 @@ class LiveView:
         session = Session(sid, target, reason[:300], target.get("url", url), expires)
         self.sessions[sid] = session
         self._spawn(self._expire(session))
-        return {"id": sid, "link": f"{self.base}/live/{sign(self.key, payload)}", "expires_in_minutes": TTL // 60,
-                "page": session.url}
+        link = f"{self.base}/live/{sign(self.key, payload)}"
+        sent = False
+        if self.on_start:
+            try:
+                self.on_start(session, link)
+                sent = True
+            except Exception as exc:
+                log.warning("live view: couldn't send the link: %s", exc)
+        return {"id": sid, "link": link, "expires_in_minutes": TTL // 60, "page": session.url, "sent": sent}
 
     async def _expire(self, session: Session) -> None:
         try:
@@ -397,8 +406,7 @@ class LiveView:
         {"name": "request_human", "description": (
             "When a page in your browser needs the person (a captcha you can't pass, a sign-in, a code sent to their "
             "phone, 'confirm it's you'): returns a link that shows them that tab live, where they do the step "
-            "themselves. Write them a message with the link and one line on what to do BEFORE you call wait_for_human "
-            "(they only see what you write). The link works for 15 minutes and ends when they press Done. Never use "
+            "themselves; the link is sent to their chat for you. Then call wait_for_human. The link works for 15 minutes and ends when they press Done. Never use "
             "it to get their password typed for you to read."),
          "inputSchema": {"type": "object", "properties": {
              "reason": {"type": "string", "description": "What they should do, in a few plain words, shown above the page."},
@@ -418,7 +426,9 @@ class LiveView:
         try:
             if name == "request_human":
                 out = await self.start(str(args.get("reason") or "Ken needs you for a moment"), str(args.get("url") or ""))
-                out["say"] = (f"Now write them a message with this link and one line on what to do: {out['link']} "
+                out["say"] = (f"The link is already in their chat (don't repeat it). Call wait_for_human with id {out['id']}."
+                              if out.pop("sent") else
+                              f"Now write them a message with this link and one line on what to do: {out['link']} "
                               f"(works for {out['expires_in_minutes']} minutes). Then call wait_for_human with id {out['id']}.")
             else:
                 # Under the MCP client's own 60 second limit on a tool call: a longer wait is several calls.

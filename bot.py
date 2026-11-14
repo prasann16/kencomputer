@@ -543,8 +543,8 @@ HEADLESS_BROWSER_PROMPT = (
 LIVE_VIEW_PROMPT = (
     " When a page needs them (a captcha you can't get past, a sign-in, a code sent to their phone), call "
     "request_human with what they should do: it gives a link that shows them that tab live, where they do the step "
-    "themselves, from their computer or phone. Write them the link in a message first, then call wait_for_human until "
-    "it says done, then carry on in the same tab."
+    "themselves, from their computer or phone (the link is sent to them for you). Then call wait_for_human until it "
+    "says done, and carry on in the same tab."
 )
 
 SKILLS_RULE = (
@@ -2081,6 +2081,15 @@ async def brain_connected(backend=None) -> None:
     await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
+def live_view_link(session, link: str) -> None:
+    """A live view started: the link goes to the person in the chat that's working (Home when that isn't clear), so it
+    reaches the app and the phone whether or not the model remembers to write it."""
+    busy = [pid for pid in list(ENGINE.chats) if ENGINE.chat_busy(pid)]
+    pid = busy[0] if len(busy) == 1 else HOME
+    ENGINE.log_message(pid, "ken", f"🖐️ I need you for a moment: {session.reason}\n{link}\n"
+                       "It opens my browser live. Do the step there and press Done (works for 15 minutes).", via="background")
+
+
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
@@ -2120,7 +2129,8 @@ async def start_engine() -> WebApp | None:
     use_signed_in_account()
     browser = browser_command().get("browser")
     # Live view: only with Ken's own browser (a computer in the cloud), never the person's Chrome.
-    live = liveview.LiveView(load_token(KEN_HOME)) if browser and liveview.enabled() and os.environ.get("KEN_PLATFORM") else None
+    live = (liveview.LiveView(load_token(KEN_HOME), on_start=live_view_link)
+            if browser and liveview.enabled() and os.environ.get("KEN_PLATFORM") else None)
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"), extra=live)} if browser else {}
     web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding, live)
     if os.environ.get("KEN_NOTIFY_URL"):
