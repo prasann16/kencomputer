@@ -160,6 +160,7 @@ class WebApp:
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
         self.websockets: set[web.WebSocketResponse] = set()
+        self.phones: set[web.WebSocketResponse] = set()  # the phone app open on screen (the site marks its socket)
 
     # ------------------------------------------------------------------ auth
 
@@ -1129,6 +1130,8 @@ class WebApp:
         await ws.prepare(request)
         self.websockets.add(ws)
         OPEN_PAGES.add(ws)
+        if request.headers.get("x-ken-client") == "phone":  # the app closes it when it leaves the screen
+            self.phones.add(ws)
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -1151,6 +1154,7 @@ class WebApp:
             pumping.cancel()
             self.engine.unsubscribe(q)
             self.websockets.discard(ws)
+            self.phones.discard(ws)
             OPEN_PAGES.discard(ws)
             await asyncio.gather(pumping, return_exceptions=True)
         return ws

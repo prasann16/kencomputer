@@ -673,3 +673,21 @@ async def test_the_model_list_follows_the_ai_login(monkeypatch, clean_ai, tmp_pa
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "another")
     await bot.model_choices("claude")
     assert calls == ["claude", "claude"]
+
+
+async def test_the_phone_app_open_on_screen_is_known(engine, aiohttp_client):
+    """The site marks the phone app's live socket (x-ken-client: phone): while it's open Ken sends no push."""
+    app, client = await signed_in(engine, aiohttp_client)
+    page = await client.ws_connect("/api/events")
+    await page.receive_json()
+    assert not app.phones  # a browser tab doesn't count
+    phone = await client.ws_connect("/api/events", headers={"x-ken-client": "phone"})
+    await phone.receive_json()
+    assert len(app.phones) == 1
+    await phone.close()
+    for _ in range(50):
+        if not app.phones:
+            break
+        await asyncio.sleep(0.02)
+    assert not app.phones
+    await page.close()
