@@ -1747,6 +1747,64 @@ function SendBigFile({ token, onClose }) {
   </div></div>`;
 }
 
+// Hosted Ken: a finished video waiting to be saved on this computer (drive_store.py offer). The page pulls it over the
+// same one-file link Google Drive uses, saves it where they pick, reads it back, and sends its size and SHA-256
+// (browsers have no MD5); only a match deletes Ken's copy. Nothing on this computer listens: the page asks. Phones get
+// the Drive link instead, so this shows on computers only.
+const PHONE_PAGE = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+async function sha256Hex(blob) {
+  const d = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function pullPickup(p, onProgress) {
+  // Chrome, Edge: they pick where first (the browser only allows it straight after the tap), it's written to disk,
+  // then read back from disk to check.
+  const handle = window.showSaveFilePicker ? await window.showSaveFilePicker({ suggestedName: p.name, startIn: 'downloads' }) : null;
+  const r = await fetch(`/api/drive-file/${p.token}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(r.status === 404 ? 'This link has expired. Ask Ken to offer the video again.' : 'Couldn’t reach Ken’s computer. Try again.');
+  let got = 0;
+  const counted = r.body.pipeThrough(new TransformStream({ transform(chunk, c) { got += chunk.byteLength; onProgress(got / p.size); c.enqueue(chunk); } }));
+  if (handle) {
+    await counted.pipeTo(await handle.createWritable());
+    const file = await handle.getFile();
+    return { size: file.size, sha256: await sha256Hex(file), how: 'disk', where: handle.name };
+  }
+  // Firefox, Safari: checked as it arrives, then handed to the browser's own download; they say when it's there.
+  const blob = await new Response(counted).blob();
+  const sum = await sha256Hex(blob);
+  if (blob.size !== p.size || sum !== p.sha256) throw new Error('The download didn’t arrive whole. Try again.');
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: p.name });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 120000);
+  return { size: blob.size, sha256: sum, how: 'download', where: p.name };
+}
+function SavePickups() {
+  const [list, setList] = useState([]), [state, setState] = useState({});  // token → {progress, error, ask, done}
+  const load = () => api('/api/pickups').then((r) => setList(r.pickups || [])).catch(() => {});
+  useEffect(() => { if (PHONE_PAGE) return; load(); addEventListener('ken-pickup', load); return () => removeEventListener('ken-pickup', load); }, []);
+  const set = (t, v) => setState((s) => ({ ...s, [t]: v }));
+  const confirm = async (p, got) => {
+    try { await api(`/api/pickups/${p.token}`, { json: got }); set(p.token, { done: got.where }); }
+    catch (e) { set(p.token, { error: e.message }); }
+  };
+  const save = async (p) => {
+    set(p.token, { progress: 0 });
+    try {
+      const got = await pullPickup(p, (f) => set(p.token, { progress: f }));
+      if (got.how === 'disk') await confirm(p, got); else set(p.token, { ask: got });
+    } catch (e) { set(p.token, e.name === 'AbortError' ? {} : { error: e.message }); }
+  };
+  const shown = [...list.filter((p) => !state[p.token]?.done), ...Object.entries(state).filter(([t, v]) => v.done && !list.some((p) => p.token === t)).map(([token, v]) => ({ token, name: v.done, gone: true }))];
+  if (PHONE_PAGE || !shown.length) return null;
+  return html`<div class="update-ready pickups" role="status">${shown.map((p) => {
+    const st = state[p.token] || {};
+    const mb = p.size ? ` (${Math.round(p.size / 1048576)} MB)` : '';
+    return html`<div class="pickup">${st.done || p.gone ? html`Saved ${p.name} on this computer. Checked, and removed from Ken’s computer.`
+      : st.ask ? html`Is ${p.name} in your Downloads?<button class="btn primary" onClick=${() => confirm(p, st.ask)}>Yes, remove Ken’s copy</button>`
+      : st.progress !== undefined ? html`Saving ${p.name}… ${Math.round(st.progress * 100)}%`
+      : html`${p.kind === 'source' ? 'Your original video' : 'Your edited video'} is ready: ${p.name}${mb}.<button class="btn primary" onClick=${() => save(p)}>Save to this computer</button>${st.error && html` <span class="connect-error" role="alert">${st.error}</span>`}`}</div>`;
+  })}</div>`;
+}
+
 function RenameProject({ project, onClose, onDone }) {
   const [name, setName] = useState(project.name), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const save = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'PATCH', json: { name: name.trim() } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
@@ -2090,11 +2148,12 @@ function App() {
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
       ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
-      ws.onopen = () => { setOnline(true); retry = 0; refresh(); };
+      ws.onopen = () => { setOnline(true); retry = 0; refresh(); dispatchEvent(new Event('ken-pickup')); };
       ws.onmessage = (e) => {
         heard = Date.now();
         const ev = JSON.parse(e.data), project = ev.project;
         if (ev.type === 'ping') return;
+        if (ev.type === 'pickup') { dispatchEvent(new Event('ken-pickup')); return; }
         if (ev.type === 'hello') { if (rev === null) rev = ev.rev; else if (ev.rev !== rev) location.reload(); return; }
         if (ev.type === 'ken.power') { setMeta((m) => ({ ...m, off: !ev.on })); return; }
         if (ev.type === 'coffee') { setAwake(ev.awake); window.kenDesktop?.coffeeChanged?.(); return; }
@@ -2255,7 +2314,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}${HOSTED && html`<${Safe} where="pickups"><${SavePickups}/><//>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>

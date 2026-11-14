@@ -12,6 +12,12 @@ for 30 minutes. The link is the host's /box/drive-file/<computer>/<token> (ken-h
 this computer's web app (/api/drive-file/<token>, web.py) with the computer's own keys; the token is in
 drive-out.json here and nowhere else.
 
+Or their own computer: `save <folder> --to=computer` (and the default, --to=auto, when Ken's page is open on a
+computer) offers each file on that page, through the same one-file links. They tap Save; the page pulls the file over
+HTTPS, saves it where they pick (Downloads to start), reads it back and sends its size and SHA-256 (browsers have no
+MD5), and only a match deletes the copy here. Nothing on their computer listens or opens a port; the page asks, the
+host passes it on. Phones and Telegram get Drive. Neither there: the files stay here and Ken says so.
+
 KEN_DRIVE_FAKE=<dir> stands in a pretend Drive in that folder (tests, and trying it without a Google account): it
 fetches the link just as Drive would, so everything but Google itself is exercised.
 """
@@ -42,7 +48,14 @@ def home() -> Path:
 
 
 def md5(path: Path) -> str:
-    h = hashlib.md5()
+    return _digest(path, hashlib.md5())
+
+
+def sha256(path: Path) -> str:
+    return _digest(path, hashlib.sha256())
+
+
+def _digest(path: Path, h) -> str:
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
@@ -70,12 +83,13 @@ def _save_links(links: dict) -> None:
     tmp.replace(path)
 
 
-def open_link(path: Path, now: float | None = None) -> str:
-    """A token that lets Drive fetch this one file for LINK_TTL_S. Old ones are dropped as new ones are made."""
+def open_link(path: Path, now: float | None = None, **extra) -> str:
+    """A token that lets Drive (or their own computer) fetch this one file for LINK_TTL_S. Old ones are dropped as new
+    ones are made."""
     now = time.time() if now is None else now
     links = {t: v for t, v in _links().items() if v.get("until", 0) > now}
     token = secrets.token_urlsafe(32)
-    links[token] = {"path": str(path.resolve()), "until": now + LINK_TTL_S}
+    links[token] = {"path": str(path.resolve()), "until": now + LINK_TTL_S, **extra}
     _save_links(links)
     return token
 
@@ -273,6 +287,115 @@ def save(folder: Path, with_source: bool = True, account: str = "", say=print) -
     return 0
 
 
+# ------------------------------------------------------------------ or their own computer (web.py's /api/pickups)
+
+PHONE_UA = ("Mobi", "Android", "iPhone", "iPad")
+
+
+def _web(path: str, body: dict | None = None, timeout: float = 5):
+    """This computer's own web app, with its token (the running Ken knows which pages are open)."""
+    tok = (home() / "web-token").read_text().strip()
+    port = os.environ.get("KEN_WEB_PORT", "7777")
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def computer_open() -> int:
+    """How many of Ken's pages are open on a computer (not a phone) right now. 0 if the web app can't be asked."""
+    try:
+        return int(_web("/api/pickups/pages").get("computer", 0))
+    except Exception:  # noqa: BLE001 - no app, no page
+        return 0
+
+
+def offer(folder: Path, with_source: bool = True, now: float | None = None) -> list[dict]:
+    """A one-file link for the reel (and the original) that Ken's page on their computer can pull, each with the size
+    and SHA-256 the saved copy has to match."""
+    files = [("reel", folder / "reel.mp4")] if (folder / "reel.mp4").is_file() else []
+    src = _source(folder) if with_source else None
+    if src:
+        files.append(("source", src))
+    links = _links()
+    stale = [t for t, v in links.items() if v.get("pickup") and Path(v["path"]).parent == folder.resolve()]
+    if stale:  # offered again: the new links replace the old ones
+        _save_links({t: v for t, v in links.items() if t not in stale})
+    out = []
+    for kind, path in files:
+        info = {"pickup": kind, "name": path.name, "size": path.stat().st_size, "sha256": sha256(path), "md5": md5(path),
+                "label": folder.name}
+        out.append({"token": open_link(path, now, **info), **info})
+    return out
+
+
+def pickups(now: float | None = None) -> list[dict]:
+    """What's waiting to be saved on their computer, for the page (no paths)."""
+    now = time.time() if now is None else now
+    return [{"token": t, "kind": v["pickup"], "name": v["name"], "size": v["size"], "sha256": v["sha256"],
+             "label": v.get("label", ""), "until": int(v["until"])}
+            for t, v in _links().items() if v.get("pickup") and v.get("until", 0) > now and Path(v["path"]).is_file()]
+
+
+def picked_up(token: str, size, digest: str, how: str = "disk", where: str = "", now: float | None = None) -> dict:
+    """Their computer says it has the file: a matching size and SHA-256 deletes the copy here; anything else keeps it."""
+    now = time.time() if now is None else now
+    hit = _links().get(token or "")
+    if not hit or not hit.get("pickup") or hit.get("until", 0) <= now:
+        return {"ok": False, "error": "This link has expired. Ask Ken to offer the video again."}
+    path = Path(hit["path"])
+    if not path.is_file():
+        close_link(token)
+        return {"ok": False, "error": "That file isn't on Ken's computer any more."}
+    if str(size) != str(hit["size"]) or str(digest).lower() != hit["sha256"]:
+        return {"ok": False, "error": "The copy on your computer doesn't match, so Ken kept its own. Try again."}
+    folder = path.parent
+    saved = {"name": hit["name"], "size": hit["size"], "md5": hit["md5"], "sha256": hit["sha256"], "where": "computer",
+             "checked": how, "saved_as": str(where)[:200]}
+    _record(folder, hit["pickup"], saved)
+    path.unlink()
+    close_link(token)
+    note = json.loads((folder / "drive.json").read_text())
+    if note.get("source", {}).get("where") == "computer" and (folder / "cut.mp4").is_file() and not any(
+            v.get("pickup") and Path(v["path"]).parent == folder for v in _links().values()):
+        (folder / "cut.mp4").unlink()
+    return {"ok": True, "kind": hit["pickup"], "name": hit["name"]}
+
+
+def save_to_computer(folder: Path, with_source: bool = True, say=print) -> int:
+    offered = offer(folder, with_source)
+    if not offered:
+        say(f"Nothing to save: no reel.mp4 in {folder}.")
+        return 1
+    try:
+        _web("/api/pickups/announce", {"label": folder.name})
+    except Exception:  # noqa: BLE001 - an open page also finds it when it next loads
+        pass
+    names = ", ".join(f"{o['name']} ({o['size'] / 1e6:.0f} MB)" for o in offered)
+    say(f"Offered on Ken's page on their computer: {names}. They tap Save there; each file is deleted here only once their "
+        "computer has it and its size and SHA-256 match. Tell them in one line to tap Save on Ken's page on their computer. "
+        f"The links close in {LINK_TTL_S // 60} minutes; anything not saved by then stays here "
+        f"(`ken --video-drive status {folder}` shows what's left; then offer Drive with `save {folder} --to=drive`).")
+    return 0
+
+
+def status(folder: Path, say=print) -> int:
+    try:
+        note = json.loads((folder / "drive.json").read_text())
+    except (OSError, ValueError):
+        note = {}
+    for kind, v in note.items():
+        place = "their computer" if v.get("where") == "computer" else "their Drive " + v.get("link", "")
+        say(f"{kind}: {v.get('name')} saved to {place}, checked, deleted here.")
+    waiting = [p for p in pickups() if p["label"] == folder.name]
+    for p in waiting:
+        say(f"{p['kind']}: {p['name']} waiting for them to tap Save on their computer.")
+    left = [p.name for p in (folder / "reel.mp4", _source(folder) or folder / "-") if p.is_file()]
+    if left and not waiting:
+        say(f"Still only here: {', '.join(left)}.")
+    return 0
+
+
 def fetch(folder: Path, account: str = "", say=print) -> int:
     """The source back from Drive for a re-edit, checked against the MD5 noted when it was saved."""
     try:
@@ -301,6 +424,22 @@ def fetch(folder: Path, account: str = "", say=print) -> int:
     return 0
 
 
+def save_where(folder: Path, to: str = "auto", with_source: bool = True, account: str = "", say=print) -> int:
+    """--to=computer, --to=drive, or auto: their computer when Ken's page is open on one, else Drive, else keep it."""
+    if to != "drive":
+        if computer_open():
+            return save_to_computer(folder, with_source, say)
+        if to == "computer":
+            say("Ken's page isn't open on their computer right now, so trying their Drive instead.")
+    c = connected()
+    if c["ok"]:
+        return save(folder, with_source, account, say)
+    say("Neither place is ready: Ken's page isn't open on a computer and Google Drive isn't connected, so the video stays "
+        f"here at {folder}. Tell them plainly, and that they can open Ken on their computer and tap Save, or connect "
+        f"Drive with this link: {c.get('connect_url', '')}")
+    return 1
+
+
 def main(argv: list[str]) -> int:
     if not (_fake_dir() or (apps.hosted() and apps.mcp_ready())):
         print("Drive storage is for Ken in the cloud. Here, keep the video on this computer as usual.")
@@ -310,20 +449,30 @@ def main(argv: list[str]) -> int:
         if what == "check":
             c = connected()
             if c["ok"]:
-                print("Google Drive is connected. Go ahead with the edit; the finished video goes to their Drive.")
+                print("Google Drive is connected. Go ahead with the edit; the finished video goes to their Drive "
+                      "(or to their computer if Ken's page is open there when it's done).")
+            elif computer_open():
+                print("Ken's page is open on their computer: go ahead with the edit. When it's done, `save` offers it "
+                      "there to save. (Google Drive isn't connected; don't ask about it now.)")
             else:
                 print("Google Drive isn't connected. Before editing, reply in one line asking them to connect it, so the "
                       f"video is kept in their own Drive instead of on this computer, with this link exactly as printed: {c['connect_url']}")
                 print("Then stop. You'll be told when it's connected; then start the edit.")
             return 0
-        if what in ("save", "fetch") and len(argv) > 1:
+        if what in ("save", "fetch", "status") and len(argv) > 1:
             folder = Path(argv[1]).expanduser().resolve()
-            account = next((a.split("=", 1)[1] for a in argv[2:] if a.startswith("--account=")), "")
-            return save(folder, "--reel-only" not in argv[2:], account) if what == "save" else fetch(folder, account)
+            opt = lambda name, default="": next((a.split("=", 1)[1] for a in argv[2:] if a.startswith(f"--{name}=")), default)  # noqa: E731
+            account, with_source = opt("account"), "--reel-only" not in argv[2:]
+            if what == "status":
+                return status(folder)
+            if what == "fetch":
+                return fetch(folder, account)
+            return save_where(folder, opt("to", "auto"), with_source, account)
     except Exception as exc:  # noqa: BLE001 - one plain line; Ken tells them
         print(f"Couldn't reach their Drive just now ({str(exc)[:200]}). Keep the video here and tell them plainly.")
         return 1
-    print("Usage: ken --video-drive check | save <folder> [--reel-only] [--account=<id>] | fetch <folder>")
+    print("Usage: ken --video-drive check | save <folder> [--to=auto|computer|drive] [--reel-only] [--account=<id>] | "
+          "status <folder> | fetch <folder>")
     return 1
 
 

@@ -133,6 +133,7 @@ VOICE_FOLLOW_UP = (
 # Hosted Ken updates itself only in a quiet spell (bot.py update_when_quiet).
 LAST_ASKED = time.monotonic()
 OPEN_PAGES: set = set()
+PHONE_PAGE = re.compile(r"Mobi|Android|iPhone|iPad", re.I)
 
 
 def quiet_seconds() -> float:
@@ -447,6 +448,30 @@ class WebApp:
             raise web.HTTPNotFound()
         return web.FileResponse(path, headers={"Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
                                                "Cache-Control": "no-store"})
+
+    async def pickups(self, request):
+        """Hosted Ken: finished videos waiting to be saved on their computer (drive_store.py offer). GET: the list, for
+        the page. GET …/pages: how many pages are open on a computer and on a phone (for `save --to=auto`). POST
+        …/announce: tell open pages. POST …/<token> {"size", "sha256", "how", "where"}: the page saved it; a match
+        deletes Ken's copy."""
+        import drive_store
+        tail = request.match_info.get("tail", "")
+        if request.method == "GET" and tail == "pages":
+            phones = sum(1 for ws in OPEN_PAGES if getattr(ws, "ken_phone", False))
+            return _json({"computer": len(OPEN_PAGES) - phones, "phone": phones})
+        if request.method == "GET" and not tail:
+            return _json({"pickups": drive_store.pickups()})
+        if request.method != "POST" or not tail:
+            raise web.HTTPNotFound()
+        if tail == "announce":
+            self.engine.broadcast("pickup")
+            return _json({"ok": True})
+        b = await self._body(request)
+        done = drive_store.picked_up(tail, b.get("size"), str(b.get("sha256", "")), str(b.get("how", "disk"))[:20], str(b.get("where", "")))
+        if done["ok"]:
+            self.engine.broadcast("pickup")
+            log.info("Video saved on their computer: %s (%s)", done["name"], done["kind"])
+        return _json(done, 200 if done["ok"] else 409)
 
     # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
     # talker that can make HTTP calls with Ken's web token can use them.
@@ -1140,8 +1165,10 @@ class WebApp:
         await ws.prepare(request)
         self.websockets.add(ws)
         OPEN_PAGES.add(ws)
-        if request.headers.get("x-ken-client") == "phone":  # the app closes it when it leaves the screen
+        phone_app = request.headers.get("x-ken-client") == "phone"
+        if phone_app:  # the app closes it when it leaves the screen
             self.phones.add(ws)
+        ws.ken_phone = phone_app or bool(PHONE_PAGE.search(request.headers.get("User-Agent", "")))  # hosted Ken: where a video can be saved
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -1264,6 +1291,8 @@ class WebApp:
         r.add_post("/api/credits/low", self.credits_low)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/drive-file/{token}", self.drive_file)
+        r.add_get("/api/pickups", self.pickups)
+        r.add_route("*", "/api/pickups/{tail}", self.pickups)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)

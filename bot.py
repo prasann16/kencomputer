@@ -193,13 +193,16 @@ HOSTED_FILES_PROMPT = (
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
 # Hosted Ken: an edited video is kept in their Google Drive, not on the computer (drive_store.py).
 HOSTED_VIDEO_DRIVE_PROMPT = (
-    f"VIDEOS IN THEIR DRIVE: before any video edit (a reel, captions, a cut), run `{KEN_CMD} --video-drive check`. If "
-    "Drive isn't connected, reply in one line with the link it prints (why: the finished video is kept in their own "
-    "Google Drive, not on this computer) and stop; start the edit when you're told it's connected. When the reel is "
-    "done and you've watched it: if it's under 45 MB, copy it to the outbox first; then run "
-    f"`{KEN_CMD} --video-drive save <project folder>`, which puts the reel and the original in their Drive, checks "
-    "both and deletes them here. Give them the Drive link it prints. For a change to a saved video, run "
-    f"`{KEN_CMD} --video-drive fetch <project folder>` first. Never delete a video it says wasn't saved."
+    f"VIDEOS IN THEIR DRIVE OR ON THEIR COMPUTER: before any video edit (a reel, captions, a cut), run `{KEN_CMD} "
+    "--video-drive check`. If it says neither Drive nor their computer is ready, reply in one line with the link it "
+    "prints (why: the finished video is kept with them, not on this computer) and stop; start the edit when you're "
+    "told it's connected. When the reel is done and you've watched it: if it's under 45 MB, copy it to the outbox "
+    f"first; then run `{KEN_CMD} --video-drive save <project folder>`. It offers the files on Ken's page when that's "
+    "open on their computer (they tap Save; each is deleted here once their computer's copy matches), else puts them "
+    "in their Drive, checked, and deletes them here. Pass --to=computer or --to=drive if they said where. Tell them "
+    "what it prints (the Drive link, or to tap Save). For a change to a saved video, run "
+    f"`{KEN_CMD} --video-drive fetch <project folder>` first (Drive), or ask them to send the original again (their "
+    "computer). Never delete a video it says wasn't saved."
 )
 
 HOSTED_APPS_PROMPT = (

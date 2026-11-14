@@ -222,6 +222,8 @@ select.np-input { appearance: none; -webkit-appearance: none; padding-right: 36p
 .update-ready, .update-failed { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s2) var(--s3); margin: 0 var(--s4) var(--s2);
   padding: var(--s2) var(--s4); border-radius: var(--r-card); background: var(--well); color: var(--ink-2); font-size: var(--text-ui); text-align: center; }
 .update-ready .btn { min-height: 30px; padding: 0 14px; font-size: var(--text-sm); }
+.pickups { flex-direction: column; }
+.pickups .pickup { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s2) var(--s3); }
 .update-failed { background: var(--ask-soft); color: var(--ask-ink); }
 .update-failed a { color: inherit; font-weight: 600; }
 .tip { position: fixed; z-index: 1000; max-width: 260px; padding: 10px 14px; border-radius: var(--r-md); background: #1f1f1f; color: #f2f2f2;
