@@ -109,7 +109,11 @@ async def serve(kind, home, only):
     from mcp.server.stdio import stdio_server
     from connections import Connections
 
-    config = media_server() if kind == "media" else Connections(Path(home)).mcp(set(only)).get("ken")
+    if kind == "photos":
+        from photos import photos_server
+        config = photos_server(Path(home))
+    else:
+        config = media_server() if kind == "media" else Connections(Path(home)).mcp(set(only)).get("ken")
     if config is None:
         raise RuntimeError("No connected tools are enabled")
     server = config["instance"]
@@ -119,6 +123,6 @@ async def serve(kind, home, only):
 
 def main():
     kind, home, *only = sys.argv[sys.argv.index("--ken-mcp") + 1:]
-    if kind not in ("media", "connections"):
+    if kind not in ("media", "connections", "photos"):
         raise ValueError("Unknown Ken MCP server")
     asyncio.run(serve(kind, home, only))
