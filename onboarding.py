@@ -168,7 +168,11 @@ class Onboarding:
 
     def status(self) -> dict:
         included = use_included_ai()
-        return {"claude": self.connected(), "connected": self.connected(), "backend": "claude",
+        # Reconnecting replaces the saved sign-in (often a dead one): until the new one is in, the page must wait for it
+        # and show the box for the code, not see the old one and close. Ken keeps working on the old one meanwhile.
+        connected = self.connected() and not (self.active and not included)
+        return {"claude": connected, "connected": connected, "backend": "claude",
+                **({"renewing": True} if self.active and self.connected() and not included else {}),
                 "how": "included" if included else "key" if os.environ.get("ANTHROPIC_API_KEY") else "account" if self.connected() else "",
                 "phone": self.phone_step(), "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
 
@@ -337,6 +341,20 @@ class Onboarding:
             log.exception("post-disconnect refresh failed")
         return self.status()
 
+    async def forget_if_dead(self) -> bool:
+        """Claude turned Ken away: if Anthropic says the saved sign-in no longer works, forget it, so the person sees
+        "Not connected" with a plain Connect (and Ken AI credits take over, when the plan has them). A network blip or
+        a working sign-in changes nothing. Returns whether it was forgotten."""
+        token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not (token or key) or self.active or not await check_claude(token=token, api_key=key if not token else ""):
+            return False
+        log.warning("Claude sign-in no longer works; forgetting it")
+        import crash
+        crash.track("claude_signin_dead")
+        await self.disconnect()
+        return True
+
     async def submit(self, code: str) -> dict:
         """Give the CLI the code from the browser; save the token it prints.
 
@@ -344,7 +362,7 @@ class Onboarding:
         open a fresh one instead of failing: the user approves and pastes again."""
         # Their own Claude is already in (the browser finished the sign-in). Ken AI credits don't count: someone on them
         # pasting a code is connecting their own account, so the code must go through.
-        if self.connected() and not use_included_ai():
+        if self.connected() and not use_included_ai() and not self.active:
             return self.status()
         self.error = ""
         try:
@@ -597,7 +615,7 @@ class BrainOnboarding:
     def status(self):
         providers = {name: p.status() for name, p in self.providers.items()}
         return {"providers": providers, "backend": self.backend(),
-                "connected": any(p["connected"] for p in providers.values()), "ask_ai": self.ask_ai(),
+                "connected": any(p["connected"] or p.get("renewing") for p in providers.values()), "ask_ai": self.ask_ai(),
                 "phone": self.phone_step(), "voice": self.providers["claude"].voice_status(),
                 "runtimes": runtimes.status()}
 
