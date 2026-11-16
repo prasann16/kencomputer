@@ -151,5 +151,25 @@ def test_computer_open_is_zero_without_a_running_app(home, monkeypatch):  # noqa
 def test_page_only_shows_the_save_bar_on_a_computer():
     js = (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text()
     assert "function SavePickups()" in js and "if (PHONE_PAGE || !shown.length) return null;" in js
-    assert "/api/drive-file/${p.token}" in js and "crypto.subtle.digest('SHA-256'" in js
+    assert "/api/drive-file/${p.token}" in js and "sha256Stream()" in js and "blob.stream().getReader()" in js  # hashed in chunks, never whole
     assert "showSaveFilePicker" in js and "handle.getFile()" in js  # read back from disk before confirming
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="needs node")
+def test_the_pages_chunked_sha256_matches_hashlib(tmp_path):
+    # the page hashes a saved video piece by piece; any chunking must give the same SHA-256 the computer recorded
+    import hashlib, json, subprocess
+    js = (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text()
+    code = js[js.index("const SHA256_K"):js.index("async function sha256Hex")]
+    data = bytes(range(256)) * 1000 + b"tail"
+    cases = [(b"", [1]), (b"abc", [1]), (data[:55], [55]), (data[:56], [7]), (data[:64], [64]), (data[:119], [3]), (data, [1, 63, 64, 65, 4096])]
+    script = code + """
+const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+console.log(JSON.stringify(cases.map(([hex, sizes]) => {
+  const bytes = Uint8Array.from(Buffer.from(hex, 'hex')), h = sha256Stream();
+  for (let i = 0, k = 0; i < bytes.length; k++) { const n = sizes[k % sizes.length]; h.update(bytes.subarray(i, i + n)); i += n; }
+  return h.hex();
+})));"""
+    (tmp_path / "s.cjs").write_text(script)
+    out = subprocess.run(["node", str(tmp_path / "s.cjs")], input=json.dumps([[d.hex(), s] for d, s in cases]), capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [hashlib.sha256(d).hexdigest() for d, _ in cases]

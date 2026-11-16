@@ -6,7 +6,8 @@ const browser = ["AbortSignal", "addEventListener", "Blob", "cancelAnimationFram
   "setTimeout", "URL", "URLSearchParams", "WebSocket", "window", "matchMedia", "getComputedStyle", "Image", "Audio",
   "AudioContext", "TextDecoder", "TextEncoder", "Response", "Request", "Headers", "performance", "queueMicrotask",
   "structuredClone", "atob", "btoa", "alert", "confirm", "prompt", "open", "close", "scrollTo", "devicePixelRatio",
-  "ResizeObserver", "IntersectionObserver", "MutationObserver", "AbortController", "Notification", "visualViewport"];
+  "ResizeObserver", "IntersectionObserver", "MutationObserver", "AbortController", "Notification", "visualViewport",
+  "TransformStream", "DataView", "dispatchEvent"];
 export default [{
   files: ["web/*.js"],
   languageOptions: { sourceType: "module", ecmaVersion: "latest", globals: Object.fromEntries(browser.map((n) => [n, "readonly"])) },
