@@ -42,7 +42,8 @@ def test_a_link_opens_one_file_for_half_an_hour(home, project):
     assert drive_store.linked_file("not-a-token", now=1000) is None
     drive_store.close_link(token)
     assert drive_store.linked_file(token, now=1000) is None
-    assert oct((home / "drive-out.json").stat().st_mode)[-3:] == "600"
+    if os.name != "nt":  # Windows has no Unix file modes; the user folder is private there
+        assert oct((home / "drive-out.json").stat().st_mode)[-3:] == "600"
 
 
 async def test_web_app_serves_a_linked_file_only_with_its_token(engine, aiohttp_client, home, project):  # noqa: F811
