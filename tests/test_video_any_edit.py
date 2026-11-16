@@ -258,3 +258,25 @@ def test_ken_s_own_check_asks_not_to_name_the_path_again(home, trim, monkeypatch
     monkeypatch.setenv("KEN_DRIVE_FAKE", str(home / "drive"))
     note = drive_store.after_turn([REPLY.format(home=home, work=trim)], "ken")
     assert note and "name its path" in note and "on its way" in note
+
+
+def test_old_outbox_leftovers_arent_asked_about_again(home, trim, monkeypatch):  # noqa: F811
+    """After a restart, clips left in the outbox by earlier tests were 'saved' again after a new reply (VM, Nov 16).
+    Only outbox videos new since the last check count; a video named in the reply always does."""
+    import time
+    monkeypatch.setenv("KEN_DRIVE_FAKE", str(home / "drive"))
+    old = home / "outbox" / "launch-15s.mp4"
+    os.utime(old, (time.time() - 3600, time.time() - 3600))
+    assert drive_store.unsaved([], since=time.time() + 5) == []  # ctime counts too: so check from "later"
+    assert drive_store.after_turn(["Done, it's on its way."], "ken", since=time.time() + 5) is None
+    note = drive_store.after_turn([f"Done: `{trim}`"], "ken", since=time.time() + 5)
+    assert note and str(trim.resolve()) in note
+
+
+@pytest.mark.parametrize("telegram", [False, True])
+def test_a_cloud_ken_without_telegram_never_says_on_its_way_to_their_phone(monkeypatch, telegram):
+    import bot
+    facts = {"kind": "cloud", "own": False, "app": True, "mac_app": False, "keep_awake": False, "browser": "",
+             "telegram": telegram, "voice": False}
+    said = bot.where_you_are(facts)
+    assert ("never say a file is on its way to their phone" in said) is not telegram

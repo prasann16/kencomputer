@@ -887,6 +887,11 @@ def where_you_are(f: dict | None = None) -> str:
             + (" Telegram is linked, so they may write from their phone too." if f["telegram"] else "")
             + " The header line of each message says where they wrote from. On their phone, keep it short and "
             "phone-friendly; in the app you can be fuller.")
+        if kind == "cloud" and not f["telegram"]:
+            # Swap's VM test (Nov 16): "on its way to your phone" with no Telegram, so nothing was on its way.
+            lines.append("Telegram isn't linked, so nothing put in the outbox reaches their phone: never say a file is "
+                         "on its way to their phone, and don't use the outbox. In the Ken app (on their phone or a "
+                         "computer), a file you made shows in the chat when you name its full path once in your reply.")
     controls = []
     if f["app"]:
         controls.append("in the app the stop button, the model menu and the coffee cup" if f["keep_awake"]
@@ -2127,7 +2132,12 @@ def video_storage_check(pid: str, said: list[str]) -> str | None:
     import drive_store
     if not drive_store.enabled():
         return None
-    return drive_store.after_turn(said, KEN_CMD, skip=list(ENGINE.agents_dir.glob("*/files")))
+    # Outbox videos new since the last check (or since Ken started), so old leftovers aren't asked about again.
+    since, VIDEO_CHECKED[0] = VIDEO_CHECKED[0] or ENGINE._booted, time.time()
+    return drive_store.after_turn(said, KEN_CMD, skip=list(ENGINE.agents_dir.glob("*/files")), since=since)
+
+
+VIDEO_CHECKED = [0.0]  # when Ken's own after-reply video check last looked at the outbox
 
 
 async def start_engine() -> WebApp | None:

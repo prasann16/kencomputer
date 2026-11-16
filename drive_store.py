@@ -579,14 +579,24 @@ def _key(path: Path) -> tuple:
     return (str(path.resolve()), st.st_size, st.st_mtime_ns)
 
 
-def unsaved(said: list[str], skip: list[Path] = ()) -> list[list[Path]]:
+def _new_since(p: Path, since: float | None) -> bool:
+    """Put there during this turn (copied, linked or written: its change time moves either way)."""
+    if since is None:
+        return True
+    st = p.stat()
+    return max(st.st_mtime, st.st_ctime) >= since - 1
+
+
+def unsaved(said: list[str], skip: list[Path] = (), since: float | None = None) -> list[list[Path]]:
     """Finished videos Ken gave them in this reply that are still only on this computer: video files in the outbox and
     video paths named in the reply, over MIN_BYTES. Not what they sent (the inbox, an agent's files/), not a reel's
     working files (source.*, cut.*), not one already waiting on their computer's Save, and not one already flagged.
     Copies of the same video count once: each comes back as [the copy to keep, its other copies], the one to keep
     outside the outbox when there is one, since Telegram's delivery deletes the outbox copy."""
     out = home() / "outbox"
-    found = [p for p in out.glob("*") if p.suffix.lower() in MIME] if out.is_dir() else []
+    # The outbox: only what this turn put there. Old copies left in it (no Telegram to take them) were asked about in
+    # their own turn; after a restart they'd be asked about again with every reply (Swap's VM, Nov 16).
+    found = [p for p in out.glob("*") if p.suffix.lower() in MIME and _new_since(p, since)] if out.is_dir() else []
     for text in said:
         found += [Path(os.path.expanduser(m.group(0))) for m in _PATH.finditer(text or "")]
     skip = [p.resolve() for p in [home() / "inbox", *skip]]
@@ -609,13 +619,13 @@ def unsaved(said: list[str], skip: list[Path] = ()) -> list[list[Path]]:
     return list(picked.values())
 
 
-def after_turn(said: list[str], ken_cmd: str = "ken", skip: list[Path] = ()) -> str | None:
+def after_turn(said: list[str], ken_cmd: str = "ken", skip: list[Path] = (), since: float | None = None) -> str | None:
     """The note that has Ken keep a finished video with them when the reply left it here, or None. Each video is
     flagged once: if it can't be kept (nothing connected), Ken says so then and isn't asked again."""
     if not active():
         return None
     targets = []
-    for p, *others in unsaved(said, skip):
+    for p, *others in unsaved(said, skip, since):
         _nudged.update(_key(c) for c in (p, *others))
         if p.parent == (home() / "outbox").resolve():  # only in the outbox: a copy of its own to keep, out of Telegram's way
             keep = home() / "work" / "videos" / p.stem / p.name
