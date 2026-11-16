@@ -438,6 +438,18 @@ class WebApp:
             return _json({"error": "A file didn't arrive. Try sending it again."}, 400)
         return _json({"ok": True}) if await self.phone.file_arrived(token, paths if "files" in body else paths[0]) else expired
 
+    async def big_file_upload(self, request):
+        """The send-it-here page's own uploads, in pieces into Home's files, only while its link is waiting: the link
+        is all that page has (no sign-in), so it can add files for that one request and nothing else."""
+        if not self.phone or not self.phone.waiting_file(request.match_info["token"]):
+            return _json({"error": "This link has expired or was already used. Ask Ken in Telegram for a new one."}, 404)
+        uid = request.match_info.get("uid")
+        if uid is None:
+            return await self.upload_start(request, HOME)
+        if request.path.endswith("/done"):
+            return await self.upload_finish(request, HOME, attach=True)
+        return await self.upload_piece(request, HOME)
+
     # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
     # talker that can make HTTP calls with Ken's web token can use them.
     async def voice_context(self, request):
@@ -734,9 +746,9 @@ class WebApp:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    async def upload_start(self, request):
+    async def upload_start(self, request, pid: str | None = None):
         """A big file, sent in pieces: say its name and size first. Refused up front if it won't fit."""
-        pid = self._pid(request)
+        pid = pid or self._pid(request)
         b = await self._body(request)
         name, size = b.get("name"), b.get("size")
         if not isinstance(name, str) or not name or not isinstance(size, int) or size <= 0:
@@ -769,9 +781,9 @@ class WebApp:
             raise web.HTTPNotFound(text="no such upload")
         return json.loads(meta.read_text()), meta, part
 
-    async def upload_piece(self, request):
+    async def upload_piece(self, request, pid: str | None = None):
         """The next piece, at ?offset= (what's already here). A piece sent twice is ignored, not doubled."""
-        pid = self._pid(request)
+        pid = pid or self._pid(request)
         info, _, part = self._piece_meta(pid, request.match_info["uid"])
         try:
             offset = int(request.query.get("offset", "-1"))
@@ -791,16 +803,16 @@ class WebApp:
                 f.write(chunk)
         return _json({"received": size})
 
-    async def upload_finish(self, request):
+    async def upload_finish(self, request, pid: str | None = None, attach: bool = False):
         """All pieces are here: the file takes its place in the chat like any upload."""
-        pid = self._pid(request)
+        pid = pid or self._pid(request)
         info, meta, part = self._piece_meta(pid, request.match_info["uid"])
         if part.stat().st_size != info["size"]:
             return _json({"error": "Part of the file is missing. Try attaching it again."}, 409)
         dest = self.engine.new_file_path(pid, info["name"])
         part.replace(dest)
         meta.unlink(missing_ok=True)
-        if request.query.get("attach") != "1":
+        if not attach and request.query.get("attach") != "1":
             self._spawn(self.engine.files_dropped(pid, [dest.name]))
         return _json({"saved": [dest.name]})
 
@@ -1254,6 +1266,9 @@ class WebApp:
         r.add_post("/api/credits/low", self.credits_low)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
+        r.add_post("/api/telegram-files/{token}/uploads", self.big_file_upload)
+        r.add_put("/api/telegram-files/{token}/uploads/{uid}", self.big_file_upload)
+        r.add_post("/api/telegram-files/{token}/uploads/{uid}/done", self.big_file_upload)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)
         r.add_post("/api/phone/handoff", self.phone_handoff)
