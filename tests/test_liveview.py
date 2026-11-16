@@ -34,6 +34,13 @@ def test_typing_is_key_presses_and_long_text_is_inserted():
     assert liveview.text_events("x" * 201) == [("Input.insertText", {"text": "x" * 201})]
 
 
+def test_the_tab_is_tall_enough_for_a_whole_picture_challenge():
+    assert liveview.tab_size(1500, 500) == (1440, 800)  # a laptop's short leftover space: the Verify button still shows
+    assert liveview.tab_size(1280, 1000) == (1280, 1000)  # a tall screen keeps its own shape
+    assert liveview.tab_size(390, 560) == (390, 680)  # a phone: its own narrow layout, a little less tall
+    assert liveview.tab_size(200, 5000) == (360, 1200)  # never smaller or taller than a page can use
+
+
 def test_picks_the_tab_at_the_url():
     pages = [{"type": "page", "url": "https://a.com/x?q=1", "webSocketDebuggerUrl": "ws://1", "id": "1"},
              {"type": "page", "url": "https://b.com/login", "webSocketDebuggerUrl": "ws://2", "id": "2"}]

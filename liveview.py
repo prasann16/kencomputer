@@ -136,6 +136,14 @@ def to_page(meta: dict, fx: float, fy: float) -> tuple[float, float]:
     return fx * meta.get("deviceWidth", 0) / scale, (fy * meta.get("deviceHeight", 0) - meta.get("offsetTop", 0)) / scale
 
 
+def tab_size(cw: int, ch: int) -> tuple[int, int]:
+    """The tab's size while a person watches (CSS pixels): the viewer's width, and tall enough for a whole picture
+    challenge with its Verify button, so nobody has to find it by scrolling (the picture is shrunk to fit their
+    screen instead). A phone gets its own narrow layout, a little less tall."""
+    w = min(max(cw, 360), 1440)
+    return w, min(max(ch, 800 if w >= 600 else 680), 1200)
+
+
 def pick_target(pages: list[dict], url: str) -> dict | None:
     """The browser tab the person should see: the one at `url` (exactly, then same address without the query, then
     same site), else the only tab there is."""
@@ -359,13 +367,15 @@ class LiveView:
                     if kind == "hello":
                         w, h = int(m.get("w") or 1280), int(m.get("h") or 800)
                         await send("Page.bringToFront")
-                        # The tab takes the viewer's shape, so a phone sees the site's own narrow layout at a
-                        # readable size (put back when the view ends). Same browser, so the site sees nothing new.
+                        # The tab takes the viewer's width (a phone sees the site's own narrow layout at a readable
+                        # size) and a tall height (tab_size); put back when the view ends. Same browser, so the site
+                        # sees nothing new.
                         cw, ch = int(m.get("cw") or 0), int(m.get("ch") or 0)
                         if cw and ch:
                             fitted.append(1)
+                            width, height = tab_size(cw, ch)
                             await send("Emulation.setDeviceMetricsOverride", {
-                                "width": min(max(cw, 360), 1440), "height": min(max(ch, 480), 1200), "deviceScaleFactor": 0, "mobile": False})
+                                "width": width, "height": height, "deviceScaleFactor": 0, "mobile": False})
                         await send("Page.startScreencast", {"format": "jpeg", "quality": 70,
                                                             "maxWidth": min(max(w, 320), 1920), "maxHeight": min(max(h, 320), 1920)})
                     elif kind == "mouse" and meta:
@@ -409,7 +419,10 @@ class LiveView:
             "themselves; the link is sent to their chat for you. Then call wait_for_human. The link works for 15 minutes and ends when they press Done. Never use "
             "it to get their password typed for you to read."),
          "inputSchema": {"type": "object", "properties": {
-             "reason": {"type": "string", "description": "What they should do, in a few plain words, shown above the page."},
+             "reason": {"type": "string", "description": (
+                 "What they should do, in a few plain words, shown above the page. Name the kind of step ('solve the "
+                 "picture check', 'sign in to Google'), not what's in it now ('select the buses'): a challenge "
+                 "changes while they look.")},
              "url": {"type": "string", "description": "The page that needs them (the tab already open there is used)."}},
              "required": ["reason"]}},
         {"name": "wait_for_human", "description": (

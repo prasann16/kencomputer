@@ -542,7 +542,8 @@ HEADLESS_BROWSER_PROMPT = (
 )
 LIVE_VIEW_PROMPT = (
     " When a page needs them (a captcha you can't get past, a sign-in, a code sent to their phone), call "
-    "request_human with what they should do: it gives a link that shows them that tab live, where they do the step "
+    "request_human with the kind of step they should do ('solve the picture check', not what the picture asks "
+    "for now, which changes): it gives a link that shows them that tab live, where they do the step "
     "themselves, from their computer or phone (the link is sent to them for you). Then call wait_for_human until it "
     "says done, and carry on in the same tab."
 )
@@ -2087,7 +2088,8 @@ def live_view_link(session, link: str) -> None:
     busy = [pid for pid in list(ENGINE.chats) if ENGINE.chat_busy(pid)]
     pid = busy[0] if len(busy) == 1 else HOME
     ENGINE.log_message(pid, "ken", f"🖐️ I need you for a moment: {session.reason}\n{link}\n"
-                       "It opens my browser live. Do the step there and press Done (works for 15 minutes).", via="background")
+                       "It opens my browser live. Do the step there and press Done (works for 15 minutes). "
+                       "Picture checks expire in about 2 minutes; if it says expired, I'll send a fresh one.", via="background")
 
 
 async def start_engine() -> WebApp | None:
