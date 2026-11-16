@@ -54,17 +54,17 @@ async def test_too_big_replies_at_once_with_a_link_and_keeps_what_they_asked(hos
     msg = Msg()
     assert await bot.too_big(msg, SimpleNamespace(file_size=180 * MB), "a video", "IMG_0042.MOV")
     [reply] = msg.replies
-    token = re.fullmatch(rf"That video is too big for Telegram to pass on\. Send it here: {SITE}/send/([0-9a-f]{{24}})", reply).group(1)
+    token = re.fullmatch(rf"Telegram can't pass on a video this big\. Send it to me here instead, at full quality: {SITE}/send/([0-9a-f]{{24}})", reply).group(1)
     w = bot.waiting_big_file(token)
     assert w | {"ts": 0, "last": 0} == {"chat_id": 777001, "message_id": 42, "caption": "make a reel of this", "kind": "a video",
                                         "name": "IMG_0042.MOV", "size": 180 * MB, "ts": 0, "last": 0, "replied": True, "reply_id": 901,
                                         "files": [{"kind": "a video", "name": "IMG_0042.MOV", "size": 180 * MB}]}
     other = Msg("", chat_id=555)
     assert await bot.too_big(other, SimpleNamespace(file_size=30 * MB), "a file", "notes.pdf")
-    assert other.replies[0].startswith("That file is too big for Telegram to pass on.")
+    assert other.replies[0].startswith("Telegram can't pass on a file this big.")
     later = Msg("", chat_id=556)
     assert await bot.too_big(later, SimpleNamespace(file_size=40 * MB), "a recording", "call.m4a")
-    assert later.replies[0].startswith("That recording is too big")
+    assert later.replies[0].startswith("Telegram can't pass on a recording this big")
 
 
 async def test_several_too_big_together_get_one_reply_that_grows(hosted, monkeypatch):
@@ -77,7 +77,7 @@ async def test_several_too_big_together_get_one_reply_that_grows(hosted, monkeyp
         more = Msg("", message_id=43 + i)
         assert await bot.too_big(more, SimpleNamespace(file_size=60 * MB), "a video", name)
         assert more.replies == []  # no second message
-    assert EDITS[-1] == (777001, 901, f"Those 3 videos are too big for Telegram to pass on. Send them all here: {SITE}/send/{token}")
+    assert EDITS[-1] == (777001, 901, f"Telegram can't pass on these 3 videos, they're too big. Send them all to me here instead: {SITE}/send/{token}")
     assert [f["name"] for f in bot.waiting_big_file(token)["files"]] == ["IMG_7613.MOV", "IMG_7663.MOV", "IMG_7664.MOV"]
     assert bot.waiting_big_file(token)["caption"] == "make a reel"
     now = bot.time.time()
@@ -96,12 +96,12 @@ async def test_small_files_go_through_and_ken_on_its_own_computer_says_what_it_a
                            "instead (iCloud, Google Drive or Dropbox), or drop it into the Ken app on your computer."]
 
 
-async def test_links_expire_after_a_day(hosted, monkeypatch):
+async def test_links_expire_after_three_days(hosted, monkeypatch):
     msg = Msg()
     await bot.too_big(msg, SimpleNamespace(file_size=50 * MB), "a video", "a.mp4")
     token = msg.replies[0].rsplit("/", 1)[1]
     now = bot.time.time()
-    monkeypatch.setattr(bot.time, "time", lambda: now + 86401)
+    monkeypatch.setattr(bot.time, "time", lambda: now + 3 * 86400 + 1)
     assert bot.waiting_big_file(token) is None and bot.take_big_file(token) is None
     assert bot.waiting_big_file("../../etc") is None
 
@@ -162,6 +162,43 @@ async def test_the_web_app_endpoints(engine, aiohttp_client, hosted):  # noqa: F
     assert (await client.post(f"/api/telegram-files/{'b' * 24}", json={"file": "IMG_0042.MOV"})).status == 404
 
 
+async def test_the_send_page_uploads_in_pieces_only_while_its_link_waits(engine, aiohttp_client, hosted):  # noqa: F811
+    """The page behind a send-it-here link has no sign-in: its link lets it add files for that request, nothing else."""
+    class FakePhone:
+        def waiting_file(self, token):
+            return {"kind": "", "name": "", "caption": "clips for the reel", "size": 0} if token == "a" * 24 else None
+
+    app, client = await signed_in(engine, aiohttp_client, phone=FakePhone())
+    base = f"/api/telegram-files/{'a' * 24}/uploads"
+    uid = (await (await client.post(base, json={"name": "clip.mov", "size": 10})).json())["id"]
+    assert (await (await client.put(f"{base}/{uid}?offset=0", data=b"01234")).json()) == {"received": 5}
+    assert (await (await client.put(f"{base}/{uid}?offset=5", data=b"56789")).json()) == {"received": 10}
+    saved = (await (await client.post(f"{base}/{uid}/done")).json())["saved"]
+    assert (engine.files_dir(HOME) / saved[0]).read_bytes() == b"0123456789"
+    # A link that isn't waiting (expired, used, or made up) can't start, add to or finish anything.
+    other = f"/api/telegram-files/{'b' * 24}/uploads"
+    assert (await client.post(other, json={"name": "x.mov", "size": 1})).status == 404
+    assert (await client.put(f"{other}/{uid}?offset=0", data=b"x")).status == 404
+    assert (await client.post(f"{other}/{uid}/done")).status == 404
+
+
+def test_files_are_explained_where_they_write_from_not_in_every_chat(monkeypatch):
+    """Telegram's limits ride with Telegram messages only; in the app, Ken knows attachments arrive whole."""
+    import engine as engine_mod
+    monkeypatch.setattr(engine_mod, "WHERE", dict(engine_mod.WHERE))
+    bot.where_notes_for_hosted()
+    assert "20 MB" in engine_mod.WHERE["telegram"] and "--upload-link" in engine_mod.WHERE["telegram"]
+    assert "20 MB" not in engine_mod.WHERE["app"] and "full quality" in engine_mod.WHERE["app"]
+    assert "20 MB" not in bot.SYSTEM_PROMPT and "upload-link" not in bot.build_system()
+
+
+def test_a_send_link_names_the_computer_so_the_site_can_open_it_without_a_sign_in(monkeypatch):
+    monkeypatch.setenv("AGENT37_INSTANCE_ID", "abc123xyz0")
+    assert bot.send_url(SITE, "f" * 24) == f"{SITE}/send/abc123xyz0/{'f' * 24}"
+    monkeypatch.setenv("AGENT37_INSTANCE_ID", "../x")
+    assert bot.send_url(SITE, "f" * 24) == f"{SITE}/send/{'f' * 24}"
+
+
 async def test_a_video_ken_shares_plays_in_the_chat_and_downloads_with_one_tap(engine, aiohttp_client, hosted):  # noqa: F811
     app, client = await signed_in(engine, aiohttp_client)
     reel = engine.home_cwd / "reel.mp4"
@@ -183,8 +220,8 @@ async def test_a_link_ken_never_sent_goes_out_when_it_starts_again(hosted):
         async def send_message(self, chat_id, text, **kw):
             sent.append((chat_id, text, kw["reply_parameters"].message_id))
     await bot.resend_big_file_links(Bot())
-    assert sent == [(777001, f"Sorry, I restarted before I could answer. That video is too big for Telegram to pass on. "
-                             f"Send it here: {SITE}/send/{token}", 343)]
+    assert sent == [(777001, f"Sorry, I restarted before I could answer. Telegram can't pass on a video this big. "
+                             f"Send it to me here instead, at full quality: {SITE}/send/{token}", 343)]
     await bot.resend_big_file_links(Bot())
     assert len(sent) == 1  # once
     assert bot.waiting_big_file(token)["caption"] == "edit this for my insta"  # still waiting for the file
@@ -380,4 +417,3 @@ async def test_ken_makes_a_link_itself_when_it_needs_a_file_at_full_quality(monk
     off = subprocess.run([sys.executable, str(Path(bot.__file__)), "--upload-link"], env={**env, "KEN_KEEPALIVE_URL": ""},
                          capture_output=True, text=True, timeout=60)
     assert off.returncode == 1 and "ask them where the file is" in off.stdout
-    assert "--upload-link" in bot.HOSTED_FILES_PROMPT and "Never ask them to resend it as a file" in bot.HOSTED_FILES_PROMPT

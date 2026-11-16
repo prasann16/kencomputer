@@ -40,7 +40,8 @@ if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a f
     _waiting[_token] = {"chat_id": None, "message_id": None, "caption": " ".join(sys.argv[2:])[:300], "files": [], "kind": "",
                         "name": "", "size": 0, "asked": True, "replied": True, "ts": _time.time()}
     _file.write_text(_json.dumps(_waiting))
-    print(f"{_site}/send/{_token}")
+    _inst = _os.environ.get("AGENT37_INSTANCE_ID", "")
+    print(f"{_site}/send/{_inst}/{_token}" if _inst.isalnum() else f"{_site}/send/{_token}")
     raise SystemExit(0)
 
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
@@ -178,13 +179,16 @@ APPS_PROMPT = (
     "toward their plan's monthly app actions, so don't loop over hundreds of items without asking. " + MULTI_ACCOUNT
 )
 
-# Hosted Ken on Telegram: photos and videos arrive shrunk, so a file that has to be full quality comes through a link.
-HOSTED_FILES_PROMPT = (
-    "FILES FROM THEIR PHONE: Telegram shrinks the photos and videos they send, and it can't pass on anything over "
-    "20 MB. When you need a file at full quality (a video to edit, a photo to print), or it's too big, run "
-    f"`{KEN_CMD} --upload-link \"<what you need, in a few words>\"` and give them the link it prints: they choose the "
-    "file there and you carry on with it when it arrives. Never ask them to resend it as a file or through another app."
-)
+# Hosted Ken: what each place they write from does with files, said with each message (engine.WHERE), not in the
+# instructions every chat shares, so Telegram's limits never come up when they're in the app.
+def where_notes_for_hosted() -> None:
+    import engine as _engine
+    _engine.WHERE["telegram"] = (
+        "written on their phone (Telegram). Telegram shrinks the photos and videos it passes on, and can't pass on "
+        f"anything over 20 MB; `{KEN_CMD} --upload-link \"<what you need, in a few words>\"` prints a page where they "
+        "send files at full quality, any size")
+    _engine.WHERE["app"] = "written in the Ken app (their phone or the web), where files they attach arrive at full quality, any size"
+
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
 HOSTED_APPS_PROMPT = (
@@ -903,8 +907,6 @@ def build_system() -> str:
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
-        if host_site():
-            system += "\n\n" + HOSTED_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
@@ -1301,7 +1303,14 @@ TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 10
 # with (<site>/send/<token>; the web app takes big files in pieces). What they asked waits here for a day, and Ken
 # carries on with it, answering in Telegram, once the file arrives (Phone.file_arrived).
 BIG_FILES = KEN_HOME / "telegram-big-files.json"
-BIG_FILE_TTL = 86400
+BIG_FILE_TTL = 3 * 86400
+
+
+def send_url(site: str, token: str) -> str:
+    """The send-it-here page for a link: with this computer's name in it, the site opens it without a sign-in
+    (the link alone lets them add files for that one request, nothing more)."""
+    inst = os.environ.get("AGENT37_INSTANCE_ID", "")
+    return f"{site}/send/{inst}/{token}" if inst.isalnum() else f"{site}/send/{token}"
 
 
 def host_site() -> str:
@@ -1351,9 +1360,9 @@ def _too_big_text(files: list[dict], link: str) -> str:
     """One reply for everything too big that came together: "That video..." or "Those 6 videos...". """
     nouns = {_noun(f.get("kind", "")) for f in files}
     if len(files) == 1:
-        return f"That {nouns.pop()} is too big for Telegram to pass on. Send it here: {link}"
+        return f"Telegram can't pass on a {nouns.pop()} this big. Send it to me here instead, at full quality: {link}"
     noun = nouns.pop() if len(nouns) == 1 else "file"
-    return f"Those {len(files)} {noun}s are too big for Telegram to pass on. Send them all here: {link}"
+    return f"Telegram can't pass on these {len(files)} {noun}s, they're too big. Send them all to me here instead: {link}"
 
 
 BIG_FILE_GROUP_S = 120  # files too big for Telegram sent within this long of each other share one link and one reply
@@ -1377,7 +1386,7 @@ async def resend_big_file_links(bot) -> None:
             continue
         try:
             await bot.send_message(
-                w["chat_id"], "Sorry, I restarted before I could answer. " + _too_big_text(_files_of(w), f"{site}/send/{token}"),
+                w["chat_id"], "Sorry, I restarted before I could answer. " + _too_big_text(_files_of(w), send_url(site, token)),
                 reply_parameters=ReplyParameters(message_id=w["message_id"], allow_sending_without_reply=True))
             _replied(token)
         except TelegramError as e:
@@ -1407,14 +1416,14 @@ async def too_big(msg, item, kind: str, name: str) -> bool:
                 w["last"], w["caption"] = now, w.get("caption") or caption
                 _save_big_files(waiting)
                 try:
-                    await msg.get_bot().edit_message_text(_too_big_text(w["files"], f"{site}/send/{token}"),
+                    await msg.get_bot().edit_message_text(_too_big_text(w["files"], send_url(site, token)),
                                                           chat_id=msg.chat_id, message_id=w["reply_id"])
                 except Exception as e:  # the reply still says to send them there; the page lists them all
                     log.warning("couldn't update the too-big reply: %s", e)
                 return True
             token = wait_for_big_file(chat_id=msg.chat_id, message_id=msg.message_id, caption=caption, files=[file],
                                       kind=kind, name=name, size=item.file_size, last=now)
-            reply = await msg.reply_text(_too_big_text([file], f"{site}/send/{token}"))
+            reply = await msg.reply_text(_too_big_text([file], send_url(site, token)))
             waiting = _big_files()
             if token in waiting:
                 waiting[token].update(replied=True, reply_id=getattr(reply, "message_id", None))
@@ -3056,6 +3065,8 @@ def main() -> None:
     runtimes.setup()
     ensure_setup_file()
     ENGINE.other_skills = OTHER_SKILLS
+    if host_site():
+        where_notes_for_hosted()
     skills = prepare_skills(KEN_HOME, SOURCE / "skills", OTHER_SKILLS)
     if skills:
         BRAINS["claude"].plugins = [{"type": "local", "path": str(skills)}]

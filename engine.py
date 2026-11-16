@@ -1262,7 +1262,7 @@ class Engine:
         """A one-line snapshot sent with each message so replies can be specific."""
         parts = [time.strftime("%a %d %b %H:%M")]
         if via in WHERE:
-            parts.append(WHERE[via])
+            parts.append(WHERE[via])  # bot.py says more for a Ken in the cloud (where_notes_for_hosted)
         jobs = self.list_runs(project=pid, active=True) if pid == HOME else []
         if pid == HOME:  # stopped by them or by a restart: Ken hears it once, so it never says one is still going
             seen = float(self.kv_get("jobs:seen") or 0)
