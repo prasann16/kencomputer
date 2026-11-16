@@ -193,16 +193,17 @@ HOSTED_FILES_PROMPT = (
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
 # Hosted Ken: an edited video is kept in their Google Drive, not on the computer (drive_store.py).
 HOSTED_VIDEO_DRIVE_PROMPT = (
-    f"VIDEOS IN THEIR DRIVE OR ON THEIR COMPUTER: before any video edit (a reel, captions, a cut), run `{KEN_CMD} "
-    "--video-drive check`. If it says neither Drive nor their computer is ready, reply in one line with the link it "
-    "prints (why: the finished video is kept with them, not on this computer) and stop; start the edit when you're "
-    "told it's connected. When the reel is done and you've watched it: if it's under 45 MB, copy it to the outbox "
-    f"first; then run `{KEN_CMD} --video-drive save <project folder>`. It offers the files on Ken's page when that's "
-    "open on their computer (they tap Save; each is deleted here once their computer's copy matches), else puts them "
-    "in their Drive, checked, and deletes them here. Pass --to=computer or --to=drive if they said where. Tell them "
-    "what it prints (the Drive link, or to tap Save). For a change to a saved video, run "
-    f"`{KEN_CMD} --video-drive fetch <project folder>` first (Drive), or ask them to send the original again (their "
-    "computer). Never delete a video it says wasn't saved."
+    "VIDEOS IN THEIR DRIVE OR ON THEIR COMPUTER (this comes first, over the VIDEO steps above): any video you make or "
+    "change for them counts, a reel and also a quick ffmpeg trim, cut, crop or title. Before you start it, run "
+    f"`{KEN_CMD} --video-drive check`. If it says neither Drive nor their computer is ready, reply in one line with "
+    "the link it prints (why: the finished video is kept with them, not on this computer) and stop; start the edit "
+    "when you're told it's connected. When the video is done and you've watched it: if it's under 45 MB, copy it to "
+    f"the outbox first; then run `{KEN_CMD} --video-drive save <the video file, or a reel's project folder>`. It "
+    "offers it on Ken's page when that's open on their computer (they tap Save; it's deleted here once their "
+    "computer's copy matches), else puts it in their Drive, checked, and deletes it here. Pass --to=computer or "
+    "--to=drive if they said where. Tell them what it prints (the Drive link, or to tap Save), not a path here. For a "
+    f"change to a saved reel, run `{KEN_CMD} --video-drive fetch <project folder>` first (Drive), or ask them to send "
+    "the original again (their computer). Never delete a video it says wasn't saved."
 )
 
 HOSTED_APPS_PROMPT = (
@@ -924,10 +925,10 @@ def build_system() -> str:
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
         if host_site():
             system += "\n\n" + HOSTED_FILES_PROMPT
-            if video_prompt() and drive_store.enabled():
-                system += "\n\n" + HOSTED_VIDEO_DRIVE_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
+        if apps_mcp() and host_site() and drive_store.enabled():
+            system += "\n\n" + HOSTED_VIDEO_DRIVE_PROMPT  # after the VIDEO steps, so it's the last word on where it goes
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
@@ -2094,6 +2095,15 @@ async def brain_connected(backend=None) -> None:
     await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
+def video_storage_check(pid: str, said: list[str]) -> str | None:
+    """Hosted Ken with KEN_VIDEO_DRIVE=1: a finished video the reply left on this computer gets kept with them (in
+    their Drive or on their computer), whatever made it (a reel render or a quick ffmpeg trim). drive_store.after_turn."""
+    import drive_store
+    if not drive_store.enabled():
+        return None
+    return drive_store.after_turn(said, KEN_CMD, skip=list(ENGINE.agents_dir.glob("*/files")))
+
+
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
@@ -2108,6 +2118,7 @@ async def start_engine() -> WebApp | None:
             BORN_FLAG.touch(exist_ok=True)  # Ken's first real reply (in the app or Telegram) is its birth
 
     ENGINE.history_hook = on_home_message
+    ENGINE.after_turn = video_storage_check
     ENGINE.new_install = lambda: not BORN_FLAG.exists()
     old = load_sessions().get(str(ALLOWED_USER_ID))
     if old and not ENGINE.kv_get(f"session:{HOME}"):

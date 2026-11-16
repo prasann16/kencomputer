@@ -18,6 +18,10 @@ HTTPS, saves it where they pick (Downloads to start), reads it back and sends it
 MD5), and only a match deletes the copy here. Nothing on their computer listens or opens a port; the page asks, the
 host passes it on. Phones and Telegram get Drive. Neither there: the files stay here and Ken says so.
 
+Not only reels: any finished video Ken gives them (a quick ffmpeg trim, a title, a cut) is kept the same way. `save
+<file>` takes one video file, and after every reply Ken's own check (after_turn) finds a finished video still only
+here (in the outbox, or named in the reply) and has Ken run the save, so it doesn't hang on the model remembering.
+
 Off unless KEN_VIDEO_DRIVE=1 (set per computer by the host): without it there is no prompt block, no save bar and no
 routes, and video edits work exactly as before.
 
@@ -29,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -49,6 +54,11 @@ MIME = {".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/x-m4v", "
 def enabled() -> bool:
     """The rollout switch: KEN_VIDEO_DRIVE=1 turns all of this on for this computer. Off by default."""
     return os.environ.get("KEN_VIDEO_DRIVE") == "1"
+
+
+def active() -> bool:
+    """Switched on, and Ken in the cloud with the apps tools (or a pretend Drive): where saving can work at all."""
+    return enabled() and bool(_fake_dir() or (apps.hosted() and apps.mcp_ready()))
 
 
 def home() -> Path:
@@ -267,17 +277,52 @@ def _source(folder: Path) -> Path | None:
     return found[0] if found else None
 
 
-def save(folder: Path, with_source: bool = True, account: str = "", say=print) -> int:
-    """reel.mp4 and the original into their Drive, each checked, then deleted here. cut.mp4 (the cut before graphics)
-    goes too once both are safe: it's made again from the original and props.json's cuts."""
-    reel = folder / "reel.mp4"
-    todo = [("reel", reel)] if reel.is_file() else []
-    src = _source(folder) if with_source else None
+def _todo(target: Path, with_source: bool = True) -> list[tuple[str, Path]]:
+    """What to keep: one finished video file as it is, or a reel project's reel.mp4 and its original."""
+    if target.is_file():
+        return [("video", target)] if target.suffix.lower() in MIME else []
+    todo = [("reel", target / "reel.mp4")] if (target / "reel.mp4").is_file() else []
+    src = _source(target) if with_source else None
     if src:
         todo.append(("source", src))
+    return todo
+
+
+def _folder(target: Path) -> Path:
+    return target.parent if target.is_file() else target
+
+
+def _nothing(target: Path) -> str:
+    return f"Nothing to save: {target} isn't a video." if target.is_file() else f"Nothing to save: no reel.mp4 or video file at {target}."
+
+
+def phone_connected() -> bool:
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+
+
+def _drop_outbox_copies(saved: dict) -> None:
+    """A copy put in the outbox for their phone: Telegram's delivery deletes it. With no phone connected nothing ever
+    would, so once the video is safely kept, its byte-identical outbox copy goes too."""
+    if phone_connected():
+        return
+    for p in (home() / "outbox").glob("*"):
+        try:
+            if p.is_file() and p.suffix.lower() in MIME and p.stat().st_size == saved["size"] and md5(p) == saved["md5"]:
+                p.unlink()
+        except OSError:
+            pass
+
+
+def save(target: Path, with_source: bool = True, account: str = "", say=print) -> int:
+    """A video file, or a reel project's reel.mp4 and the original, into their Drive, each checked, then deleted here.
+    cut.mp4 (the cut before graphics) goes too once both are safe: it's made again from the original and props.json's
+    cuts."""
+    todo = _todo(target, with_source)
     if not todo:
-        say(f"Nothing to save: no reel.mp4 in {folder}.")
+        say(_nothing(target))
         return 1
+    folder = _folder(target)
+    src = next((p for k, p in todo if k == "source"), None)
     parent = folder_id(account)
     for kind, path in todo:
         try:
@@ -287,9 +332,13 @@ def save(folder: Path, with_source: bool = True, account: str = "", say=print) -
             return 1
         _record(folder, kind, saved)
         path.unlink()
+        _drop_outbox_copies(saved)
         say(f"{kind}: saved to their Drive (\"{FOLDER}\" folder), checked byte for byte, deleted here. Link: {saved['link']}")
     if src and (folder / "cut.mp4").is_file():
         (folder / "cut.mp4").unlink()
+    if target.is_file():
+        say("Give them the link (not the file).")
+        return 0
     say("Give them the reel's link (not the file). props.json and the transcript stay here, so a change is quick: "
         f"`ken --video-drive fetch {folder}` brings the original back, then --video-cut with props.json's cuts and render.")
     return 0
@@ -318,23 +367,25 @@ def computer_open() -> int:
         return 0
 
 
-def offer(folder: Path, with_source: bool = True, now: float | None = None) -> list[dict]:
-    """A one-file link for the reel (and the original) that Ken's page on their computer can pull, each with the size
-    and SHA-256 the saved copy has to match."""
-    files = [("reel", folder / "reel.mp4")] if (folder / "reel.mp4").is_file() else []
-    src = _source(folder) if with_source else None
-    if src:
-        files.append(("source", src))
+def offer(target: Path, with_source: bool = True, now: float | None = None) -> list[dict]:
+    """A one-file link for the video (a reel and its original) that Ken's page on their computer can pull, each with
+    the size and SHA-256 the saved copy has to match."""
+    files = _todo(target, with_source)
+    paths = {p.resolve() for _, p in files}
     links = _links()
-    stale = [t for t, v in links.items() if v.get("pickup") and Path(v["path"]).parent == folder.resolve()]
+    stale = [t for t, v in links.items() if v.get("pickup") and Path(v["path"]) in paths]
     if stale:  # offered again: the new links replace the old ones
         _save_links({t: v for t, v in links.items() if t not in stale})
     out = []
     for kind, path in files:
         info = {"pickup": kind, "name": path.name, "size": path.stat().st_size, "sha256": sha256(path), "md5": md5(path),
-                "label": folder.name}
+                "label": _label(target)}
         out.append({"token": open_link(path, now, **info), **info})
     return out
+
+
+def _label(target: Path) -> str:
+    return target.stem if target.is_file() else target.name
 
 
 def pickups(now: float | None = None) -> list[dict]:
@@ -363,6 +414,7 @@ def picked_up(token: str, size, digest: str, how: str = "disk", where: str = "",
     _record(folder, hit["pickup"], saved)
     path.unlink()
     close_link(token)
+    _drop_outbox_copies(saved)
     note = json.loads((folder / "drive.json").read_text())
     if note.get("source", {}).get("where") == "computer" and (folder / "cut.mp4").is_file() and not any(
             v.get("pickup") and Path(v["path"]).parent == folder for v in _links().values()):
@@ -370,24 +422,25 @@ def picked_up(token: str, size, digest: str, how: str = "disk", where: str = "",
     return {"ok": True, "kind": hit["pickup"], "name": hit["name"]}
 
 
-def save_to_computer(folder: Path, with_source: bool = True, say=print) -> int:
-    offered = offer(folder, with_source)
+def save_to_computer(target: Path, with_source: bool = True, say=print) -> int:
+    offered = offer(target, with_source)
     if not offered:
-        say(f"Nothing to save: no reel.mp4 in {folder}.")
+        say(_nothing(target))
         return 1
     try:
-        _web("/api/pickups/announce", {"label": folder.name})
+        _web("/api/pickups/announce", {"label": _label(target)})
     except Exception:  # noqa: BLE001 - an open page also finds it when it next loads
         pass
     names = ", ".join(f"{o['name']} ({o['size'] / 1e6:.0f} MB)" for o in offered)
     say(f"Offered on Ken's page on their computer: {names}. They tap Save there; each file is deleted here only once their "
         "computer has it and its size and SHA-256 match. Tell them in one line to tap Save on Ken's page on their computer. "
         f"The links close in {LINK_TTL_S // 60} minutes; anything not saved by then stays here "
-        f"(`ken --video-drive status {folder}` shows what's left; then offer Drive with `save {folder} --to=drive`).")
+        f"(`ken --video-drive status {target}` shows what's left; then offer Drive with `save {target} --to=drive`).")
     return 0
 
 
-def status(folder: Path, say=print) -> int:
+def status(target: Path, say=print) -> int:
+    folder = target.parent if target.suffix.lower() in MIME else target
     try:
         note = json.loads((folder / "drive.json").read_text())
     except (OSError, ValueError):
@@ -395,10 +448,10 @@ def status(folder: Path, say=print) -> int:
     for kind, v in note.items():
         place = "their computer" if v.get("where") == "computer" else "their Drive " + v.get("link", "")
         say(f"{kind}: {v.get('name')} saved to {place}, checked, deleted here.")
-    waiting = [p for p in pickups() if p["label"] == folder.name]
+    waiting = [p for p in pickups() if p["label"] == _label(target)]
     for p in waiting:
         say(f"{p['kind']}: {p['name']} waiting for them to tap Save on their computer.")
-    left = [p.name for p in (folder / "reel.mp4", _source(folder) or folder / "-") if p.is_file()]
+    left = [p.name for _, p in _todo(target) if p.is_file()]
     if left and not waiting:
         say(f"Still only here: {', '.join(left)}.")
     return 0
@@ -432,18 +485,18 @@ def fetch(folder: Path, account: str = "", say=print) -> int:
     return 0
 
 
-def save_where(folder: Path, to: str = "auto", with_source: bool = True, account: str = "", say=print) -> int:
+def save_where(target: Path, to: str = "auto", with_source: bool = True, account: str = "", say=print) -> int:
     """--to=computer, --to=drive, or auto: their computer when Ken's page is open on one, else Drive, else keep it."""
     if to != "drive":
         if computer_open():
-            return save_to_computer(folder, with_source, say)
+            return save_to_computer(target, with_source, say)
         if to == "computer":
             say("Ken's page isn't open on their computer right now, so trying their Drive instead.")
     c = connected()
     if c["ok"]:
-        return save(folder, with_source, account, say)
+        return save(target, with_source, account, say)
     say("Neither place is ready: Ken's page isn't open on a computer and Google Drive isn't connected, so the video stays "
-        f"here at {folder}. Tell them plainly, and that they can open Ken on their computer and tap Save, or connect "
+        f"here at {target}. Tell them plainly, and that they can open Ken on their computer and tap Save, or connect "
         f"Drive with this link: {c.get('connect_url', '')}")
     return 1
 
@@ -482,10 +535,80 @@ def main(argv: list[str]) -> int:
     except Exception as exc:  # noqa: BLE001 - one plain line; Ken tells them
         print(f"Couldn't reach their Drive just now ({str(exc)[:200]}). Keep the video here and tell them plainly.")
         return 1
-    print("Usage: ken --video-drive check | save <folder> [--to=auto|computer|drive] [--reel-only] [--account=<id>] | "
+    print("Usage: ken --video-drive check | save <file or folder> [--to=auto|computer|drive] [--reel-only] [--account=<id>] | "
           "status <folder> | fetch <folder>")
     return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+
+# ------------------------------------------------------------------ Ken's own check after each reply
+
+MIN_BYTES = 3 * 1024 * 1024  # a finished video, not a thumbnail loop or a test clip
+_PATH = re.compile(r"(?:~|/)[^\s<>()`'\"*\[\]]*/[^\s<>()`'\"*\[\]]+\.(?:mp4|mov|m4v|webm|mkv)(?![\w/])", re.I)
+_nudged: set[tuple] = set()
+
+
+def _key(path: Path) -> tuple:
+    st = path.stat()
+    return (str(path.resolve()), st.st_size, st.st_mtime_ns)
+
+
+def unsaved(said: list[str], skip: list[Path] = ()) -> list[list[Path]]:
+    """Finished videos Ken gave them in this reply that are still only on this computer: video files in the outbox and
+    video paths named in the reply, over MIN_BYTES. Not what they sent (the inbox, an agent's files/), not a reel's
+    working files (source.*, cut.*), not one already waiting on their computer's Save, and not one already flagged.
+    Copies of the same video count once: each comes back as [the copy to keep, its other copies], the one to keep
+    outside the outbox when there is one, since Telegram's delivery deletes the outbox copy."""
+    out = home() / "outbox"
+    found = [p for p in out.glob("*") if p.suffix.lower() in MIME] if out.is_dir() else []
+    for text in said:
+        found += [Path(os.path.expanduser(m.group(0))) for m in _PATH.finditer(text or "")]
+    skip = [p.resolve() for p in [home() / "inbox", *skip]]
+    waiting = {Path(v["path"]) for v in _links().values() if v.get("pickup")}
+    picked: dict[tuple, list[Path]] = {}
+    for p in found:
+        try:
+            if not p.is_file() or p.stat().st_size < MIN_BYTES or p.stem in ("source", "cut"):
+                continue
+            r = p.resolve()
+            if any(r.is_relative_to(d) for d in skip) or r in waiting or _key(p) in _nudged:
+                continue
+            same = (r.stat().st_size, md5(r))
+        except OSError:
+            continue
+        copies = picked.setdefault(same, [])
+        if r in copies:
+            continue
+        copies.insert(0 if r.parent != out.resolve() else len(copies), r)
+    return list(picked.values())
+
+
+def after_turn(said: list[str], ken_cmd: str = "ken", skip: list[Path] = ()) -> str | None:
+    """The note that has Ken keep a finished video with them when the reply left it here, or None. Each video is
+    flagged once: if it can't be kept (nothing connected), Ken says so then and isn't asked again."""
+    if not active():
+        return None
+    targets = []
+    for p, *others in unsaved(said, skip):
+        _nudged.update(_key(c) for c in (p, *others))
+        if p.parent == (home() / "outbox").resolve():  # only in the outbox: a copy of its own to keep, out of Telegram's way
+            keep = home() / "work" / "videos" / p.stem / p.name
+            keep.parent.mkdir(parents=True, exist_ok=True)
+            if not keep.exists():
+                try:
+                    os.link(p, keep)
+                except OSError:
+                    shutil.copy2(p, keep)
+            _nudged.add(_key(keep))
+            p = keep
+        targets.append(p.parent if p.name == "reel.mp4" else p)
+    if not targets:
+        return None
+    runs = " and ".join(f"`{ken_cmd} --video-drive save {t}`" for t in targets)
+    names = ", ".join(t.name for t in targets)
+    return (f"(Ken's own check after your reply: the video you made for them ({names}) is still only on this computer. "
+            f"Keep it with them now: run {runs}, then tell them in one short line what it printed (the Drive link, to "
+            "tap Save on Ken's page, or the link to connect Drive). Don't redo the edit or send the file again.)")

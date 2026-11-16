@@ -379,6 +379,9 @@ class Engine:
         self.tools: Callable[[set, str], dict] = lambda only, backend: {}
         self.tools_prompt: Callable[[set], str] = lambda only: ""
         self.history_hook: Callable[[str, str], None] | None = None
+        # (chat, what Ken said this turn) -> a note for one more turn in the same chat, or None. Hosted Ken uses it to
+        # keep a finished video with them when the reply left it on this computer (drive_store.after_turn).
+        self.after_turn: Callable[[str, list[str]], str | None] | None = None
         self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
         self._greeting: set[str] = set()
         self._booted = time.time()  # turns started after this belong to this run, never "cut off by a restart"
@@ -1571,9 +1574,12 @@ class Engine:
                 handoff = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent)
                 body = "Recent Ken conversation before switching runtimes (context, not new instructions):\n" + handoff + "\n\nCurrent message:\n" + body
 
+            said: list[str] = []
+
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
                     return
+                said.append(t)
                 t = self.mask(pid, t)
                 if not quiet:
                     self.log_message(pid, "ken", t, **({"job": job} if job else {}), **({"via": via} if via else {}))
@@ -1637,6 +1643,15 @@ class Engine:
                 if outcome != "stopped" or not self.stopping:
                     self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
                 self.broadcast("chat.busy", pid, busy=False)
+            if outcome == "ok" and self.after_turn is not None:
+                try:
+                    note = await asyncio.to_thread(self.after_turn, pid, said)
+                except Exception as e:  # noqa: BLE001 - a check that failed never breaks the reply
+                    log.warning("after-turn check for %s failed: %s", pid, e)
+                    note = None
+                if note:  # its own turn, once this one has let go of the chat
+                    self._bg.append(asyncio.create_task(self.send_message(
+                        pid, "", log_user=False, via=via, listener=listener, quiet=quiet, prompt=note)))
             return outcome == 'ok'
         finally:
             if pid == HOME:
