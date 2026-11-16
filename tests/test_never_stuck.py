@@ -120,8 +120,8 @@ def test_one_plain_sentence_and_one_button_for_every_failure(monkeypatch):
     assert explain_failure(AIUnavailable(401, "authentication_failed"), "claude") == ("Your Claude connection stopped working.", "reconnect")
     assert explain_failure(RuntimeError("Not logged in · Please run /login"), "claude") == ("Your Claude connection stopped working.", "reconnect")
     assert explain_failure(AIUnavailable(401, "401 Unauthorized"), "codex") == ("Your ChatGPT connection stopped working.", "reconnect")
-    assert explain_failure(AIUnavailable(529, "overloaded"), "claude") == ("Claude isn't answering just now.", "retry")
-    assert explain_failure(AIUnavailable(None, "unknown"), "codex") == ("ChatGPT isn't answering just now.", "retry")
+    assert explain_failure(AIUnavailable(529, "overloaded"), "claude") == ("Claude is overloaded right now. Try again in a minute.", "retry")
+    assert explain_failure(AIUnavailable(None, "unknown"), "codex") == ("Ken couldn't reach ChatGPT, probably a network problem. Try again in a minute.", "retry")
     assert explain_failure(AIUnavailable(429, "rate_limit"), "claude") == ("You've reached your Claude plan's limit for now.", "retry")
     assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("Your Claude account is out of credit.", "reconnect")
     assert explain_failure(NoAnswer(), "claude") == ("Claude didn't answer, so I stopped waiting.", "retry")
@@ -135,6 +135,77 @@ def test_included_ai_failures_never_blame_the_person(monkeypatch):
         assert explain_failure(e, "claude") == ("Ken couldn't reach its AI just now.", "retry")
     assert explain_failure(AIUnavailable(402, "billing_error"), "claude") == ("You've used your Ken AI credits.", "credits")
     assert explain_failure(RuntimeError("API Error: 402 Out of included AI"), "claude")[1] == "credits"
+
+
+# Why a reply failed, from what Claude Code, Codex and the services really say: one message per kind of failure.
+LIMIT = "You've reached your {} plan's limit for now."
+BUSY = "{} is overloaded right now. Try again in a minute."
+DOWN = "{} is having trouble on its side right now. Try again in a few minutes."
+OFFLINE = "Ken couldn't reach {}, probably a network problem. Try again in a minute."
+SIGNED_OUT = "Your {} connection stopped working."
+CLASSIFIED = [
+    # used up the plan: when it opens again, if they said
+    (RuntimeError("You've hit your session limit · resets 4pm (Asia/Calcutta)"), "claude", LIMIT + " It resets 4pm.", "retry"),
+    (RuntimeError("You've hit your weekly limit · resets Nov 18, 9am (Asia/Calcutta)"), "claude", LIMIT + " It resets Nov 18, 9am.", "retry"),
+    (RuntimeError("You've reached your Opus limit · resets 11pm"), "claude", LIMIT + " It resets 11pm.", "retry"),
+    (RuntimeError("You're out of extra usage · resets 4pm"), "claude", LIMIT + " It resets 4pm.", "retry"),
+    (RuntimeError("Your org is out of usage · add funds to continue"), "claude", LIMIT, "retry"),
+    (RuntimeError("5-hour limit reached ∙ resets 3pm"), "claude", LIMIT + " It resets 3pm.", "retry"),
+    (AIUnavailable(429, "rate_limit_error"), "claude", LIMIT, "retry"),
+    (AIUnavailable(429, "You've hit your usage limit. Upgrade to Pro or try again at 4:05 PM."), "codex", LIMIT + " It resets 4:05 PM.", "retry"),
+    # busy for everyone: not their limit
+    (RuntimeError("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited"), "claude", BUSY, "retry"),
+    (RuntimeError("API Error: Repeated 529 Overloaded errors."), "claude", BUSY, "retry"),
+    (RuntimeError("Opus is experiencing high load. Switch to Sonnet."), "claude", BUSY, "retry"),
+    (AIUnavailable(529, ""), "codex", BUSY, "retry"),
+    # down on their side
+    (RuntimeError('API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}'), "claude", DOWN, "retry"),
+    (AIUnavailable(503, "Service Unavailable"), "codex", DOWN, "retry"),
+    # can't reach it
+    (RuntimeError("API Error: Connection error."), "claude", OFFLINE, "retry"),
+    (RuntimeError("API Error: Request timed out."), "claude", OFFLINE, "retry"),
+    (RuntimeError("stream disconnected before completion: error sending request"), "codex", OFFLINE, "retry"),
+    (AIUnavailable(None, ""), "claude", OFFLINE, "retry"),
+    # signed out: sign in again
+    (RuntimeError("Not logged in · Please run /login"), "claude", SIGNED_OUT, "reconnect"),
+    (RuntimeError('API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}'), "claude", SIGNED_OUT, "reconnect"),
+    (AIUnavailable(401, "unauthorized"), "codex", SIGNED_OUT, "reconnect"),
+]
+
+
+@pytest.mark.parametrize("error,brain,said,action", CLASSIFIED)
+def test_each_kind_of_failure_says_what_happened(monkeypatch, error, brain, said, action):
+    included(monkeypatch, False)
+    assert explain_failure(error, brain) == (said.format("ChatGPT" if brain == "codex" else "Claude"), action)
+
+
+def test_the_reset_time_from_claude_codes_old_wording(monkeypatch):
+    import usage
+    included(monkeypatch, False)
+    text, _ = explain_failure(RuntimeError("Claude AI usage limit reached|1793750400"), "claude")
+    assert text == f"You've reached your Claude plan's limit for now. It resets at {usage.when(1793750400)}."
+
+
+def test_the_other_ai_is_offered_only_when_connected():
+    from engine import switch_hint
+    assert switch_hint("claude", ["claude", "codex"]) == " Or switch to ChatGPT in the model menu."
+    assert switch_hint("codex", ["claude", "codex"]) == " Or switch to Claude in the model menu."
+    assert switch_hint("claude", ["claude"]) == ""
+
+
+async def test_a_used_up_plan_says_when_it_resets_and_offers_the_other_ai(flaky):
+    async def limited(self, prompt, on_text, on_tool=None, on_delta=None):
+        raise RuntimeError("You've hit your session limit · resets 4pm (Asia/Calcutta)")
+
+    flaky.signed_in = lambda: ["claude", "codex"]
+    FailingSession.ask, before = limited, FailingSession.ask
+    try:
+        assert not await flaky.send_message(HOME, "hi")
+    finally:
+        FailingSession.ask = before
+    failed = flaky.messages(HOME)[-1]
+    assert failed["text"] == "You've reached your Claude plan's limit for now. It resets 4pm. Or switch to ChatGPT in the model menu."
+    assert failed["action"] == "retry"
 
 
 # What Claude Code, the SDKs and the services really say when things fail: none of it may reach a person.
@@ -233,7 +304,7 @@ async def test_a_failed_reply_says_so_and_try_again_asks_the_same_thing(flaky, t
     assert not await flaky.send_message(HOME, "what's 17 x 23?", log_user=False)
     failed = flaky.messages(HOME)[-1]
     assert failed["role"] == "ken" and failed["error"] and failed["action"] == "retry"
-    assert failed["text"] == "Claude isn't answering just now."
+    assert failed["text"] == "Claude is overloaded right now. Try again in a minute."
 
     app = WebApp(flaky, tmp_path, rev="abc")
     app._brain_connected = lambda pid: True

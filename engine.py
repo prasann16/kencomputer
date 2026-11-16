@@ -88,6 +88,14 @@ class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
 
 
+# How Claude Code and Codex say the plan is used up for now (Claude Code: "You've hit your session limit · resets 4pm",
+# "You've reached your Opus limit", "You're out of extra usage", "Claude AI usage limit reached|<when>").
+LIMIT_WORDS = ("usage limit", "rate limit", "rate_limit", "hit your", "reached your", "out of usage", "out of extra usage",
+               "limit reached", "usagelimitexceeded", "ratelimitexceeded")
+BUSY_WORDS = ("overloaded", "high load", "not your usage limit", "temporarily limiting", "at capacity", "serveroverloaded")
+NETWORK_WORDS = ("connection error", "connection refused", "connection reset", "no connection", "network", "timed out",
+                 "timeout", "stream disconnected", "enotfound", "econnreset", "econnrefused", "getaddrinfo", "fetch failed",
+                 "httpconnectionfailed")
 # Words from Claude Code, the SDKs and the AI services that must never reach a person as they are.
 AI_WORDS = ("api", "login", "auth", "unauthorized", "forbidden", "overloaded", "rate limit", "usage limit", "billing",
             "credit", "anthropic", "openai", "claude code", "codex", "connection", "network", "timed out", "timeout")
@@ -124,16 +132,41 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
         return f"{name} didn't answer, so I stopped waiting.", "retry"
     if has("model") and has("not supported", "not found", "does not exist", "not available"):
         return f"{name} can't use that model with your account. Pick another model at the top.", "retry"
-    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit"):
-        return f"You've reached your {name} plan's limit for now.", "retry"
+    # Busy for everyone, not their limit (Claude Code: "Server is temporarily limiting requests (not your usage limit)").
+    if status == 529 or "529" in codes or has(*BUSY_WORDS):
+        return f"{name} is overloaded right now. Try again in a minute.", "retry"
+    if status == 429 or "429" in codes or has(*LIMIT_WORDS):
+        at = limit_reset(text)
+        return f"You've reached your {name} plan's limit for now." + (f" It resets {at}." if at else ""), "retry"
     if status == 402 or "402" in codes or has("credit balance", "billing"):
         return f"Your {name} account is out of credit.", "reconnect"
     if status in (401, 403) or codes & {"401", "403"} or has("not logged in", "/login", "unauthorized", "authentication",
                                                               "invalid api key", "invalid x-api-key", "expired", "oauth"):
         return f"Your {name} connection stopped working.", "reconnect"
+    if (status or 0) >= 500 or codes & {"500", "502", "503", "504"} or has("internal server error", "api_error", "bad gateway",
+                                                                          "service unavailable", "internalservererror"):
+        return f"{name} is having trouble on its side right now. Try again in a few minutes.", "retry"
+    if (isinstance(e, AIUnavailable) and status is None) or has(*NETWORK_WORDS):
+        return f"Ken couldn't reach {name}, probably a network problem. Try again in a minute.", "retry"
     if ai:
         return f"{name} isn't answering just now.", "retry"
     return "Something went wrong on Ken's side.", "retry"
+
+
+def limit_reset(text: str) -> str:
+    """When a used-up plan opens again, as Claude Code or Codex said it ("You've hit your session limit · resets 4pm
+    (Asia/Calcutta)", "Claude AI usage limit reached|1793750400", "… try again at 4:05 PM."), or ""."""
+    if epoch := re.search(r"\|(\d{10})\b", text):
+        return "at " + usage.when(int(epoch.group(1)))
+    if said := re.search(r"\b(?:resets|try again at)\s+(?:at\s+)?([A-Za-z0-9:, ]{2,24}?)\s*(?:\(|·|\||\.\s|\.?$|\n)", text, re.I):
+        return said.group(1).strip(" ,")
+    return ""
+
+
+def switch_hint(brain: str, signed_in: list[str]) -> str:
+    """The other AI they've connected, offered when this one can't answer for now."""
+    other = "claude" if brain.lower() == "codex" else "codex"
+    return f" Or switch to {'ChatGPT' if other == 'codex' else 'Claude'} in the model menu." if other in signed_in else ""
 
 
 def friendly_error(e: BaseException, brain: str) -> str:
@@ -355,6 +388,7 @@ class Engine:
         self.model_choices = None  # async backend -> available model IDs
         self.plan_limits = None  # () -> {"claude": [window...], "codex": [...]}: Settings → AI's meters
         self.limit_resets = None  # backend -> "15:00" when a plan that hit its limit opens again, or ""
+        self.signed_in = None  # () -> ["claude", "codex"]: the AI accounts connected here (bot.py)
         self.forget_dead_claude = None  # async () -> bool: forget a Claude sign-in Anthropic no longer accepts (bot.py)
         self.usable_brains = None  # () -> the brains Ken can run on now (their own accounts, or Claude on Ken AI credits)
         self.resume_listener = None  # via -> where a resumed reply also goes (Telegram), or None
@@ -1613,8 +1647,12 @@ class Engine:
                                if quiet else explain_failure(e, self.backend(pid)))
                 if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
                     msg, action = await self._dead_claude(msg, action)
-                if msg.startswith("You've reached your") and self.limit_resets and (at := self.limit_resets(self.backend(pid))):
+                if (msg.startswith("You've reached your") and "resets" not in msg and self.limit_resets
+                        and (at := self.limit_resets(self.backend(pid)))):
                     msg = f"{msg[:-1]}. It resets at {at}."
+                # Can't answer for now (limit, busy, down, unreachable): the other AI they connected can.
+                if action == "retry" and not msg.startswith(("Something went wrong", "Ken went quiet")) and "model" not in msg:
+                    msg += switch_hint(self.backend(pid), self.signed_in() if self.signed_in else [])
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
                 # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
                 # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
