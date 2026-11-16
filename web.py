@@ -134,6 +134,40 @@ VOICE_FOLLOW_UP = (
 LAST_ASKED = time.monotonic()
 OPEN_PAGES: set = set()
 PHONE_PAGE = re.compile(r"Mobi|Android|iPhone|iPad", re.I)
+# A browser driven by a program (a headless or automation Chromium, like Ken's own hidden browser), never a person.
+ROBOT_PAGE = re.compile(r"HeadlessChrome|Headless|PhantomJS|Puppeteer|Playwright", re.I)
+# Hosted Ken offers a finished video on a computer only where someone is at it: the page there says, every 30 seconds
+# and when it changes, whether it's on screen and when it was last touched (web/app.js presence). A page that never
+# says (an older page, one left in a background tab) or said it too long ago doesn't count.
+PRESENCE_FRESH_S = 90
+PRESENCE_TOUCHED_S = 10 * 60
+
+
+def at_computer(ws, now: float | None = None) -> bool:
+    """Someone at a computer, looking at this page: not a phone or a program, on screen, touched in the last 10 minutes,
+    and said so in the last 90 seconds (so a socket that's gone quiet without closing stops counting)."""
+    seen = getattr(ws, "ken_presence", None)
+    if getattr(ws, "ken_phone", False) or getattr(ws, "ken_robot", False) or not seen or ws.closed:
+        return False
+    now = time.time() if now is None else now
+    return (seen["visible"] and not seen["automated"] and now - seen["at"] <= PRESENCE_FRESH_S
+            and now - seen["touched"] <= PRESENCE_TOUCHED_S)
+
+
+def presence(said: str) -> dict | None:
+    """A page's presence report ({"type": "presence", "visible", "idle_ms", "automated"}), or None if it isn't one."""
+    try:
+        d = json.loads(said)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or d.get("type") != "presence":
+        return None
+    now = time.time()
+    try:
+        idle = max(0.0, float(d.get("idle_ms", 1e12)) / 1000)
+    except (TypeError, ValueError):
+        idle = 1e9
+    return {"visible": d.get("visible") is True, "automated": d.get("automated") is not False, "touched": now - idle, "at": now}
 
 
 def quiet_seconds() -> float:
@@ -463,7 +497,7 @@ class WebApp:
         tail = request.match_info.get("tail", "")
         if request.method == "GET" and tail == "pages":
             phones = sum(1 for ws in OPEN_PAGES if getattr(ws, "ken_phone", False))
-            return _json({"computer": len(OPEN_PAGES) - phones, "phone": phones})
+            return _json({"computer": sum(1 for ws in OPEN_PAGES if at_computer(ws)), "phone": phones})
         if request.method == "GET" and not tail:
             return _json({"pickups": drive_store.pickups()})
         if request.method != "POST" or not tail:
@@ -1173,7 +1207,9 @@ class WebApp:
         phone_app = request.headers.get("x-ken-client") == "phone"
         if phone_app:  # the app closes it when it leaves the screen
             self.phones.add(ws)
-        ws.ken_phone = phone_app or bool(PHONE_PAGE.search(request.headers.get("User-Agent", "")))  # hosted Ken: where a video can be saved
+        agent = request.headers.get("User-Agent", "")
+        ws.ken_phone = phone_app or bool(PHONE_PAGE.search(agent))  # hosted Ken: where a video can be saved
+        ws.ken_robot, ws.ken_presence = bool(ROBOT_PAGE.search(agent)), None
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -1192,6 +1228,8 @@ class WebApp:
             async for msg in ws:
                 if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                     break
+                if msg.type == WSMsgType.TEXT and len(msg.data) < 1000 and (seen := presence(msg.data)):
+                    ws.ken_presence = seen
         finally:
             pumping.cancel()
             self.engine.unsubscribe(q)

@@ -382,7 +382,8 @@ def _web(path: str, body: dict | None = None, timeout: float = 5):
 
 
 def computer_open() -> int:
-    """How many of Ken's pages are open on a computer (not a phone) right now. 0 if the web app can't be asked."""
+    """How many of Ken's pages someone is at on a computer right now: on screen and touched lately, not a phone, not a
+    browser a program drives, not a page left in a background tab (web.py at_computer). 0 if the web app can't be asked."""
     try:
         return int(_web("/api/pickups/pages").get("computer", 0))
     except Exception:  # noqa: BLE001 - no app, no page
@@ -634,4 +635,5 @@ def after_turn(said: list[str], ken_cmd: str = "ken", skip: list[Path] = ()) -> 
     return (f"(Ken's own check after your reply: the video you made for them ({names}) is still only on this computer. "
             f"Keep it with them now: run {runs}, then tell them in one short line what it printed (the Drive link, to "
             "tap Save on Ken's page, or the link to connect Drive, or plainly that it couldn't be saved). Don't repeat what "
-            "you already told them, don't redo the edit or send the file again.)")
+            "you already told them, don't redo the edit, don't send the file again or name its path, and don't say it's on "
+            "its way to them: they already have it in the chat.)")

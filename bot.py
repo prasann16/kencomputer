@@ -58,6 +58,7 @@ if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
     raise SystemExit(0)
 
 import asyncio
+import hashlib
 import html
 import json
 import logging
@@ -197,14 +198,29 @@ HOSTED_VIDEO_DRIVE_PROMPT = (
     "change for them counts, a reel and also a quick ffmpeg trim, cut, crop or title. Before you start it, run "
     f"`{KEN_CMD} --video-drive check`. If it says neither Drive nor their computer is ready, reply in one line with "
     "the link it prints (why: the finished video is kept with them, not on this computer) and stop; start the edit "
-    "when you're told it's connected. When the video is done and you've watched it: if it's under 45 MB, copy it to "
-    f"the outbox first; then run `{KEN_CMD} --video-drive save <the video file, or a reel's project folder>`. It "
-    "offers it on Ken's page when that's open on their computer (they tap Save; it's deleted here once their "
-    "computer's copy matches), else puts it in their Drive, checked, and deletes it here. Pass --to=computer or "
-    "--to=drive if they said where. Tell them what it prints (the Drive link, or to tap Save), not a path here. For a "
+    "when you're told it's connected. When the video is done and you've watched it: {outbox}run "
+    f"`{KEN_CMD} --video-drive save <the video file, or a reel's project folder>`. It "
+    "offers it on Ken's page when someone is at that page on their computer right now (they tap Save; it's deleted "
+    "here once their computer's copy matches), else puts it in their Drive, checked, and deletes it here. Pass "
+    "--to=computer or --to=drive if they said where. Tell them what it prints (the Drive link, or to tap Save). "
+    "Show the video once: name its full path in backticks once in your reply only while it's still here (offered on "
+    "their computer, or kept), never also its outbox copy, and after it went to Drive give the link, not a path. "
+    "{phone}For a "
     f"change to a saved reel, run `{KEN_CMD} --video-drive fetch <project folder>` first (Drive), or ask them to send "
     "the original again (their computer). Never delete a video it says wasn't saved."
 )
+
+
+def hosted_video_drive_prompt() -> str:
+    """The Drive steps, with the outbox only when Telegram is there to deliver it: in the Ken app the path in the reply
+    is the delivery, and an outbox copy nothing sends is just a second copy on the disk."""
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        return HOSTED_VIDEO_DRIVE_PROMPT.format(
+            outbox="if it's under 45 MB, copy it to the outbox first (for Telegram); then ", phone="")
+    return HOSTED_VIDEO_DRIVE_PROMPT.format(
+        outbox="", phone="Telegram isn't connected, so nothing goes to their phone by itself: don't use the outbox "
+        "and never say it's on its way to their phone; the Ken app (phone or computer) shows the path you name. ")
+
 
 HOSTED_APPS_PROMPT = (
     "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 1,700+ more). Never guess "
@@ -310,9 +326,9 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool:
+async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> str | bool:
     """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
-    over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
+    over the upload limit: "as is" or "re-encoded". False: it couldn't be made to fit, so it goes as a file (or not at all)."""
     ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
     if ready is None:
         return False
@@ -326,7 +342,7 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
     finally:
         if out != path:
             out.unlink(missing_ok=True)
-    return True
+    return "as is" if out == path else "re-encoded"
 
 
 def download_where(path: Path) -> str:
@@ -400,6 +416,7 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     try:
         if not OUTBOX_DIR.exists():
             return
+        sent_now: set = set()  # the same file put in twice (two names, two copies) goes once
         for path in sorted(OUTBOX_DIR.iterdir()):
             if not path.is_file() or path.name.startswith("."):
                 continue
@@ -408,10 +425,19 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
                 if size == 0:
                     path.unlink(missing_ok=True)
                     continue
-                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
-                    # The playable video may have been shrunk to fit; the original goes too, full quality, as a file
-                    # to post from. Too big for Telegram: say where to download it instead.
-                    if size <= TELEGRAM_FILE_LIMIT:
+                with open(path, "rb") as fh:
+                    same = (size, hashlib.sha256(fh.read(1 << 20)).hexdigest())
+                if same in sent_now:
+                    path.unlink(missing_ok=True)
+                    continue
+                sent_now.add(same)
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and (sent := await send_video(bot, chat_id, path, quiet)):
+                    # Re-encoded to play (or shrunk to fit): the original goes too, full quality, as a file to post
+                    # from. Too big for Telegram: say where to download it instead. Sent as is, the video already is
+                    # the original, so it comes once.
+                    if sent == "as is":
+                        pass
+                    elif size <= TELEGRAM_FILE_LIMIT:
                         with open(path, "rb") as fh:
                             await bot.send_document(chat_id, fh, filename=path.name, caption="Full quality, to post",
                                                     disable_notification=True, write_timeout=300, read_timeout=300)
@@ -928,7 +954,7 @@ def build_system() -> str:
     if video_prompt():
         system += "\n\n" + video_prompt()
         if apps_mcp() and host_site() and drive_store.enabled():
-            system += "\n\n" + HOSTED_VIDEO_DRIVE_PROMPT  # after the VIDEO steps, so it's the last word on where it goes
+            system += "\n\n" + hosted_video_drive_prompt()  # after the VIDEO steps, so it's the last word on where it goes
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected

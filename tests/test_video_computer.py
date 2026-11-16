@@ -95,6 +95,9 @@ async def test_ken_knows_whether_its_page_is_open_on_a_computer(engine, aiohttp_
     assert await (await pages()).json() == {"computer": 0, "phone": 1}
     laptop = await client.ws_connect("/api/events", headers={"User-Agent": CHROME})
     await laptop.receive_json()
+    assert await (await pages()).json() == {"computer": 0, "phone": 1}  # open isn't enough: someone has to be at it
+    await laptop.send_json({"type": "presence", "visible": True, "idle_ms": 2000, "automated": False})
+    await asyncio.sleep(0.05)
     assert await (await pages()).json() == {"computer": 1, "phone": 1}
     q = engine.subscribe()
     assert (await client.post("/api/pickups/announce", json={})).status == 200
@@ -103,6 +106,48 @@ async def test_ken_knows_whether_its_page_is_open_on_a_computer(engine, aiohttp_
     await asyncio.sleep(0.05)
     assert (await (await pages()).json())["computer"] == 0
     await phone.close()
+
+
+HEADLESS = CHROME.replace("Chrome/", "HeadlessChrome/")
+AT_IT = {"type": "presence", "visible": True, "idle_ms": 2000, "automated": False}
+
+
+@pytest.mark.parametrize("agent,said", [
+    (CHROME, None),  # an old page, or one that never says: never counted
+    (CHROME, {**AT_IT, "visible": False}),  # a background tab
+    (CHROME, {**AT_IT, "idle_ms": 11 * 60_000}),  # on screen but nobody's touched it for 11 minutes
+    (CHROME, {**AT_IT, "automated": True}),  # navigator.webdriver: a browser a program drives
+    (CHROME, {k: v for k, v in AT_IT.items() if k != "automated"}),  # didn't say it isn't
+    (HEADLESS, AT_IT),  # Ken's own hidden browser (headless Chromium) keeping the site open
+    (IPHONE, AT_IT),  # a phone
+])
+async def test_only_a_person_at_a_computer_page_counts(engine, aiohttp_client, home, agent, said):  # noqa: F811
+    """Swap's VM test from his phone (Nov 16): Ken said the video was offered on his computer, because some page had
+    the site open there. A page counts only when it says it's on screen, touched lately, and not automated."""
+    app, client = await signed_in(engine, aiohttp_client)
+    page = await client.ws_connect("/api/events", headers={"User-Agent": agent})
+    await page.receive_json()
+    if said:
+        await page.send_json(said)
+    await page.send_str("not json")  # anything else on the line is ignored
+    await asyncio.sleep(0.05)
+    assert (await (await client.get("/api/pickups/pages")).json())["computer"] == 0
+    await page.close()
+
+
+def test_a_page_that_stopped_saying_stops_counting(monkeypatch):
+    import web
+
+    class Page:
+        ken_phone = ken_robot = closed = False
+    page = Page()
+    page.ken_presence = web.presence(json.dumps(AT_IT))
+    now = page.ken_presence["at"]
+    assert web.at_computer(page, now) and web.at_computer(page, now + 60)
+    assert not web.at_computer(page, now + web.PRESENCE_FRESH_S + 1)  # a stale socket: nothing heard for 90 s
+    page.closed = True
+    assert not web.at_computer(page, now)
+    assert web.presence('{"type": "hello"}') is None and web.presence("[1]") is None
 
 
 def test_save_goes_to_their_computer_then_drive_then_stays(home, project, monkeypatch):  # noqa: F811

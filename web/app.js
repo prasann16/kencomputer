@@ -2203,7 +2203,7 @@ function App() {
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
       ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
-      ws.onopen = () => { setOnline(true); retry = 0; refresh(); dispatchEvent(new Event('ken-pickup')); };
+      ws.onopen = () => { setOnline(true); retry = 0; refresh(); dispatchEvent(new Event('ken-pickup')); present(true); };
       ws.onmessage = (e) => {
         heard = Date.now();
         const ev = JSON.parse(e.data), project = ev.project;
@@ -2242,13 +2242,24 @@ function App() {
     // so its computer can sleep; pick up again, and catch up, the moment they're back.
     const rest = () => { if (resting) return; resting = true; clearTimeout(timer); if (ws) ws.close(); };
     const wake = () => { napping = false; if (resting && !document.hidden) { resting = false; retry = 0; connect(); loadMeta(); load(); } };
+    // Hosted Ken offers a finished video here only while someone is at this page (web.py at_computer): on screen,
+    // touched lately, and not a browser a program drives. Said on connect, on any change, and every 30 seconds.
+    let told = 0;
+    const present = (now) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || (!now && Date.now() - told < 15000)) return;
+      told = Date.now();
+      try { ws.send(JSON.stringify({ type: 'presence', visible: document.visibilityState === 'visible', idle_ms: Date.now() - lastTouch, automated: !!navigator.webdriver })); } catch { /* the line is closing */ }
+    };
+    const presentEvery = setInterval(() => { if (!document.hidden) present(true); }, 30000);
     const visibility = () => {
+      if (!document.hidden) lastTouch = Date.now();
+      present(true);
       if (!HOSTED) return;
       clearTimeout(hiddenTimer);
       if (document.hidden) hiddenTimer = setTimeout(rest, 180000);
-      else { lastTouch = Date.now(); wake(); }
+      else wake();
     };
-    const touched = () => { lastTouch = Date.now(); if (napping) wake(); };
+    const touched = () => { lastTouch = Date.now(); if (napping) wake(); present(); };
     const TOUCH = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'focus'];
     let moved = 0;
     const mousemove = () => { const now = Date.now(); if (now - moved > 5000) { moved = now; touched(); } };
@@ -2258,7 +2269,7 @@ function App() {
       if (HOSTED && !napping && !busy.size && Date.now() - lastTouch > IDLE_MS) { napping = true; rest(); }
     }, 30000);
     document.addEventListener('visibilitychange', visibility);
-    return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
+    return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearInterval(presentEvery); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
       TOUCH.forEach((t) => removeEventListener(t, touched, { capture: true })); removeEventListener('mousemove', mousemove); if (ws) ws.close(); };
   }, []);
   const send = async (text, files, retryId, target = pid) => {

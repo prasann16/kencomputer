@@ -192,3 +192,69 @@ async def test_drive_is_never_sent_a_link_that_doesnt_serve_the_file(home, trim,
     said = []
     assert await asyncio.to_thread(drive_store.save, trim, True, "", said.append) == 1
     assert calls == [] and trim.exists() and "doesn't serve the file" in said[-1] and "don't delete" in said[-1]
+
+
+# ------------------------------------------------------------------ the video shows once (Swap's VM test, Nov 16)
+
+def scripted(lines):
+    """Ken's replies, one per turn, in order."""
+    from test_engine import FakeSession
+
+    async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
+        self.brain.asks.append({"prompt": prompt})
+        await on_text(lines.pop(0))
+        return ""
+    FakeSession.ask, old = ask, FakeSession.ask
+    return old
+
+
+async def test_ken_s_own_check_doesnt_show_the_video_a_second_time(engine, trim, monkeypatch):  # noqa: F811
+    """11:01 on the VM: the reply named the trim, then Ken's own check after it named it again, so the app played it
+    twice. Its outbox copy named in the same reply is the same video too. Asking for it again shows it again."""
+    from engine import HOME
+    from test_engine import FakeSession
+    out = trim.parent.parent.parent / "outbox" / trim.name
+    old = scripted([f"The clip is ready: `{trim}`, also `{out}`",
+                            f"It still hasn't reached your Drive. The file is still at `{trim}`.",
+                            f"Here it is again: `{trim}`"])
+    try:
+        engine.after_turn = lambda pid, said: "(Ken's own check: save it.)" if len(engine.brain.asks) == 1 else None
+        await engine.send_message(HOME, "trim my video")
+        await asyncio.gather(*engine._bg)
+        await engine.send_message(HOME, "show me the clip again")
+    finally:
+        FakeSession.ask = old
+    said = [m["text"] for m in engine.messages(HOME) if m["role"] == "ken"]
+    assert said[0] == f"The clip is ready: `{trim}`, also {trim.name}"
+    assert said[1] == f"It still hasn't reached your Drive. The file is still at {trim.name}."
+    assert said[2] == f"Here it is again: `{trim}`"
+
+
+def test_show_once_leaves_other_files_and_missing_paths_alone(engine, trim):  # noqa: F811
+    from engine import HOME
+    other = trim.with_name("other.mp4")
+    other.write_bytes(os.urandom(3000))
+    text = f"`{trim}` and `{other}` and `/nowhere/gone.mp4`"
+    assert engine.show_once(HOME, text) == text
+    assert engine.show_once("agent-1", f"`{trim}`") == f"`{trim}`"  # another chat has its own
+
+
+@pytest.mark.parametrize("telegram", [False, True])
+def test_the_outbox_step_only_when_telegram_delivers_it(monkeypatch, telegram):
+    import bot
+    hosted_ken(bot, monkeypatch)
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")
+    if telegram:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:x")
+    else:
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    block = bot.hosted_video_drive_prompt()
+    assert ("copy it to the outbox first" in block) is telegram
+    assert ("never say it's on its way to their phone" in block) is not telegram
+    assert "{" not in block and "Show the video once" in block and block in bot.build_system()
+
+
+def test_ken_s_own_check_asks_not_to_name_the_path_again(home, trim, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("KEN_DRIVE_FAKE", str(home / "drive"))
+    note = drive_store.after_turn([REPLY.format(home=home, work=trim)], "ken")
+    assert note and "name its path" in note and "on its way" in note
