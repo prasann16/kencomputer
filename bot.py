@@ -47,6 +47,17 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--video-edit"]:  # hosted Ken: the edit link for a reel built with HyperFrames (studio.py)
+    import studio
+    _name = (sys.argv[2:3] or [""])[0].rstrip("/").split("/")[-1]
+    _link = studio.link(_name)
+    print(_link or "Edit links are on Ken in the cloud. Here, run `npx hyperframes preview` in the project folder.")
+    raise SystemExit(0 if _link else 1)
+
+if sys.argv[1:2] == ["--media"]:  # hosted Ken: creator storage in the cloud, for big footage and finished videos (media.py)
+    import media
+    raise SystemExit(media.main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -118,6 +129,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 KEN_HOME.mkdir(parents=True, exist_ok=True)
 # Ken's own Node for videos (video_kit.py), first on the PATH once it's there, so `npx remotion` is Ken's.
 os.environ["PATH"] = str(KEN_HOME / "tools" / "node" / "bin") + os.pathsep + os.environ.get("PATH", "")
+# HyperFrames (reels): no usage telemetry, and its skills ship with Ken (skills/hyperframes*), so its CLI never
+# installs them into the person's own ~/.agents.
+os.environ.setdefault("HYPERFRAMES_NO_TELEMETRY", "1")
+os.environ.setdefault("HYPERFRAMES_SKIP_SKILLS", "1")
 # How Ken runs itself from a shell: the app's engine, or this checkout's Python and bot.py.
 KEN_CMD = f'"{sys.executable}"' if getattr(sys, "frozen", False) else f'"{sys.executable}" "{Path(__file__).resolve()}"'
 SHARED_MCP: dict[str, dict] = {}  # name -> how a chat reaches a server every chat shares, once the app server is up
@@ -235,6 +250,23 @@ def video_prompt() -> str:
         "they meant to say, in their order, minus warm-up, retakes, tangents, repeats and dead air. Reels are vertical 1080x1920. "
         "Watch your own output before sending: grab a few frames "
         "with ffmpeg and look at them. Then copy the mp4 to the outbox."
+        + storage_prompt()
+    )
+
+
+def storage_prompt() -> str:
+    """Ken in the cloud: creator storage for big footage, so this small disk never fills up (media.py)."""
+    import media
+    if not media.available():
+        return ""
+    return (
+        f" STORAGE: this computer's disk is small, so big footage lives in cloud storage: `{KEN_CMD} --media put <file>` "
+        f"stores a file (prints its key), `{KEN_CMD} --media get <key> <dest>` brings it back, `{KEN_CMD} --media url <key>` "
+        "gives a URL ffmpeg can read from directly for an hour, and `--media list`, `--media delete <key>` and "
+        f"`--media keep <key>` manage it. Full-quality originals: store them as they arrive, edit from a small working "
+        "copy (1080p is plenty), and render the final cut from the original's URL, so quality stays full. Finished "
+        f"work: `{KEN_CMD} --media put <file> --keep`, and `{KEN_CMD} --media link <key> [days]` makes a share link anyone "
+        "can open (for a brand or an editor). Originals not kept are cleared after 90 days; say so if they ask."
     )
 
 
@@ -287,7 +319,9 @@ HOSTING_FILE = KEN_HOME / "hosting.md"
 SETUP_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools", "calendar", "email", "phone")
 # Getting to know them: onboarding stays in Ken's instructions until each of these is done or declined.
 ONBOARDING_ITEMS = ("ken-name", "call-you", "work", "city", "brief-time", "tools")
-TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
+# Bots can upload up to 50 MB through Telegram's servers; through Ken's own Bot API server (deploy/telegram-bot-api) up
+# to 2 GB, and the host says so with TELEGRAM_UPLOAD_MB.
+TELEGRAM_FILE_LIMIT = int(os.environ.get("TELEGRAM_UPLOAD_MB") or 50) * 1024 * 1024
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -308,6 +342,27 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
         if out != path:
             out.unlink(missing_ok=True)
     return True
+
+
+STORAGE_SEND_LIMIT = 2000 * 1024 * 1024  # Ken's own Telegram server takes files up to 2 GB
+
+
+def can_send_from_storage(size: int) -> bool:
+    """Over Telegram's 50 MB from a bot: with creator storage and Ken's own Telegram server (the host says so), the file
+    goes up to storage and from there to Telegram whole, at full quality, never shrunk."""
+    import media
+    return os.environ.get("TELEGRAM_SEND_FROM_STORAGE") == "1" and media.available() and size <= STORAGE_SEND_LIMIT
+
+
+async def send_from_storage(bot, chat_id: int, path: Path, quiet: bool = False) -> None:
+    import media
+    stored = await asyncio.to_thread(media.put, path, True)
+    ref = f"ken-media:{stored['key']}"
+    if path.suffix.lower() in video.VIDEO_SUFFIXES:
+        await bot.send_video(chat_id, ref, caption=path.name, supports_streaming=True, disable_notification=quiet,
+                             write_timeout=600, read_timeout=600)
+    else:
+        await bot.send_document(chat_id, ref, caption=path.name, disable_notification=quiet, write_timeout=600, read_timeout=600)
 
 
 def download_where(path: Path) -> str:
@@ -387,6 +442,12 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
             try:
                 size = path.stat().st_size
                 if size == 0:
+                    path.unlink(missing_ok=True)
+                    continue
+                if size > TELEGRAM_FILE_LIMIT and can_send_from_storage(size):
+                    # The whole file, full quality, playable: through storage to Ken's own Telegram server.
+                    await send_from_storage(bot, chat_id, path, quiet)
+                    log_history("assistant", f"[sent {'video' if path.suffix.lower() in video.VIDEO_SUFFIXES else 'file'}: {path.name}]")
                     path.unlink(missing_ok=True)
                     continue
                 if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
@@ -1267,17 +1328,17 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_chat.send_action(ChatAction.TYPING)
     try:
         if msg.photo:  # compressed photo: largest size is last
-            tg_file = await msg.photo[-1].get_file()
+            tg_file = await msg.photo[-1].get_file(read_timeout=FILE_WAIT)
             name = f"photo-{time.strftime('%Y%m%d-%H%M%S')}.jpg"
         else:  # sent as a file with an image mime type
-            tg_file = await msg.document.get_file()
+            tg_file = await msg.document.get_file(read_timeout=FILE_WAIT)
             name = msg.document.file_name or f"image-{time.strftime('%Y%m%d-%H%M%S')}"
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
         if path.exists():
             path = INBOX_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}"
         name = path.name
-        await tg_file.download_to_drive(str(path))
+        await tg_file.download_to_drive(str(path), read_timeout=FILE_WAIT)
     except Exception as e:
         log.warning("image download failed: %s", e)
         await msg.reply_text(f"Couldn't save that image: {e}")
@@ -1296,6 +1357,14 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # The Bot API hands bots files up to 20 MB (TELEGRAM_DOWNLOAD_MB can change that, for a server that allows more).
 TELEGRAM_DOWNLOAD_LIMIT = int(os.environ.get("TELEGRAM_DOWNLOAD_MB") or 20) * 1024 * 1024
+# With Ken's own Bot API server, getFile answers only once the server has the whole file from Telegram (a 2 GB video
+# takes minutes), so fetching a file gets a long wait instead of the library's few seconds.
+FILE_WAIT = 30 * 60
+
+
+async def fetch_file(item, path: Path) -> None:
+    tg_file = await item.get_file(read_timeout=FILE_WAIT, write_timeout=60, connect_timeout=30)
+    await tg_file.download_to_drive(str(path), read_timeout=FILE_WAIT, write_timeout=60, connect_timeout=30)
 
 # Hosted Ken: a file too big for Telegram to pass on is sent in Ken's web app instead, through the link Ken replies
 # with (<site>/send/<token>; the web app takes big files in pieces). What they asked waits here for a day, and Ken
@@ -1466,12 +1535,15 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await too_big(msg, item, kind, name):
         return
     await update.effective_chat.send_action(ChatAction.TYPING)
+    if (item.file_size or 0) > 100 * 1024 * 1024:  # a big one takes a while to come in: say so, once
+        await msg.reply_text(f"Got it. Bringing in the {item.file_size // (1024 * 1024)} MB {kind.split(' ', 1)[-1]}, "
+                             "big ones take a minute or two.", disable_notification=True)
     try:
         INBOX_DIR.mkdir(parents=True, exist_ok=True)
         path = INBOX_DIR / name
         if path.exists():
             path = INBOX_DIR / f"{path.stem}-{stamp}{path.suffix}"
-        await (await item.get_file()).download_to_drive(str(path))
+        await fetch_file(item, path)
     except Exception as e:
         log.warning("file download failed: %s", e)
         await msg.reply_text(f"Couldn't save that: {e}")

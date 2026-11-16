@@ -1,0 +1,31 @@
+# Telegram's own Bot API server for hosted Ken: bots can take and send files up to 2 GB (Telegram's servers stop at
+# 20 MB down, 50 MB up), so a creator's full-quality video arrives in the chat. See README.md.
+services:
+  bot-api:
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - ${DATA_DIR:-./data}:/var/lib/telegram-bot-api
+  door:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [bot-api]
+    environment:
+      KEN_RELAY_SECRET: ${KEN_RELAY_SECRET}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
+      - ${DATA_DIR:-./data}:/var/lib/telegram-bot-api:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+  # Reaches the internet only outward: a Cloudflare tunnel to the hostname set up for it (README.md).
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [door]
+    profiles: [public]
