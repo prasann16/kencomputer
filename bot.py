@@ -260,6 +260,7 @@ BRAINS["claude"].on_rate_limit = USAGE.record
 BRAINS["codex"].on_rate_limit = USAGE.record_codex
 ENGINE.plan_limits = USAGE.limits
 ENGINE.limit_resets = USAGE.resets
+ENGINE.signed_in = lambda: signed_in()
 # Migrate the old process-wide setting once; saved in-app choices win afterwards.
 if not ENGINE.kv_get("backend-migrated"):
     initial_backend = os.environ.get("KEN_BRAIN", "claude").lower()
