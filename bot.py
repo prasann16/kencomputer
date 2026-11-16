@@ -2932,7 +2932,7 @@ class Phone:
             await flush_outbox(bot, chat_id)
 
         if len(paths) == 1:
-            log_history("you", f"[sent {info['kind']}: {paths[0].name}]")
+            log_history("you", f"[sent {info['kind'] or 'a file'}: {paths[0].name}]")
             prompt = file_prompt(info["kind"] or "a file", paths[0], info["caption"])
         else:
             log_history("you", f"[sent {len(paths)} files: {', '.join(p.name for p in paths)}]")
