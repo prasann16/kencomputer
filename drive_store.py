@@ -18,6 +18,9 @@ HTTPS, saves it where they pick (Downloads to start), reads it back and sends it
 MD5), and only a match deletes the copy here. Nothing on their computer listens or opens a port; the page asks, the
 host passes it on. Phones and Telegram get Drive. Neither there: the files stay here and Ken says so.
 
+Off unless KEN_VIDEO_DRIVE=1 (set per computer by the host): without it there is no prompt block, no save bar and no
+routes, and video edits work exactly as before.
+
 KEN_DRIVE_FAKE=<dir> stands in a pretend Drive in that folder (tests, and trying it without a Google account): it
 fetches the link just as Drive would, so everything but Google itself is exercised.
 """
@@ -41,6 +44,11 @@ LINK_TTL_S = 30 * 60
 SLUG = "googledrive"
 UPLOAD_TIMEOUT = 15 * 60  # Drive fetches the whole file inside the one call
 MIME = {".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/x-m4v", ".webm": "video/webm", ".mkv": "video/x-matroska"}
+
+
+def enabled() -> bool:
+    """The rollout switch: KEN_VIDEO_DRIVE=1 turns all of this on for this computer. Off by default."""
+    return os.environ.get("KEN_VIDEO_DRIVE") == "1"
 
 
 def home() -> Path:
@@ -441,6 +449,9 @@ def save_where(folder: Path, to: str = "auto", with_source: bool = True, account
 
 
 def main(argv: list[str]) -> int:
+    if not enabled():
+        print("Keeping videos in Drive or on their computer is off here. Keep the video on this computer as usual.")
+        return 1
     if not (_fake_dir() or (apps.hosted() and apps.mcp_ready())):
         print("Drive storage is for Ken in the cloud. Here, keep the video on this computer as usual.")
         return 1

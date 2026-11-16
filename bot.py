@@ -920,10 +920,11 @@ def build_system() -> str:
         system += "\n\n" + browser_prompt()
     if apps_mcp():
         import apps
+        import drive_store
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
         if host_site():
             system += "\n\n" + HOSTED_FILES_PROMPT
-            if video_prompt():
+            if video_prompt() and drive_store.enabled():
                 system += "\n\n" + HOSTED_VIDEO_DRIVE_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()

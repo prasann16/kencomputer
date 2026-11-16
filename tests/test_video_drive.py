@@ -20,6 +20,7 @@ from test_hosted import engine, signed_in  # noqa: E402,F401
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("KEN_HOME", str(tmp_path))
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")  # the rollout switch; off by default (tests at the end)
     return tmp_path
 
 
@@ -173,6 +174,7 @@ def test_on_a_personal_computer_videos_stay_put(home, monkeypatch, capsys):
 
 def test_hosted_ken_is_told_to_ask_for_drive_first(monkeypatch):
     import bot
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")
     monkeypatch.setattr(bot, "apps_mcp", lambda: {"apps": {}})
     monkeypatch.setattr(bot, "host_site", lambda: "https://app.example.dev")
     monkeypatch.setattr(bot, "video_prompt", lambda: "VIDEO")
@@ -182,3 +184,62 @@ def test_hosted_ken_is_told_to_ask_for_drive_first(monkeypatch):
     assert "--video-drive check" in system and "--video-drive save" in system
     monkeypatch.setattr(bot, "host_site", lambda: "")
     assert "--video-drive" not in bot.build_system()
+
+
+# ------------------------------------------------------------------ the rollout switch: off unless KEN_VIDEO_DRIVE=1
+
+def hosted_ken(bot, monkeypatch):
+    monkeypatch.setattr(bot, "apps_mcp", lambda: {"apps": {}})
+    monkeypatch.setattr(bot, "host_site", lambda: "https://app.example.dev")
+    monkeypatch.setattr(bot, "video_prompt", lambda: "VIDEO")
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://app.example.dev/box/checkin")
+    monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "t")
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "true"])
+def test_off_unless_the_switch_is_exactly_1(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("KEN_VIDEO_DRIVE", raising=False)
+    else:
+        monkeypatch.setenv("KEN_VIDEO_DRIVE", value)
+    assert not drive_store.enabled()
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")
+    assert drive_store.enabled()
+
+
+def test_switched_off_hosted_ken_edits_videos_as_before(monkeypatch, capsys, tmp_path):
+    """Off: no ask for Drive before an edit, and the CLI says to keep the video here, even with Drive faked in."""
+    import bot
+    hosted_ken(bot, monkeypatch)
+    monkeypatch.delenv("KEN_VIDEO_DRIVE", raising=False)
+    system = bot.build_system()
+    assert "--video-drive" not in system and "VIDEO" in system  # the ordinary video block is still there
+    monkeypatch.setenv("KEN_DRIVE_FAKE", str(tmp_path / "drive"))
+    assert drive_store.main(["check"]) == 1
+    assert "is off here" in capsys.readouterr().out
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")
+    assert "--video-drive check" in bot.build_system()
+    assert drive_store.main(["check"]) == 0
+
+
+async def test_switched_off_the_routes_are_not_there(engine, aiohttp_client, home, project, monkeypatch):  # noqa: F811
+    app, client = await signed_in(engine, aiohttp_client)
+    token = drive_store.open_link(project / "reel.mp4")
+    monkeypatch.delenv("KEN_VIDEO_DRIVE")
+    assert (await client.get(f"/api/drive-file/{token}")).status == 404
+    assert (await client.get("/api/pickups")).status == 404
+    assert (await client.get("/api/pickups/pages")).status == 404
+    assert (await client.post("/api/pickups/announce", json={})).status == 404
+    assert (project / "reel.mp4").exists()
+    monkeypatch.setenv("KEN_VIDEO_DRIVE", "1")
+    assert (await client.get(f"/api/drive-file/{token}")).status == 200
+
+
+async def test_the_page_shows_the_save_bar_only_when_switched_on(engine, aiohttp_client, home, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("KEN_PLATFORM", "agent37")
+    app, client = await signed_in(engine, aiohttp_client)
+    assert (await (await client.get("/api/meta")).json())["video_drive"] is True
+    monkeypatch.delenv("KEN_VIDEO_DRIVE")
+    assert (await (await client.get("/api/meta")).json())["video_drive"] is False
+    js = (Path(__file__).resolve().parent.parent / "web" / "app.js").read_text()
+    assert "${HOSTED && meta.video_drive && html`<${Safe} where=\"pickups\">" in js

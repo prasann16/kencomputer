@@ -253,6 +253,7 @@ class WebApp:
                       # In the cloud: no Mac features, and the plan's usage when the hosting service passes it.
                       "hosted": hosted_web(), "usage": plan_usage(request),
                       "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
+                      "video_drive": hosted_web() and os.environ.get("KEN_VIDEO_DRIVE") == "1",  # drive_store.enabled()
                       "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
                       "logout_url": logout_url(), "off": self.engine.is_off()})
 
@@ -443,6 +444,8 @@ class WebApp:
         """Hosted Ken: one finished video, for Google Drive to fetch while `ken --video-drive save` waits (drive_store.py).
         The host passes Drive's request on through its own link; the token works for that one file, for 30 minutes."""
         import drive_store
+        if not drive_store.enabled():
+            raise web.HTTPNotFound()
         path = drive_store.linked_file(request.match_info["token"])
         if path is None:
             raise web.HTTPNotFound()
@@ -455,6 +458,8 @@ class WebApp:
         …/announce: tell open pages. POST …/<token> {"size", "sha256", "how", "where"}: the page saved it; a match
         deletes Ken's copy."""
         import drive_store
+        if not drive_store.enabled():
+            raise web.HTTPNotFound()
         tail = request.match_info.get("tail", "")
         if request.method == "GET" and tail == "pages":
             phones = sum(1 for ws in OPEN_PAGES if getattr(ws, "ken_phone", False))
