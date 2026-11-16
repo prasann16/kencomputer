@@ -3,7 +3,7 @@
 const browser = ["AbortSignal", "addEventListener", "Blob", "cancelAnimationFrame", "clearInterval", "clearTimeout", "console",
   "crypto", "CSS", "document", "Event", "fetch", "File", "FormData", "FileReader", "XMLHttpRequest", "history", "innerWidth", "innerHeight", "localStorage",
   "location", "MediaRecorder", "navigator", "removeEventListener", "requestAnimationFrame", "sessionStorage", "setInterval",
-  "setTimeout", "URL", "URLSearchParams", "WebSocket", "window", "matchMedia", "getComputedStyle", "Image", "Audio",
+  "setTimeout", "URL", "URLSearchParams", "WebSocket", "window", "matchMedia", "getComputedStyle", "Image", "Audio", "createImageBitmap", "performance", "innerWidth", "innerHeight", "devicePixelRatio",
   "AudioContext", "TextDecoder", "TextEncoder", "Response", "Request", "Headers", "performance", "queueMicrotask",
   "structuredClone", "atob", "btoa", "alert", "confirm", "prompt", "open", "close", "scrollTo", "devicePixelRatio",
   "ResizeObserver", "IntersectionObserver", "MutationObserver", "AbortController", "Notification", "visualViewport"];

@@ -141,7 +141,7 @@ def quiet_seconds() -> float:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None, live=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
@@ -156,6 +156,7 @@ class WebApp:
         self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
+        self.live = live  # liveview.LiveView: the person does a step in Ken's own browser, at /live/<signed link>
         self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
         self.runner: web.AppRunner | None = None
         self.bg: set[asyncio.Task] = set()
@@ -178,7 +179,9 @@ class WebApp:
         origin = request.headers.get("Origin")
         if origin and origin not in trusted_origins(request):
             return _json({"error": "Untrusted origin."}, 403)
-        if path in ("/login", "/manifest.webmanifest", "/icon.svg") or self._authed(request):
+        # A live view link signs itself (liveview.verify): it opens from a phone that isn't signed in to Ken.
+        live = self.live is not None and path.startswith("/live/")
+        if path in ("/login", "/manifest.webmanifest", "/icon.svg") or live or self._authed(request):
             LAST_ASKED = time.monotonic()
             return await handler(request)
         if path.startswith("/api/"):
@@ -1264,6 +1267,8 @@ class WebApp:
         r.add_post("/api/setup", self.setup_action)
         r.add_get("/api/events", self.events)
         r.add_route("*", "/mcp/{name}", self.mcp)
+        if self.live is not None:
+            self.live.routes(r)
         r.add_get("/{name:.+}", self.static_file)
         return app
 

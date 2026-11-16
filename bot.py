@@ -76,12 +76,13 @@ from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import CREDIT_MODELS, HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from usage import Usage
-from web import WebApp
+from web import WebApp, load_token
 from connections import Connections
 from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
                         included_ai_model, save_env, use_included_ai, voice_installed)
 from ken_mcp import SharedServer, external_server, media_server
 from voice import ready as voice_ready, transcribe, warmup as warmup_voice
+import liveview
 import video
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
 from telegram.constants import ChatAction, ParseMode, ReactionEmoji
@@ -143,7 +144,7 @@ def browser_command() -> dict:
         if os.environ.get("KEN_BROWSER") != "1" or not chromium or not Path(chromium).exists():
             return {}
         args = ["--headless", "--isolated", f"--executablePath={chromium}", "--chromeArg=--no-sandbox",
-                "--chromeArg=--disable-dev-shm-usage"]
+                "--chromeArg=--disable-dev-shm-usage", *(liveview.chrome_args() if liveview.enabled() else [])]
     node, script = os.environ.get("KEN_NODE"), os.environ.get("KEN_BROWSER_MCP")
     if node and script and Path(script).exists():
         return {"browser": {"type": "stdio", "command": node, "args": [script, *args], "env": {**env, "ELECTRON_RUN_AS_NODE": "1"}}}
@@ -539,6 +540,13 @@ HEADLESS_BROWSER_PROMPT = (
     "login, say so and ask how they'd like to proceed. Before you post, send, buy, or change an account setting, "
     "show them exactly what you'll do and wait for a yes."
 )
+LIVE_VIEW_PROMPT = (
+    " When a page needs them (a captcha you can't get past, a sign-in, a code sent to their phone), call "
+    "request_human with the kind of step they should do ('solve the picture check', not what the picture asks "
+    "for now, which changes): it gives a link that shows them that tab live, where they do the step "
+    "themselves, from their computer or phone (the link is sent to them for you). Then call wait_for_human until it "
+    "says done, and carry on in the same tab."
+)
 
 SKILLS_RULE = (
     f"SKILLS: your skills are the folders in {KEN_HOME / 'skills'} (each a SKILL.md and its files); they "
@@ -870,7 +878,8 @@ def where_you_are(f: dict | None = None) -> str:
 
 def browser_prompt() -> str:
     """Their own Chrome on their computer; Ken's own browser on a computer in the cloud."""
-    return {"theirs": BROWSER_PROMPT, "own": HEADLESS_BROWSER_PROMPT}.get(where_facts()["browser"], "")
+    own = HEADLESS_BROWSER_PROMPT + (LIVE_VIEW_PROMPT if liveview.enabled() else "")
+    return {"theirs": BROWSER_PROMPT, "own": own}.get(where_facts()["browser"], "")
 
 
 def agent_tools_prompt(only) -> str:
@@ -2073,6 +2082,16 @@ async def brain_connected(backend=None) -> None:
     await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
+def live_view_link(session, link: str) -> None:
+    """A live view started: the link goes to the person in the chat that's working (Home when that isn't clear), so it
+    reaches the app and the phone whether or not the model remembers to write it."""
+    busy = [pid for pid in list(ENGINE.chats) if ENGINE.chat_busy(pid)]
+    pid = busy[0] if len(busy) == 1 else HOME
+    ENGINE.log_message(pid, "ken", f"🖐️ I need you for a moment: {session.reason}\n{link}\n"
+                       "It opens my browser live. Do the step there and press Done (works for 15 minutes). "
+                       "Picture checks expire in about 2 minutes; if it says expired, I'll send a fresh one.", via="background")
+
+
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
@@ -2111,8 +2130,11 @@ async def start_engine() -> WebApp | None:
     ENGINE.forget_dead_claude = setup.providers["claude"].forget_if_dead
     use_signed_in_account()
     browser = browser_command().get("browser")
-    shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding)
+    # Live view: only with Ken's own browser (a computer in the cloud), never the person's Chrome.
+    live = (liveview.LiveView(load_token(KEN_HOME), on_start=live_view_link)
+            if browser and liveview.enabled() and os.environ.get("KEN_PLATFORM") else None)
+    shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"), extra=live)} if browser else {}
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding, live)
     if os.environ.get("KEN_NOTIFY_URL"):
         task = asyncio.create_task(notify_app(web_app))
         APP_TASKS.add(task)
