@@ -158,3 +158,37 @@ def test_bot_check_is_off_without_the_switch(monkeypatch):
     import bot
     monkeypatch.delenv("KEN_VIDEO_DRIVE", raising=False)
     assert bot.video_storage_check("home", ["`/x/y.mp4`"]) is None
+
+
+async def test_drive_is_never_sent_a_link_that_doesnt_serve_the_file(home, trim, aiohttp_client, monkeypatch):
+    """Swap's VM, Nov 16: the host's /box/drive-file route wasn't deployed yet, it redirected to the home page, and
+    Drive saved that 15 KB page under the video's name. Now the link is tried first, the way Drive fetches it."""
+    from aiohttp import web
+    data = trim.read_bytes()
+
+    async def good(request):
+        return web.FileResponse(trim)
+
+    async def moved(request):
+        raise web.HTTPFound("/")
+
+    async def home_page(request):
+        return web.Response(text="<html>home</html>")
+    app = web.Application()
+    app.router.add_get("/good", good)
+    app.router.add_get("/moved", moved)
+    app.router.add_get("/", home_page)
+    client = await aiohttp_client(app)
+    base = f"http://{client.server.host}:{client.server.port}"
+    assert await asyncio.to_thread(drive_store.link_serves, f"{base}/good", {}, len(data))
+    assert not await asyncio.to_thread(drive_store.link_serves, f"{base}/good", {}, len(data) + 1)
+    assert not await asyncio.to_thread(drive_store.link_serves, f"{base}/moved", {}, len(data))
+    assert not await asyncio.to_thread(drive_store.link_serves, f"{base}/nothing", {}, len(data))
+
+    calls = []
+    monkeypatch.setattr(drive_store, "folder_id", lambda account="": "fld")
+    monkeypatch.setattr(drive_store, "call", lambda tool, args, account="": calls.append(tool))
+    monkeypatch.setattr(drive_store, "file_url", lambda token: (f"{base}/moved", {}))
+    said = []
+    assert await asyncio.to_thread(drive_store.save, trim, True, "", said.append) == 1
+    assert calls == [] and trim.exists() and "doesn't serve the file" in said[-1] and "don't delete" in said[-1]

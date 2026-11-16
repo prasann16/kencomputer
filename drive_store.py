@@ -234,6 +234,25 @@ def folder_id(account: str = "") -> str:
     return fid
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def link_serves(url: str, headers: dict, size: int) -> bool:
+    """Does the link Drive is about to fetch give back this file? Its first byte and the total size, asked the way
+    Drive will (no redirects followed). A host without the /box/drive-file route answers with a redirect to its home
+    page, and Drive would save that page under the video's name (Swap's VM, Nov 16)."""
+    req = urllib.request.Request(url, headers={**headers, "Range": "bytes=0-0", "User-Agent": "Ken link check"})
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=30) as r:
+            if r.status == 206:
+                return r.headers.get("Content-Range", "").rsplit("/", 1)[-1] == str(size)
+            return r.status == 200 and r.headers.get("Content-Length") == str(size)
+    except Exception:  # noqa: BLE001 - a redirect, a 404, no answer: not the file
+        return False
+
+
 def upload(path: Path, account: str = "", parent: str = "") -> dict:
     """Drive's copy of `path`, checked byte for byte: {"id", "name", "link", "size", "md5"}. Raises DriveError if
     Drive's copy isn't the same (the local file is kept then)."""
@@ -241,6 +260,9 @@ def upload(path: Path, account: str = "", parent: str = "") -> dict:
     token = open_link(path)
     try:
         url, headers = file_url(token)
+        if not link_serves(url, headers, size):
+            raise DriveError("the link Drive would fetch it from doesn't serve the file yet (the host's drive-file route "
+                             "isn't answering), so nothing was sent to Drive")
         args = {"source_url": url, "name": path.name, "mime_type": MIME.get(path.suffix.lower(), "application/octet-stream")}
         if headers:
             args["source_headers"] = headers
@@ -611,4 +633,5 @@ def after_turn(said: list[str], ken_cmd: str = "ken", skip: list[Path] = ()) -> 
     names = ", ".join(t.name for t in targets)
     return (f"(Ken's own check after your reply: the video you made for them ({names}) is still only on this computer. "
             f"Keep it with them now: run {runs}, then tell them in one short line what it printed (the Drive link, to "
-            "tap Save on Ken's page, or the link to connect Drive). Don't redo the edit or send the file again.)")
+            "tap Save on Ken's page, or the link to connect Drive, or plainly that it couldn't be saved). Don't repeat what "
+            "you already told them, don't redo the edit or send the file again.)")

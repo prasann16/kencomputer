@@ -130,8 +130,11 @@ def test_drive_through_the_apps_tools(home, project, monkeypatch):
                     "md5Checksum": drive_store.md5(reel), "webViewLink": "https://drive.google.com/file/d/F9/view"}, "successful": True}}]}}
         raise AssertionError(slug)
     monkeypatch.setattr(apps, "mcp_call", mcp_call)
+    checked = []
+    monkeypatch.setattr(drive_store, "link_serves", lambda url, headers, size: checked.append(url) or True)
     said = []
     assert drive_store.save(project, False, "acct_2", said.append) == 0
+    assert checked and checked[0].startswith("https://app.example.dev/box/drive-file/abc123/")
     assert all(i.get("account") == "acct_2" for i in sent)
     assert not reel.exists() and (project / "source.mov").exists() and (project / "cut.mp4").exists()  # --reel-only keeps the rest
     assert "https://drive.google.com/file/d/F9/view" in said[0]
