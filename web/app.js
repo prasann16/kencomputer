@@ -1747,6 +1747,119 @@ function SendBigFile({ token, onClose }) {
   </div></div>`;
 }
 
+// Hosted Ken: a finished video waiting to be saved on this computer (drive_store.py offer). The page pulls it over the
+// same one-file link Google Drive uses, saves it where they pick, reads it back, and sends its size and SHA-256
+// (browsers have no MD5); only a match deletes Ken's copy. Nothing on this computer listens: the page asks. Phones get
+// the Drive link instead, so this shows on computers only.
+const PHONE_PAGE = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+// SHA-256 a piece at a time. WebCrypto only hashes a whole buffer, and a long original shouldn't sit in memory at once.
+const SHA256_K = new Int32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
+  0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+  0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+  0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08,
+  0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+function sha256Stream() {
+  const H = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  const W = new Int32Array(64), buf = new Uint8Array(64);
+  let used = 0, total = 0;
+  const block = (m, o) => {
+    for (let i = 0; i < 16; i++) W[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+    for (let i = 16; i < 64; i++) {
+      const x = W[i - 15], y = W[i - 2];
+      W[i] = W[i - 16] + (((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3)) + W[i - 7]
+        + (((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10));
+    }
+    let a = H[0] | 0, b = H[1] | 0, c = H[2] | 0, d = H[3] | 0, e = H[4] | 0, f = H[5] | 0, g = H[6] | 0, h = H[7] | 0;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) + ((e & f) ^ (~e & g)) + SHA256_K[i] + W[i]) | 0;
+      const t2 = ((((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+  };
+  return {
+    update(chunk) {
+      let i = 0;
+      total += chunk.length;
+      if (used) {
+        i = Math.min(64 - used, chunk.length);
+        buf.set(chunk.subarray(0, i), used); used += i;
+        if (used < 64) return;
+        block(buf, 0); used = 0;
+      }
+      for (; i + 64 <= chunk.length; i += 64) block(chunk, i);
+      buf.set(chunk.subarray(i), 0); used = chunk.length - i;
+    },
+    hex() {
+      const tail = new Uint8Array(used < 56 ? 64 : 128), v = new DataView(tail.buffer);
+      tail.set(buf.subarray(0, used)); tail[used] = 0x80;
+      v.setUint32(tail.length - 8, Math.floor(total / 0x20000000)); v.setUint32(tail.length - 4, (total * 8) % 0x100000000);
+      for (let o = 0; o < tail.length; o += 64) block(tail, o);
+      return [...H].map((n) => n.toString(16).padStart(8, '0')).join('');
+    },
+  };
+}
+async function sha256Hex(blob) {
+  if (blob.size <= 64 * 1024 * 1024) {  // a reel: the browser's own hash is faster and this fits in memory
+    const d = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  const h = sha256Stream(), r = blob.stream().getReader();
+  for (let c = await r.read(); !c.done; c = await r.read()) h.update(c.value);
+  return h.hex();
+}
+async function pullPickup(p, onProgress) {
+  // Chrome, Edge: they pick where first (the browser only allows it straight after the tap), it's written to disk,
+  // then read back from disk to check.
+  const handle = window.showSaveFilePicker ? await window.showSaveFilePicker({ suggestedName: p.name, startIn: 'downloads' }) : null;
+  const r = await fetch(`/api/drive-file/${p.token}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(r.status === 404 ? 'This link has expired. Ask Ken to offer the video again.' : 'Couldn’t reach Ken’s computer. Try again.');
+  let got = 0;
+  const counted = r.body.pipeThrough(new TransformStream({ transform(chunk, c) { got += chunk.byteLength; onProgress(got / p.size); c.enqueue(chunk); } }));
+  if (handle) {
+    await counted.pipeTo(await handle.createWritable());
+    const file = await handle.getFile();
+    return { size: file.size, sha256: await sha256Hex(file), how: 'disk', where: handle.name };
+  }
+  // Firefox, Safari: checked as it arrives, then handed to the browser's own download; they say when it's there.
+  const blob = await new Response(counted).blob();
+  const sum = await sha256Hex(blob);
+  if (blob.size !== p.size || sum !== p.sha256) throw new Error('The download didn’t arrive whole. Try again.');
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: p.name });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 120000);
+  return { size: blob.size, sha256: sum, how: 'download', where: p.name };
+}
+function SavePickups() {
+  const [list, setList] = useState([]), [state, setState] = useState({});  // token → {progress, error, ask, done}
+  const load = () => api('/api/pickups').then((r) => setList(r.pickups || [])).catch(() => {});
+  useEffect(() => { if (PHONE_PAGE) return; load(); addEventListener('ken-pickup', load); return () => removeEventListener('ken-pickup', load); }, []);
+  const set = (t, v) => setState((s) => ({ ...s, [t]: v }));
+  const confirm = async (p, got) => {
+    try { await api(`/api/pickups/${p.token}`, { json: got }); set(p.token, { done: got.where }); }
+    catch (e) { set(p.token, { error: e.message }); }
+  };
+  const save = async (p) => {
+    set(p.token, { progress: 0 });
+    try {
+      const got = await pullPickup(p, (f) => set(p.token, { progress: f }));
+      if (got.how === 'disk') await confirm(p, got); else set(p.token, { ask: got });
+    } catch (e) { set(p.token, e.name === 'AbortError' ? {} : { error: e.message }); }
+  };
+  const shown = [...list.filter((p) => !state[p.token]?.done), ...Object.entries(state).filter(([t, v]) => v.done && !list.some((p) => p.token === t)).map(([token, v]) => ({ token, name: v.done, gone: true }))];
+  if (PHONE_PAGE || !shown.length) return null;
+  return html`<div class="update-ready pickups" role="status">${shown.map((p) => {
+    const st = state[p.token] || {};
+    const mb = p.size ? ` (${Math.round(p.size / 1048576)} MB)` : '';
+    return html`<div class="pickup">${st.done || p.gone ? html`Saved ${p.name} on this computer. Checked, and removed from Ken’s computer.`
+      : st.ask ? html`Is ${p.name} in your Downloads?<button class="btn primary" onClick=${() => confirm(p, st.ask)}>Yes, remove Ken’s copy</button>`
+      : st.progress !== undefined ? html`Saving ${p.name}… ${Math.round(st.progress * 100)}%`
+      : html`${p.kind === 'source' ? 'Your original video' : 'Your edited video'} is ready: ${p.name}${mb}.<button class="btn primary" onClick=${() => save(p)}>Save to this computer</button>${st.error && html` <span class="connect-error" role="alert">${st.error}</span>`}`}</div>`;
+  })}</div>`;
+}
+
 function RenameProject({ project, onClose, onDone }) {
   const [name, setName] = useState(project.name), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const save = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'PATCH', json: { name: name.trim() } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
@@ -2090,11 +2203,12 @@ function App() {
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
       ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
-      ws.onopen = () => { setOnline(true); retry = 0; refresh(); };
+      ws.onopen = () => { setOnline(true); retry = 0; refresh(); dispatchEvent(new Event('ken-pickup')); present(true); };
       ws.onmessage = (e) => {
         heard = Date.now();
         const ev = JSON.parse(e.data), project = ev.project;
         if (ev.type === 'ping') return;
+        if (ev.type === 'pickup') { dispatchEvent(new Event('ken-pickup')); return; }
         if (ev.type === 'hello') { if (rev === null) rev = ev.rev; else if (ev.rev !== rev) location.reload(); return; }
         if (ev.type === 'ken.power') { setMeta((m) => ({ ...m, off: !ev.on })); return; }
         if (ev.type === 'coffee') { setAwake(ev.awake); window.kenDesktop?.coffeeChanged?.(); return; }
@@ -2128,13 +2242,24 @@ function App() {
     // so its computer can sleep; pick up again, and catch up, the moment they're back.
     const rest = () => { if (resting) return; resting = true; clearTimeout(timer); if (ws) ws.close(); };
     const wake = () => { napping = false; if (resting && !document.hidden) { resting = false; retry = 0; connect(); loadMeta(); load(); } };
+    // Hosted Ken offers a finished video here only while someone is at this page (web.py at_computer): on screen,
+    // touched lately, and not a browser a program drives. Said on connect, on any change, and every 30 seconds.
+    let told = 0;
+    const present = (now) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || (!now && Date.now() - told < 15000)) return;
+      told = Date.now();
+      try { ws.send(JSON.stringify({ type: 'presence', visible: document.visibilityState === 'visible', idle_ms: Date.now() - lastTouch, automated: !!navigator.webdriver })); } catch { /* the line is closing */ }
+    };
+    const presentEvery = setInterval(() => { if (!document.hidden) present(true); }, 30000);
     const visibility = () => {
+      if (!document.hidden) lastTouch = Date.now();
+      present(true);
       if (!HOSTED) return;
       clearTimeout(hiddenTimer);
       if (document.hidden) hiddenTimer = setTimeout(rest, 180000);
-      else { lastTouch = Date.now(); wake(); }
+      else wake();
     };
-    const touched = () => { lastTouch = Date.now(); if (napping) wake(); };
+    const touched = () => { lastTouch = Date.now(); if (napping) wake(); present(); };
     const TOUCH = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'focus'];
     let moved = 0;
     const mousemove = () => { const now = Date.now(); if (now - moved > 5000) { moved = now; touched(); } };
@@ -2144,7 +2269,7 @@ function App() {
       if (HOSTED && !napping && !busy.size && Date.now() - lastTouch > IDLE_MS) { napping = true; rest(); }
     }, 30000);
     document.addEventListener('visibilitychange', visibility);
-    return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
+    return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearInterval(presentEvery); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
       TOUCH.forEach((t) => removeEventListener(t, touched, { capture: true })); removeEventListener('mousemove', mousemove); if (ws) ws.close(); };
   }, []);
   const send = async (text, files, retryId, target = pid) => {
@@ -2255,7 +2380,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}${HOSTED && meta.video_drive && html`<${Safe} where="pickups"><${SavePickups}/><//>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>

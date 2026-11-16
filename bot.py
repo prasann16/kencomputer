@@ -43,6 +43,10 @@ if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a f
     print(f"{_site}/send/{_token}")
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--video-drive"]:  # hosted Ken: edited videos kept in their Google Drive, not here (drive_store.py)
+    import drive_store
+    raise SystemExit(drive_store.main(sys.argv[2:]))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -54,6 +58,7 @@ if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
     raise SystemExit(0)
 
 import asyncio
+import hashlib
 import html
 import json
 import logging
@@ -187,6 +192,36 @@ HOSTED_FILES_PROMPT = (
 )
 
 # Hosted Ken: apps are connected on the host's Apps page, so Ken asks it rather than guessing (apps.py).
+# Hosted Ken: an edited video is kept in their Google Drive, not on the computer (drive_store.py).
+HOSTED_VIDEO_DRIVE_PROMPT = (
+    "VIDEOS IN THEIR DRIVE OR ON THEIR COMPUTER (this comes first, over the VIDEO steps above): any video you make or "
+    "change for them counts, a reel and also a quick ffmpeg trim, cut, crop or title. Before you start it, run "
+    f"`{KEN_CMD} --video-drive check`. If it says neither Drive nor their computer is ready, reply in one line with "
+    "the link it prints (why: the finished video is kept with them, not on this computer) and stop; start the edit "
+    "when you're told it's connected. When the video is done and you've watched it: {outbox}run "
+    f"`{KEN_CMD} --video-drive save <the video file, or a reel's project folder>`. It "
+    "offers it on Ken's page when someone is at that page on their computer right now (they tap Save; it's deleted "
+    "here once their computer's copy matches), else puts it in their Drive, checked, and deletes it here. Pass "
+    "--to=computer or --to=drive if they said where. Tell them what it prints (the Drive link, or to tap Save). "
+    "Show the video once: name its full path in backticks once in your reply only while it's still here (offered on "
+    "their computer, or kept), never also its outbox copy, and after it went to Drive give the link, not a path. "
+    "{phone}For a "
+    f"change to a saved reel, run `{KEN_CMD} --video-drive fetch <project folder>` first (Drive), or ask them to send "
+    "the original again (their computer). Never delete a video it says wasn't saved."
+)
+
+
+def hosted_video_drive_prompt() -> str:
+    """The Drive steps, with the outbox only when Telegram is there to deliver it: in the Ken app the path in the reply
+    is the delivery, and an outbox copy nothing sends is just a second copy on the disk."""
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        return HOSTED_VIDEO_DRIVE_PROMPT.format(
+            outbox="if it's under 45 MB, copy it to the outbox first (for Telegram); then ", phone="")
+    return HOSTED_VIDEO_DRIVE_PROMPT.format(
+        outbox="", phone="Telegram isn't connected, so nothing goes to their phone by itself: don't use the outbox "
+        "and never say it's on its way to their phone; the Ken app (phone or computer) shows the path you name. ")
+
+
 HOSTED_APPS_PROMPT = (
     "APPS: the `apps` tools reach their own apps (Gmail, Calendar, Drive, Slack, Notion and 1,700+ more). Never guess "
     f"what's connected: run `{KEN_CMD} --apps` to see. When they ask for something in an app, run `{KEN_CMD} --apps "
@@ -291,9 +326,9 @@ TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # bots can upload up to 50MB
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool:
+async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> str | bool:
     """A video plays inline in the chat, re-encoded first if Telegram couldn't stream it or it's
-    over the upload limit. False: it couldn't be made to fit, so it goes as a file (or not at all)."""
+    over the upload limit: "as is" or "re-encoded". False: it couldn't be made to fit, so it goes as a file (or not at all)."""
     ready = await video.for_telegram(path, TELEGRAM_FILE_LIMIT)
     if ready is None:
         return False
@@ -307,7 +342,7 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
     finally:
         if out != path:
             out.unlink(missing_ok=True)
-    return True
+    return "as is" if out == path else "re-encoded"
 
 
 def download_where(path: Path) -> str:
@@ -381,6 +416,7 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     try:
         if not OUTBOX_DIR.exists():
             return
+        sent_now: set = set()  # the same file put in twice (two names, two copies) goes once
         for path in sorted(OUTBOX_DIR.iterdir()):
             if not path.is_file() or path.name.startswith("."):
                 continue
@@ -389,10 +425,19 @@ async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
                 if size == 0:
                     path.unlink(missing_ok=True)
                     continue
-                if path.suffix.lower() in video.VIDEO_SUFFIXES and await send_video(bot, chat_id, path, quiet):
-                    # The playable video may have been shrunk to fit; the original goes too, full quality, as a file
-                    # to post from. Too big for Telegram: say where to download it instead.
-                    if size <= TELEGRAM_FILE_LIMIT:
+                with open(path, "rb") as fh:
+                    same = (size, hashlib.sha256(fh.read(1 << 20)).hexdigest())
+                if same in sent_now:
+                    path.unlink(missing_ok=True)
+                    continue
+                sent_now.add(same)
+                if path.suffix.lower() in video.VIDEO_SUFFIXES and (sent := await send_video(bot, chat_id, path, quiet)):
+                    # Re-encoded to play (or shrunk to fit): the original goes too, full quality, as a file to post
+                    # from. Too big for Telegram: say where to download it instead. Sent as is, the video already is
+                    # the original, so it comes once.
+                    if sent == "as is":
+                        pass
+                    elif size <= TELEGRAM_FILE_LIMIT:
                         with open(path, "rb") as fh:
                             await bot.send_document(chat_id, fh, filename=path.name, caption="Full quality, to post",
                                                     disable_notification=True, write_timeout=300, read_timeout=300)
@@ -492,8 +537,9 @@ WORK_RULES = (
     "and wait for them to pick. When they've said what they want, just do it (long work as a background job). "
     f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
     f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, videos as playable videos (converted and shrunk to fit "
+    "delivered to their phone automatically when Ken on your phone (Telegram) is connected, and removed "
+    "from the outbox (without Telegram it goes nowhere: never say a file is on its way to their phone then); "
+    "images arrive as photos, videos as playable videos (converted and shrunk to fit "
     "Telegram's 50MB automatically), everything else as documents. Copy, don't "
     "move, if the original matters. Say what you're sending in your reply — the file arrives "
     "right after it (one too big for Telegram comes as a download link). Never write out where a file is saved. "
@@ -842,6 +888,11 @@ def where_you_are(f: dict | None = None) -> str:
             + (" Telegram is linked, so they may write from their phone too." if f["telegram"] else "")
             + " The header line of each message says where they wrote from. On their phone, keep it short and "
             "phone-friendly; in the app you can be fuller.")
+        if kind == "cloud" and not f["telegram"]:
+            # Swap's VM test (Nov 16): "on its way to your phone" with no Telegram, so nothing was on its way.
+            lines.append("Telegram isn't linked, so nothing put in the outbox reaches their phone: never say a file is "
+                         "on its way to their phone, and don't use the outbox. In the Ken app (on their phone or a "
+                         "computer), a file you made shows in the chat when you name its full path once in your reply.")
     controls = []
     if f["app"]:
         controls.append("in the app the stop button, the model menu and the coffee cup" if f["keep_awake"]
@@ -902,11 +953,14 @@ def build_system() -> str:
         system += "\n\n" + browser_prompt()
     if apps_mcp():
         import apps
+        import drive_store
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
         if host_site():
             system += "\n\n" + HOSTED_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
+        if apps_mcp() and host_site() and drive_store.enabled():
+            system += "\n\n" + hosted_video_drive_prompt()  # after the VIDEO steps, so it's the last word on where it goes
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
@@ -2073,6 +2127,20 @@ async def brain_connected(backend=None) -> None:
     await asyncio.gather(*(refresh_models_file(backend=name) for name in ([backend] if backend else BRAINS)))
 
 
+def video_storage_check(pid: str, said: list[str]) -> str | None:
+    """Hosted Ken with KEN_VIDEO_DRIVE=1: a finished video the reply left on this computer gets kept with them (in
+    their Drive or on their computer), whatever made it (a reel render or a quick ffmpeg trim). drive_store.after_turn."""
+    import drive_store
+    if not drive_store.enabled():
+        return None
+    # Outbox videos new since the last check (or since Ken started), so old leftovers aren't asked about again.
+    since, VIDEO_CHECKED[0] = VIDEO_CHECKED[0] or ENGINE._booted, time.time()
+    return drive_store.after_turn(said, KEN_CMD, skip=list(ENGINE.agents_dir.glob("*/files")), since=since)
+
+
+VIDEO_CHECKED = [0.0]  # when Ken's own after-reply video check last looked at the outbox
+
+
 async def start_engine() -> WebApp | None:
     ENGINE.configure_home(WORKSPACE, build_system, lambda: AGENT_PROMPT)
     ENGINE.tools = lambda only, backend: {**(browser_mcp() if "browser" in only else {}), **media_mcp(backend), **apps_mcp(),
@@ -2087,6 +2155,7 @@ async def start_engine() -> WebApp | None:
             BORN_FLAG.touch(exist_ok=True)  # Ken's first real reply (in the app or Telegram) is its birth
 
     ENGINE.history_hook = on_home_message
+    ENGINE.after_turn = video_storage_check
     ENGINE.new_install = lambda: not BORN_FLAG.exists()
     old = load_sessions().get(str(ALLOWED_USER_ID))
     if old and not ENGINE.kv_get(f"session:{HOME}"):

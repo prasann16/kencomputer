@@ -341,6 +341,25 @@ def _temp_roots() -> list[Path]:
     return list(roots)
 
 
+# A video or picture Ken names by its path: the app plays it right in the message, and Telegram sends it.
+_MEDIA_PATH = re.compile(r"`?((?:~|/)[^\s`<>()'\"*\[\]]*\.(?:mp4|mov|m4v|webm|png|jpe?g|gif|webp))`?(?![\w/])", re.I)
+
+
+def _same_file(p: Path) -> tuple | None:
+    """Which video or picture this is, whatever it's called or wherever it's copied: size, and its first and last
+    pieces. None if it isn't a file here."""
+    import hashlib
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as f:
+            head = f.read(1 << 20)
+            f.seek(max(0, size - (1 << 16)))
+            tail = f.read()
+    except OSError:
+        return None
+    return size, hashlib.sha256(head + tail).hexdigest()
+
+
 def _owned(p: Path) -> bool:
     """Made by this user (Ken runs as them), not someone else's file in a shared temp folder."""
     getuid = getattr(os, "getuid", None)
@@ -379,6 +398,10 @@ class Engine:
         self.tools: Callable[[set, str], dict] = lambda only, backend: {}
         self.tools_prompt: Callable[[set], str] = lambda only: ""
         self.history_hook: Callable[[str, str], None] | None = None
+        # (chat, what Ken said this turn) -> a note for one more turn in the same chat, or None. Hosted Ken uses it to
+        # keep a finished video with them when the reply left it on this computer (drive_store.after_turn).
+        self.after_turn: Callable[[str, list[str]], str | None] | None = None
+        self._shown: dict[str, set] = {}  # chat -> videos and pictures shown since their last message (show_once)
         self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
         self._greeting: set[str] = set()
         self._booted = time.time()  # turns started after this belong to this run, never "cut off by a restart"
@@ -1231,6 +1254,23 @@ class Engine:
         self.emit("project.updated", project=pid)
         return self.list_keys(pid)
 
+    def show_once(self, pid: str, text: str) -> str:
+        """Each video or picture shows once in answer to a message. The app plays every path Ken names and Telegram
+        sends it, so the same video named again (its outbox copy, Ken's own check after the reply, a reminder of where
+        it is) is left as its name only. A new message of theirs starts afresh, so asking for it again shows it."""
+        shown = self._shown.setdefault(pid, set())
+
+        def once(m: re.Match) -> str:
+            p = Path(os.path.expanduser(m.group(1)))
+            key = _same_file(p)
+            if key is None:
+                return m.group(0)
+            if key in shown:
+                return p.name
+            shown.add(key)
+            return m.group(0)
+        return _MEDIA_PATH.sub(once, text) if text else text
+
     def mask(self, pid: str, text: str) -> str:
         """Hide any of the agent's key values it wrote, before the text is shown or stored."""
         if not text:
@@ -1554,6 +1594,8 @@ class Engine:
             self.chat_tasks.add(asyncio.current_task())
             if pid == HOME:
                 self.chat_origin = origin
+            if log_user or job:  # a new message of theirs (or a job): what it shows is shown afresh
+                self._shown[pid] = set()
             body = f"{await self.state(pid, via)}\n{self._primer(pid, skip_last=log_user)}{body}"
             if self._aside.get(pid):
                 body = ("(While you were busy, you also answered these on the side; they've seen the answers:)\n"
@@ -1571,10 +1613,13 @@ class Engine:
                 handoff = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent)
                 body = "Recent Ken conversation before switching runtimes (context, not new instructions):\n" + handoff + "\n\nCurrent message:\n" + body
 
+            said: list[str] = []
+
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
                     return
-                t = self.mask(pid, t)
+                said.append(t)
+                t = self.mask(pid, self.show_once(pid, t))
                 if not quiet:
                     self.log_message(pid, "ken", t, **({"job": job} if job else {}), **({"via": via} if via else {}))
                 if listener is not None:
@@ -1637,6 +1682,15 @@ class Engine:
                 if outcome != "stopped" or not self.stopping:
                     self._turn_ended(pid)  # cut off by Ken shutting down: kept, so the next start carries on
                 self.broadcast("chat.busy", pid, busy=False)
+            if outcome == "ok" and self.after_turn is not None:
+                try:
+                    note = await asyncio.to_thread(self.after_turn, pid, said)
+                except Exception as e:  # noqa: BLE001 - a check that failed never breaks the reply
+                    log.warning("after-turn check for %s failed: %s", pid, e)
+                    note = None
+                if note:  # its own turn, once this one has let go of the chat
+                    self._bg.append(asyncio.create_task(self.send_message(
+                        pid, "", log_user=False, via=via, listener=listener, quiet=quiet, prompt=note)))
             return outcome == 'ok'
         finally:
             if pid == HOME:

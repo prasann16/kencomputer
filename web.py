@@ -133,6 +133,41 @@ VOICE_FOLLOW_UP = (
 # Hosted Ken updates itself only in a quiet spell (bot.py update_when_quiet).
 LAST_ASKED = time.monotonic()
 OPEN_PAGES: set = set()
+PHONE_PAGE = re.compile(r"Mobi|Android|iPhone|iPad", re.I)
+# A browser driven by a program (a headless or automation Chromium, like Ken's own hidden browser), never a person.
+ROBOT_PAGE = re.compile(r"HeadlessChrome|Headless|PhantomJS|Puppeteer|Playwright", re.I)
+# Hosted Ken offers a finished video on a computer only where someone is at it: the page there says, every 30 seconds
+# and when it changes, whether it's on screen and when it was last touched (web/app.js presence). A page that never
+# says (an older page, one left in a background tab) or said it too long ago doesn't count.
+PRESENCE_FRESH_S = 90
+PRESENCE_TOUCHED_S = 10 * 60
+
+
+def at_computer(ws, now: float | None = None) -> bool:
+    """Someone at a computer, looking at this page: not a phone or a program, on screen, touched in the last 10 minutes,
+    and said so in the last 90 seconds (so a socket that's gone quiet without closing stops counting)."""
+    seen = getattr(ws, "ken_presence", None)
+    if getattr(ws, "ken_phone", False) or getattr(ws, "ken_robot", False) or not seen or ws.closed:
+        return False
+    now = time.time() if now is None else now
+    return (seen["visible"] and not seen["automated"] and now - seen["at"] <= PRESENCE_FRESH_S
+            and now - seen["touched"] <= PRESENCE_TOUCHED_S)
+
+
+def presence(said: str) -> dict | None:
+    """A page's presence report ({"type": "presence", "visible", "idle_ms", "automated"}), or None if it isn't one."""
+    try:
+        d = json.loads(said)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or d.get("type") != "presence":
+        return None
+    now = time.time()
+    try:
+        idle = max(0.0, float(d.get("idle_ms", 1e12)) / 1000)
+    except (TypeError, ValueError):
+        idle = 1e9
+    return {"visible": d.get("visible") is True, "automated": d.get("automated") is not False, "touched": now - idle, "at": now}
 
 
 def quiet_seconds() -> float:
@@ -252,6 +287,7 @@ class WebApp:
                       # In the cloud: no Mac features, and the plan's usage when the hosting service passes it.
                       "hosted": hosted_web(), "usage": plan_usage(request),
                       "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
+                      "video_drive": hosted_web() and os.environ.get("KEN_VIDEO_DRIVE") == "1",  # drive_store.enabled()
                       "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
                       "logout_url": logout_url(), "off": self.engine.is_off()})
 
@@ -437,6 +473,44 @@ class WebApp:
         if not names or any(not n or "/" in n or n.startswith(".") or not p.is_file() for n, p in zip(names, paths)):
             return _json({"error": "A file didn't arrive. Try sending it again."}, 400)
         return _json({"ok": True}) if await self.phone.file_arrived(token, paths if "files" in body else paths[0]) else expired
+
+    async def drive_file(self, request):
+        """Hosted Ken: one finished video, for Google Drive to fetch while `ken --video-drive save` waits (drive_store.py).
+        The host passes Drive's request on through its own link; the token works for that one file, for 30 minutes."""
+        import drive_store
+        if not drive_store.enabled():
+            raise web.HTTPNotFound()
+        path = drive_store.linked_file(request.match_info["token"])
+        if path is None:
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
+                                               "Cache-Control": "no-store"})
+
+    async def pickups(self, request):
+        """Hosted Ken: finished videos waiting to be saved on their computer (drive_store.py offer). GET: the list, for
+        the page. GET …/pages: how many pages are open on a computer and on a phone (for `save --to=auto`). POST
+        …/announce: tell open pages. POST …/<token> {"size", "sha256", "how", "where"}: the page saved it; a match
+        deletes Ken's copy."""
+        import drive_store
+        if not drive_store.enabled():
+            raise web.HTTPNotFound()
+        tail = request.match_info.get("tail", "")
+        if request.method == "GET" and tail == "pages":
+            phones = sum(1 for ws in OPEN_PAGES if getattr(ws, "ken_phone", False))
+            return _json({"computer": sum(1 for ws in OPEN_PAGES if at_computer(ws)), "phone": phones})
+        if request.method == "GET" and not tail:
+            return _json({"pickups": drive_store.pickups()})
+        if request.method != "POST" or not tail:
+            raise web.HTTPNotFound()
+        if tail == "announce":
+            self.engine.broadcast("pickup")
+            return _json({"ok": True})
+        b = await self._body(request)
+        done = drive_store.picked_up(tail, b.get("size"), str(b.get("sha256", "")), str(b.get("how", "disk"))[:20], str(b.get("where", "")))
+        if done["ok"]:
+            self.engine.broadcast("pickup")
+            log.info("Video saved on their computer: %s (%s)", done["name"], done["kind"])
+        return _json(done, 200 if done["ok"] else 409)
 
     # Voice mode (hosted): the site's voice service talks; these are what it can ask of Ken. Interface-agnostic: any
     # talker that can make HTTP calls with Ken's web token can use them.
@@ -1130,8 +1204,12 @@ class WebApp:
         await ws.prepare(request)
         self.websockets.add(ws)
         OPEN_PAGES.add(ws)
-        if request.headers.get("x-ken-client") == "phone":  # the app closes it when it leaves the screen
+        phone_app = request.headers.get("x-ken-client") == "phone"
+        if phone_app:  # the app closes it when it leaves the screen
             self.phones.add(ws)
+        agent = request.headers.get("User-Agent", "")
+        ws.ken_phone = phone_app or bool(PHONE_PAGE.search(agent))  # hosted Ken: where a video can be saved
+        ws.ken_robot, ws.ken_presence = bool(ROBOT_PAGE.search(agent)), None
         q = self.engine.subscribe()
         await ws.send_json({"type": "hello", "rev": self.rev})
 
@@ -1150,6 +1228,8 @@ class WebApp:
             async for msg in ws:
                 if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                     break
+                if msg.type == WSMsgType.TEXT and len(msg.data) < 1000 and (seen := presence(msg.data)):
+                    ws.ken_presence = seen
         finally:
             pumping.cancel()
             self.engine.unsubscribe(q)
@@ -1253,6 +1333,9 @@ class WebApp:
         r.add_post("/api/apps/connected", self.app_connected)
         r.add_post("/api/credits/low", self.credits_low)
         r.add_get("/api/telegram-files/{token}", self.big_file)
+        r.add_get("/api/drive-file/{token}", self.drive_file)
+        r.add_get("/api/pickups", self.pickups)
+        r.add_route("*", "/api/pickups/{tail}", self.pickups)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)
