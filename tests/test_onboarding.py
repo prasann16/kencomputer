@@ -10,7 +10,12 @@ from onboarding import Onboarding
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the sign-in helper is for the Mac app")
 
-URL = "https://claude.com/cai/oauth/authorize?code=true&client_id=x"
+# The link `claude setup-token` prints, in the CLI's own order (made up values): its page shows a code to paste.
+URL = ("https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code"
+       "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference"
+       "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=a1b2c3d4e5")
+# The one it opens in a browser on this computer: Claude's answer comes back to the CLI on localhost.
+OPENED = URL.replace("https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback", "http%3A%2F%2Flocalhost%3A54545%2Fcallback")
 TOKEN = "sk-ant-oat01-" + "abc_DEF-123" * 5  # the real shape: sk-ant-oat, two digits, 40+ characters
 
 
@@ -106,15 +111,16 @@ async def test_a_sign_in_that_stops_says_so(tmp_path, monkeypatch):
 
 async def test_the_link_is_the_one_the_browser_opened(tmp_path, monkeypatch):
     # In the Mac app the browser's link finishes the sign-in by itself; the printed one needs a code.
-    opened = "https://claude.com/cai/oauth/authorize?code=true&redirect_uri=http%3A%2F%2Flocalhost%3A5%2Fcallback"
+    opened = OPENED
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "open").write_text("#!/bin/sh\n")  # stands in for the real browser
-    (bin_dir / "open").chmod(0o755)
+    for name in ("open", "xdg-open"):  # stand in for the real browser: a test never opens the developer's own
+        (bin_dir / name).write_text("#!/bin/sh\n")
+        (bin_dir / name).chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     fake_cli(tmp_path, monkeypatch, f'"$BROWSER" "{opened}"\necho "{URL}"\nsleep 5\n')
     setup, _ = make(tmp_path)
-    assert (await setup.start()) == {"url": URL, "browser_url": opened}
+    assert (await setup.start()) == {"url": URL, "browser_url": OPENED}
     setup.stop()
 
 
@@ -234,3 +240,60 @@ async def test_a_sign_in_claude_no_longer_accepts_is_forgotten(tmp_path, monkeyp
     assert await setup.forget_if_dead()
     assert not setup.status()["claude"] and "CLAUDE_CODE_OAUTH_TOKEN" not in (tmp_path / ".env").read_text()
     assert not await setup.forget_if_dead()  # nothing left to check
+
+
+# How the sign-in link can arrive broken, and what Ken must do with each: the whole link, or none at all.
+ESC = "\x1b"
+WRAPPED = [
+    URL,  # on one line
+    f"{ESC}[1mBrowser didn't open? Use the url below to sign in:{ESC}[22m\n\n{URL}\n\nPaste code here if prompted > ",
+    URL[:80] + "\n" + URL[80:200] + "\r\n" + URL[200:],  # wrapped by a narrow terminal
+    "  " + URL[:120] + "\n  " + URL[120:] + "\n",  # wrapped, indented
+]
+
+
+@pytest.mark.parametrize("printed", WRAPPED)
+def test_the_whole_sign_in_link_is_read_however_the_terminal_printed_it(printed):
+    text = onboarding.CURSOR_RIGHT.sub(lambda m: " " * int(m.group(1) or 1), printed)
+    assert onboarding.auth_url(onboarding.ANSI.sub("", text)) == URL
+
+
+@pytest.mark.parametrize("cut", [
+    "https://claude.ai/oauth/authorize?code=true&redirect_uri=http%3A%2F%2Flocalhost%3A5%2Fcallback",  # what Swap got
+    URL.split("&state=")[0],  # cut before the state
+    URL.replace("client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&", ""),
+    URL[:60],
+    "https://claude.com/cai/login",
+])
+def test_a_cut_sign_in_link_is_never_offered(cut):
+    assert not onboarding.whole_link(cut)
+    assert onboarding.auth_url(cut + "\n\nPaste code here if prompted > ") == ""
+
+
+async def test_a_cut_link_says_so_instead_of_handing_it_over(tmp_path, monkeypatch):
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL.split("&state=")[0]}"\nsleep 0.3\n')
+    setup, _ = make(tmp_path)
+    with pytest.raises(RuntimeError, match="Couldn’t get a valid Claude sign-in link. Try again."):
+        await setup.start()
+    assert setup.status()["error"] == "Couldn’t get a valid Claude sign-in link. Try again."
+
+
+async def test_a_link_printed_in_two_pieces_still_starts_the_sign_in(tmp_path, monkeypatch):
+    fake_cli(tmp_path, monkeypatch, f'printf "%s" "{URL[:150]}"\nsleep 0.4\necho "{URL[150:]}"\nsleep 5\n')
+    setup, _ = make(tmp_path)
+    assert (await setup.start()) == {"url": URL}
+    setup.stop()
+
+
+async def test_in_the_cloud_only_the_code_link_is_offered(tmp_path, monkeypatch):
+    # A computer in the cloud: the localhost link would send Claude's answer to the phone, not here. Only the link whose
+    # page shows a code to paste can work.
+    monkeypatch.setenv("KEN_PLATFORM", "agent37")
+    fake_cli(tmp_path, monkeypatch, f'"$BROWSER" "{OPENED}"\necho "{URL}"\nsleep 5\n')
+    setup, _ = make(tmp_path)
+    assert (await setup.start()) == {"url": URL}
+    setup.stop()
+
+
+def test_no_test_can_open_a_real_browser():
+    assert not any(os.environ.get(k) for k in ("DISPLAY", "WAYLAND_DISPLAY", "BROWSER"))

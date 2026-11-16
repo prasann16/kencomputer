@@ -26,6 +26,10 @@ CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")  # how the CLI draws spaces
 # Colours and cursor moves, links (ended by BEL or by ESC \\), and character-set switches like ESC ( B.
 ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[a-zA-Z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 AUTH_URL = re.compile(r"https://(?:claude\.com|claude\.ai|platform\.claude\.com)/\S*oauth\S*")
+# A sign-in link is only worth showing whole: one missing its client, return address or state is refused by Claude
+# ("invalid request"). A terminal can wrap a long link onto the next line, so a cut one is joined back up.
+NEEDED = ("client_id", "redirect_uri", "state")
+URL_TAIL = re.compile(r"[ \t]*\r?\n[ \t]*([A-Za-z0-9%&=._~:/?#+\-]+)(?=\s|$)")
 # How the CLI opens the browser (it runs $BROWSER with the link): note the link for the app, then open it on a Mac,
 # or on Linux only with a screen. Never with $BROWSER still set: Linux's open and xdg-open hand the link to $BROWSER,
 # which is this script again, so each copy started another until the computer fell over and restarted (every Ken in
@@ -49,6 +53,30 @@ OPENAI_API_KEY = re.compile(r"^sk-[A-Za-z0-9_-]{20,}$")
 FAILED = re.compile(r"(?im)^.*\b(error|failed|denied|not allowed|not permitted|invalid|expired)\b.*$")
 # Whisper download sizes in MB, for a progress bar while the voice model arrives.
 WHISPER_MB = {"tiny": 75, "base": 145, "small": 484, "medium": 1530, "large-v3": 3100}
+
+
+def whole_link(url: str) -> bool:
+    """A Claude sign-in link with everything Claude needs to accept it."""
+    from urllib.parse import parse_qs, urlsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    query = parse_qs(parts.query)
+    return parts.path.endswith("/oauth/authorize") and all(query.get(k, [""])[0] for k in NEEDED)
+
+
+def auth_url(text: str) -> str:
+    """The first whole sign-in link in what the CLI printed (its codes already gone), joining a link the terminal
+    wrapped; "" until one is whole."""
+    for match in AUTH_URL.finditer(text):
+        url, rest = match.group(0), text[match.end():]
+        while not whole_link(url) and (more := URL_TAIL.match(rest)):
+            url, rest = url + more.group(1), rest[more.end():]
+        if whole_link(url):
+            return url
+    return ""
 
 
 def claude_cli() -> str:
@@ -249,15 +277,21 @@ class Onboarding:
         self.pid, self.fd, self.output, self.exited = pid, fd, "", False
         self.started = time.time()
         asyncio.get_running_loop().add_reader(fd, self._read)
-        url = await self._wait_for(AUTH_URL, 30)
+        url = await self._wait_for(auth_url, 30)
         if not url:
             self.stop()
-            self._failed("Couldn’t open Claude sign-in. Try again.", "no sign-in link")
+            reason = "cut sign-in link" if AUTH_URL.search(self.output) else "no sign-in link"
+            self._failed("Couldn’t get a valid Claude sign-in link. Try again.", reason)
             raise RuntimeError(self.error)
         self.watch = asyncio.create_task(self._watch())
         try:
             opened = Path(str(opener) + ".url").read_text().strip()
         except OSError:
+            opened = ""
+        # The browser's link sends Claude's answer to localhost, so it only works with a browser on this computer (the
+        # Mac app). In the cloud it would reach the person's phone, not this computer: there the printed link, whose
+        # page shows a code to paste, is the only one that works.
+        if not whole_link(opened) or os.environ.get("KEN_PLATFORM"):
             opened = ""
         return {"url": url, **({"browser_url": opened} if opened else {})}
 
@@ -418,10 +452,10 @@ class Onboarding:
         text = CURSOR_RIGHT.sub(lambda m: " " * int(m.group(1) or 1), chunk.decode(errors="replace"))
         self.output = (self.output + ANSI.sub("", text))[-20000:]
 
-    async def _wait_for(self, pattern: re.Pattern, seconds: float) -> str:
+    async def _wait_for(self, find: Callable[[str], str], seconds: float) -> str:
         for _ in range(int(seconds * 5)):
-            if match := pattern.search(self.output):
-                return match.group(0)
+            if found := find(self.output):
+                return found
             if self.exited:
                 break
             await asyncio.sleep(0.2)
