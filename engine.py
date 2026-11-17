@@ -1573,6 +1573,9 @@ class Engine:
 
             async def on_text(t: str) -> None:
                 if t.strip() == "NOTHING_TO_SAY":
+                    if job:  # an agent's scheduled job chose silence: a trace that it ran (see run_job)
+                        log.info("job %s in %s ran: nothing to say", job.get("name", "job"), pid)
+                        crash.track("job_quiet", builtin=False)
                     return
                 t = self.mask(pid, t)
                 if not quiet:
@@ -1621,7 +1624,10 @@ class Engine:
                 # say it once with its button; that message also stops the hello being tried again and again.
                 if not text.strip() and not job and not log_user and action == "retry":
                     return False
+                if job:  # an agent's scheduled job: say which one didn't run, and what happens next
+                    msg = self.job_missed(job, msg)
                 self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
+                                 **({"job": job} if job else {}),
                                  **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
                 if listener is not None:
                     await listener(msg)
@@ -1721,12 +1727,13 @@ class Engine:
             nonlocal last
             last = t
 
+        failed = ""
         try:
             final = await until_idle(session, session.ask(f"[{time.strftime('%a %d %b %H:%M')}]\n{prompt}", on_text))
             text = (final or last or "").strip()
         except Exception as e:
             log.warning("job %s failed: %s", (job or {}).get("name", "job"), e)
-            text = ""
+            text, failed = "", friendly_error(e, self.backend(pid))
         finally:
             name = (job or {}).get("name")  # a job they named themselves stays "custom": names are theirs
             self.record_usage(session, pid, "job", job=name if name in ("morning-brief", "nightly-review") else "custom")
@@ -1735,7 +1742,15 @@ class Engine:
             except Exception:
                 pass
         if text == "NOTHING_TO_SAY":
-            text = ""
+            # Silent by design, but leave a trace, so it can be seen later that the job ran and chose to say nothing.
+            log.info("job %s ran: nothing to say", (job or {}).get("name", "job"))
+            crash.track("job_quiet", builtin=name in ("morning-brief", "nightly-review"))
+            return ""
+        if failed or not text:
+            # A job that didn't run must never just vanish: they'd wait for a brief that never comes. One plain line.
+            # (One that ran but said nothing may still have done things, so it isn't offered to run again as if not.)
+            text, preface = self.job_missed(job, failed) if failed else (
+                f"⏰ Your {self._job_name(job)} ran but came back with nothing this time. Ask me if you want it again."), ""
         text = self.mask(pid, text)
         if not text:
             return ""
@@ -1748,6 +1763,18 @@ class Engine:
         if listener is not None:
             await listener(text)
         return text
+
+    @staticmethod
+    def _job_name(job: dict | None) -> str:
+        """How a job reads in the middle of a sentence: the label "⏰ Brand deals" is "brand deals"."""
+        what = re.sub(r"^\W+", "", (job or {}).get("label") or "") or "scheduled job"
+        return what[0].lower() + what[1:]
+
+    @classmethod
+    def job_missed(cls, job: dict | None, why: str) -> str:
+        """The plain line for a scheduled job that didn't run, and what happens next."""
+        return f"⏰ Your {cls._job_name(job)} didn't run just now. {why} " + (
+            "Ask me to run it now." if (job or {}).get("once") else "It'll try again next time, or ask me to run it now.")
 
     async def on_open(self, pid: str) -> None:
         """A chat was opened: warm up, and if it's been a while, speak first."""
@@ -2025,6 +2052,25 @@ class Engine:
         yield
 
     async def _execute(self, rid: str) -> None:
+        """Run a background job. Whatever goes wrong, it never stays "running" with nobody told: a failure before the
+        job even got going (setting up its skills or its AI session) still ends it, with one plain line."""
+        try:
+            await self._execute_run(rid)
+        except Exception as e:
+            log.warning("run %s broke before it could finish: %s", rid, e)
+            crash.report(e, f"run failed to start: {e}", where="engine._execute")
+            run = self._run_row(rid)
+            if run["status"] not in ("queued", "running"):
+                return  # it had already finished; only what came after went wrong
+            pid, reason = run["project"], friendly_error(e, self.backend(run["project"]))
+            self._set_run(rid, status="failed", finished=time.time(), summary=f"Failed: {reason}", activity="")
+            self.emit("run.finished", project=pid, run=rid, status="failed", title=run["title"], summary=f"Failed: {reason}",
+                      origin=self.origins.pop(rid, None))
+            text = f'■ Your background job "{self._CARRIED.sub("", run["title"])}" didn\'t finish. {reason} Ask me to try again.'
+            self.log_message(pid, "ken", text, **({"via": "background"} if pid == HOME else
+                                                  {"run": rid, "run_title": run["title"], "run_status": "failed"}))
+
+    async def _execute_run(self, rid: str) -> None:
         run = self._run_row(rid)
         pid = run["project"]
         async with self._room(rid):
@@ -2068,7 +2114,7 @@ class Engine:
                 self._set_run(rid, activity=line)
                 self.emit("run.tool", project=pid, run=rid, text=line)
 
-            status, summary, began = "failed", "", time.monotonic()
+            status, summary, began, reason, out_of_time = "failed", "", time.monotonic(), "", False
             try:
                 final = await asyncio.wait_for(until_idle(session, session.ask(run["prompt"], on_text, on_tool)), RUN_LIMIT)
                 status, summary = "done", self.mask(pid, (final or last or "Finished.").strip())
@@ -2077,10 +2123,12 @@ class Engine:
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
                 if isinstance(e, NoAnswer) or not isinstance(e, asyncio.TimeoutError):
-                    summary = f"Failed: {friendly_error(e, self.backend(pid))}"
+                    reason = friendly_error(e, self.backend(pid))
+                    summary = f"Failed: {reason}"
                 else:
-                    summary = ("Stopped: it hit the one-hour limit." if time.monotonic() - began >= RUN_LIMIT - 60
-                               else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
+                    out_of_time = time.monotonic() - began >= RUN_LIMIT - 60
+                    reason = "It hit the one-hour limit." if out_of_time else "Ken went quiet for 45 minutes."
+                    summary = ("Stopped: it hit the one-hour limit." if out_of_time else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
             finally:
                 self.run_sessions.pop(rid, None)
                 self.record_usage(session, pid, "background")
@@ -2093,16 +2141,81 @@ class Engine:
                 status = "stopped"
             self._set_run(rid, status=status, finished=row["finished"] if status == "stopped" and row["finished"] else time.time(),
                           summary=summary[:4000], activity="")
+            origin = self.origins.pop(rid, None)
+            carried = status != "stopped" and out_of_time and self._carry_on(run, last, origin)
+            # A run that carries on isn't a failure to them: screens and the phone don't show it as one.
             self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
-                      origin=self.origins.pop(rid, None))
+                      origin=origin, **({"continued": True} if carried else {}))
+            if carried:
+                return
+            if out_of_time and (hours := self._carried(run["title"]) + 1) > 1:
+                reason = f"It worked on it for {hours} hours and still wasn't done."
             if status != "stopped" and pid == HOME:
                 # Like a helper reporting back: Ken reads the result and tells them, wherever they are.
-                self._bg.append(asyncio.create_task(self.send_message(HOME, "", log_user=False, via="background", prompt=(
-                    f'(Your background job "{run["title"]}" {"finished" if status == "done" else "did not finish"}. Its report:\n'
-                    f"{summary[:4000]}\n\nTell them the result now in a short message, with links, and send any files "
-                    "they'd want as you normally do. Don't redo the work.)"))))
+                self._bg.append(asyncio.create_task(self._report_run(run, status, summary, reason)))
             elif status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
+
+    # A job cut off by the one-hour limit is usually just a big job (a month of posts), not a broken one: it carries on
+    # in a fresh run from what it already made, up to this many times, before Ken tells them it didn't finish.
+    CARRY_ONS = 2
+    _CARRIED = re.compile(r" \(continued(?: (\d+))?\)$")
+    _CARRY_NOTE = "\n\n(This job already ran for an hour"
+
+    def _carried(self, title: str) -> int:
+        """How many times a job has carried on already, from its title: "Posts (continued 2)" is 2."""
+        m = self._CARRIED.search(title)
+        return int(m.group(1) or 1) if m else 0
+
+    def _carry_on(self, run: dict, last: str, origin: int | None) -> bool:
+        """Start the next run of a job that hit the time limit. False when it has carried on enough already."""
+        done = self._carried(run["title"])
+        if done >= self.CARRY_ONS:
+            return False
+        base = self._CARRIED.sub("", run["title"])[:100]
+        brief = run["prompt"].split(self._CARRY_NOTE)[0]
+        cwd = self.home_cwd if run["project"] == HOME else self.workdir(self.get_agent(run["project"]))
+        prompt = (f"{brief}{self._CARRY_NOTE} and was cut off by the time limit before it finished. "
+                  + (f"The last thing it said was:\n{last.strip()[:1500]}\n\n" if last.strip() else "")
+                  + f"Carry on from where it left off. What it made so far is in your working folder ({cwd}): check what's "
+                  "already there and build on it. Don't start over.)")
+        try:
+            self.start_run(run["project"], base + (" (continued)" if not done else f" (continued {done + 1})"), prompt,
+                           source=run["source"], origin=origin)
+        except Exception as e:
+            log.warning("couldn't carry on with run %s: %s", run["id"], e)
+            return False
+        return True  # quietly: they hear only how the whole job ends
+
+    async def _report_run(self, run: dict, status: str, summary: str, reason: str) -> None:
+        """Ken tells them how a background job went, in its own words. When that turn fails or says nothing (the AI
+        is down at that moment too), a plain line still reaches them: a job never ends in silence."""
+        heard: list[str] = []
+
+        async def listener(t: str) -> None:
+            heard.append(t)
+
+        ok = False
+        try:
+            ok = await self.send_message(HOME, "", log_user=False, via="background", listener=listener, prompt=(
+                f'(Your background job "{run["title"]}" {"finished" if status == "done" else "did not finish"}. Its report:\n'
+                f"{summary[:4000]}\n\nTell them the result now in a short message, with links, and send any files "
+                "they'd want as you normally do. Don't redo the work.)"))
+        except asyncio.CancelledError:
+            raise  # Ken is shutting down: the turn is picked up again when it starts (resume_interrupted)
+        except Exception as e:
+            log.warning("reporting run %s failed: %s", run["id"], e)
+        if ok and heard:
+            return
+        title = self._CARRIED.sub("", run["title"])  # the job they know, not its third run
+        if status == "done":
+            started = self._run_row(run["id"])["started"]
+            made = self.made_since(started) if started else []
+            text = f'✓ Your background job "{title}" is done.' + (
+                "\nIt made: " + ", ".join(f"`{p}`" for p in made) if made else "") + "\nAsk me if you want the details."
+        else:
+            text = f'■ Your background job "{title}" didn\'t finish. {reason or "Something went wrong."} Ask me to try again.'
+        self.log_message(HOME, "ken", text, via="background")
 
     async def stop_run(self, rid: str, by: str = "") -> None:
         run = self._run_row(rid)

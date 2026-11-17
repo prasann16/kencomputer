@@ -1702,7 +1702,7 @@ def job_tag(job: dict) -> dict:
     """What a job's messages carry, so the app and the phone can say why Ken is talking."""
     name = str(job.get("name", "job"))
     return {"name": name, "label": JOB_LABELS.get(name, "⏰ " + name.replace("-", " ").capitalize()),
-            "time": job.get("time", ""), "at": time.time()}
+            "time": job.get("time", ""), "at": time.time(), **({"once": True} if job.get("date") else {})}
 
 
 async def run_outbound(job: dict) -> None:
@@ -1736,6 +1736,21 @@ async def run_outbound(job: dict) -> None:
         await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, preface=late_notice(job, time.localtime()))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
+
+
+async def run_agent_job(agent: str, job: dict, notice: str = "") -> None:
+    """An agent's scheduled job runs in that agent's own chat. A failed turn says so there (see send_message); one that
+    can't even start (the agent was deleted) says so in Ken's chat, so it never just doesn't happen."""
+    tag = job_tag(job)
+    try:
+        await ENGINE.send_message(
+            agent, "", log_user=False, job=tag,
+            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
+            + (f" Open your message with this line, as is: {notice}" if notice else ""))
+    except Exception as e:
+        log.warning("agent job %s failed (%s)", job.get("name", "job"), e)
+        ENGINE.log_message(HOME, "ken", ENGINE.job_missed(tag, "Something went wrong on Ken's side."),
+                           job=tag, via="background")
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
@@ -1986,12 +2001,7 @@ async def scheduler() -> None:
                     agent = job.get("agent") or job.get("project")
                     if agent:
                         # An agent's job runs in that agent's own chat.
-                        asyncio.create_task(ENGINE.send_message(
-                            str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
-                            + (f" Open your message with this line, as is: {notice}" if (notice := late_notice(job, now)) else ""),
-                            job=job_tag(job),
-                        ))
+                        asyncio.create_task(run_agent_job(str(agent), job, late_notice(job, now)))
                     else:
                         asyncio.create_task(run_outbound(job))
         except Exception as e:
@@ -2188,7 +2198,8 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
                                            disable_notification=hush, **quoting(ev.get("origin")))
-            elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME:
+            elif (ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME
+                  and not ev.get("continued")):  # carrying on in a new run: not finished yet
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
@@ -2229,7 +2240,7 @@ async def notify_app(web_app=None) -> None:
                 if ev["type"] == "approval.created":
                     pid = ev["approval"]["project"]
                     note = {"kind": "approval", "title": ev["approval"]["title"]}
-                elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
+                elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and not ev.get("continued"):
                     note = {"kind": "run", "title": ev.get("title", ""), "status": ev.get("status")}
                 elif ev["type"] == "message" and ev.get("role") == "ken" and (ev.get("text") or "").strip():
                     note = {"kind": "message", "text": ev["text"].strip()[:300]}
