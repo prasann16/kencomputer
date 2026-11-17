@@ -1590,6 +1590,19 @@ async def stop_all_work() -> None:
         await ENGINE.stop_run(run["id"], by="Ken")
 
 
+def ask_to_clear(brief: str) -> bool:
+    """Start the background job that lists what could be cleared off a filling disk (see Usage.watch_disk). Its report
+    comes back to Ken as one question for them; Ken deletes only what they say yes to."""
+    if ENGINE.is_off() or asking_ai():
+        return False
+    try:
+        ENGINE.start_run(HOME, "What could be cleared", brief, source="Ken")
+        return True
+    except Exception as e:
+        log.warning("couldn't start the disk list: %s", e)
+        return False
+
+
 def more_space() -> str:
     """How to get a bigger disk: a Ken in the cloud's plan page on its site, else clearing some room."""
     site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
@@ -3028,7 +3041,7 @@ async def run() -> None:
     # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
     ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
-                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space())),
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
                   asyncio.create_task(runtimes.update(signed_in()))]
     try:

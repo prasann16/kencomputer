@@ -226,6 +226,72 @@ def test_watch_disk_stops_work_before_saying_so(monkeypatch):
     assert order == ["stopped"] and len(said) == 1 and "stopped what I was doing" in said[0]
 
 
+def watch(u, monkeypatch, free_gb, total_gb=20, ask=None):
+    """One minute of watch_disk on a fake disk; returns (stopped?, briefs it asked with)."""
+    import asyncio
+    import shutil
+    from collections import namedtuple
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: namedtuple("D", "total used free")(total_gb * GB, 0, int(free_gb * GB)))
+    stopped, briefs = [], []
+
+    async def stop():
+        stopped.append(True)
+
+    async def go():
+        task = asyncio.create_task(u.watch_disk(stop, "more", every=10, ask=ask or (lambda b: briefs.append(b) or True)))
+        await asyncio.sleep(0.02)
+        task.cancel()
+    asyncio.run(go())
+    return bool(stopped), briefs
+
+
+def test_disk_with_room_asks_nothing_and_clears_nothing(monkeypatch):
+    """Under 75% nothing happens; and over it Ken only asks: no file is ever removed without their yes."""
+    u, said = fresh()
+    keep = u.path.parent / "work" / "videos" / "v1_nomusic.mp4"
+    keep.parent.mkdir(parents=True)
+    keep.write_bytes(b"x" * 1000)
+    assert watch(u, monkeypatch, free_gb=6) == (False, [])          # 70% full
+    stopped, briefs = watch(u, monkeypatch, free_gb=4.4)            # 78%: the list is made, nothing deleted
+    assert not stopped and len(briefs) == 1 and keep.exists() and said == []
+    assert "DELETE NOTHING" in briefs[0] and "78% full" in briefs[0] and "Clear them?" in briefs[0]
+
+
+def test_the_list_never_offers_browser_profiles_or_their_uploads():
+    u, _ = fresh()
+    brief = u.clear_brief(20 * GB, int(4 * GB))
+    home = u.path.parent
+    assert f"Never offer a browser profile or signed-in browser: {home / 'signin-browser'}" in brief
+    assert "puppeteer_dev_chrome_profile-*" in brief and "Chromium user-data" in brief
+    assert f"Never offer their own uploads in {home / 'inbox'}" in brief
+
+
+def test_the_list_comes_once_a_day_or_when_it_gets_worse():
+    u, _ = fresh()
+    assert u.clear_due(20 * GB, int(4.4 * GB), now=NOW)                     # 78%
+    u.asked_to_clear(20 * GB, int(4.4 * GB), now=NOW)
+    assert not u.clear_due(20 * GB, int(4.2 * GB), now=NOW + 3600)          # 79%, same day: no
+    assert u.clear_due(20 * GB, int(3.2 * GB), now=NOW + 3600)              # 84%: worse, asks again
+    assert u.clear_due(20 * GB, int(4.4 * GB), now=NOW + 86400)             # next day
+    assert not u.clear_due(1000 * GB, 100 * GB, now=NOW + 86400)            # 90% of a big disk, 100 GB left: fine
+    assert u.clear_due(20 * GB, int(1.6 * GB), stop=True, now=NOW + 60)     # the stop level always asks
+
+
+def test_stop_level_pauses_and_the_list_comes_with_it(monkeypatch):
+    u, said = fresh()
+    u.asked_to_clear(20 * GB, int(4.4 * GB))                         # asked earlier today already
+    stopped, briefs = watch(u, monkeypatch, free_gb=1.6)             # 92%
+    assert stopped and len(briefs) == 1 and "paused all work" in briefs[0]
+    assert len(said) == 1 and "stopped what I was doing" in said[0] and "list of what's safe to clear" in said[0]
+
+
+def test_no_list_when_it_cant_start_says_so_plainly(monkeypatch):
+    u, said = fresh()
+    stopped, _ = watch(u, monkeypatch, free_gb=1.6, ask=lambda b: False)    # Ken off: no job
+    assert stopped and "Tell me what to do" in said[0]
+    assert "disk_asked" not in u.load()
+
+
 def test_settings_meters_and_when_a_full_plan_opens_again():
     """Settings → AI shows each plan's windows from the readings replies brought (no AI call); a plan at its limit
     says when it opens again."""

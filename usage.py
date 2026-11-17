@@ -31,6 +31,10 @@ LOW_MEMORY_FOR = 120  # seconds memory must stay critical before Ken says so (a 
 # they say what to do. Only while little is left (DISK_LEFT_GB): a big Mac at 80% still has plenty of room.
 DISK_WARN, DISK_STOP = 80, 90
 DISK_LEFT_GB = {DISK_WARN: 20, DISK_STOP: 5}
+# From DISK_ASK % full Ken offers a ready list of what could be cleared, and deletes only what they say yes to: nothing
+# is ever cleared on its own (a leftover may be the draft they want back, a browser folder their sign-ins). Once a day
+# at most, again sooner only when it's ASK_WORSE % fuller than last time, and always at DISK_STOP.
+DISK_ASK, ASK_WORSE = 75, 5
 DISK_EASE = 5  # % below a level before it counts as over, so hovering at the line doesn't repeat the message
 
 
@@ -391,24 +395,71 @@ class Usage:
             self.save(state)
         return {DISK_WARN: "warn", DISK_STOP: "stop"}.get(level, "") if level > said else ""
 
-    def disk_text(self, what: str, total: int, free: int, more: str) -> str:
+    def clear_due(self, total: int, free: int, stop: bool = False, now: float | None = None) -> bool:
+        """Time to offer a list of what could be cleared: at DISK_STOP, else from DISK_ASK once a day or when worse."""
+        now, pct = time.time() if now is None else now, 100 * (total - free) / total
+        if stop:
+            return True
+        if pct < DISK_ASK or free >= DISK_LEFT_GB[DISK_WARN] * 1024 ** 3:  # a big disk with room left: nothing to ask
+            return False
+        last = self.load().get("disk_asked") or {}
+        return now - last.get("at", 0) >= 86400 or pct >= last.get("pct", 0) + ASK_WORSE
+
+    def asked_to_clear(self, total: int, free: int, now: float | None = None) -> None:
+        state = self.load()
+        state["disk_asked"] = {"at": time.time() if now is None else now, "pct": 100 * (total - free) / total}
+        self.save(state)
+
+    def clear_brief(self, total: int, free: int, stopped: bool = False) -> str:
+        """The background job's brief: find what could go and write the one question for them. The job deletes
+        nothing; Ken deletes only what they say yes to, from the paths the job lists."""
+        pct, home = f"{100 * (total - free) / total:.0f}", self.path.parent
+        paused = " Ken has paused all work until there's room again." if stopped else ""
+        return (f"The disk on this computer is {pct}% full ({gb(free)} left).{paused} Find what could be cleared, but "
+                "DELETE NOTHING and move nothing: they decide. Look with du at where Ken's work piles up: the working "
+                f"folder {home / 'work'} (videos, renders, downloads), temp files in /tmp and regenerable caches "
+                "(~/.cache/pip, ~/.npm/_cacache and the like). Use your judgment on what is safe to offer: copies of "
+                "files that also live in the cloud (Drive or Dropbox downloads), in-between renders and older drafts "
+                "where a finished version exists, temp files and caches nothing is using now. Always keep the latest "
+                "finished version of each thing and the project files needed to change it again (edit scripts, video "
+                "projects, cut lists). Never offer a browser profile or signed-in browser: "
+                f"{home / 'signin-browser'}, /tmp/puppeteer_dev_chrome_profile-*, or any Chrome or Chromium user-data "
+                "folder (clearing one signs them out of their sites). Never offer their own uploads in "
+                f"{home / 'inbox'} or anything they made themselves. Your report starts with ONE short, phone-sized "
+                "message for them: about how much can be freed, grouped by kind with sizes, ending with the question. "
+                f"Like: \"Your disk is {pct}% full. I can free about 6 GB: old drafts of 3 reels (2.1 GB, finished "
+                "versions kept), copies of your Drive files (3.5 GB, still on Drive), temp files (0.6 GB). Clear "
+                "them?\" Below it, for Ken only, list the exact paths behind each group, so when they say yes (to "
+                "all or some) Ken deletes only those. If nothing is safe to offer, say so in one line.")
+
+    def disk_text(self, what: str, total: int, free: int, more: str, listing: bool = False) -> str:
         computer = "Mac" if sys.platform == "darwin" else "computer"
         full = f"your {computer}'s disk is {100 * (total - free) / total:.0f}% full ({gb(free)} left)"
         if what == "stop":
+            then = ("I'm putting together a list of what's safe to clear: say yes and work carries on. Or "
+                    if listing else "Tell me what to do: I can list the biggest files to clear, or ")
             return (f"{full[0].upper()}{full[1:]}, so I stopped what I was doing and paused scheduled jobs before it fills up. "
-                    f"Tell me what to do: I can list the biggest files to clear, or {more}")
+                    f"{then}{more}")
         return f"Heads-up: {full}. Ask me to clear old files, or {more}"
 
-    async def watch_disk(self, stop_work: Callable, more: str, every: float = 60) -> None:
-        """Once a minute: tell them as the disk fills, and at DISK_STOP stop all work first."""
+    async def watch_disk(self, stop_work: Callable, more: str, every: float = 60,
+                         ask: Callable[[str], bool] = lambda brief: False) -> None:
+        """Once a minute: tell them as the disk fills, and at DISK_STOP stop all work first. From DISK_ASK, `ask` starts
+        a background job with the brief (True when it started), which comes back with a ready list to say yes to."""
         while True:
             try:
                 d = shutil.disk_usage(self.path.parent)
                 what = self.disk_check(d.total, d.free)
                 if what == "stop":
-                    await stop_work()
+                    await stop_work()  # first, so the job making the list isn't stopped with the rest
+                listing = self.clear_due(d.total, d.free, stop=what == "stop") and ask(
+                    self.clear_brief(d.total, d.free, stopped=what == "stop"))
+                if listing:
+                    self.asked_to_clear(d.total, d.free)
+                if what == "warn" and listing:
+                    what = ""  # the list on its way says it all
                 if what:
-                    text = self.disk_text(what, d.total, d.free, more)
+                    text = self.disk_text(what, d.total, d.free, more, listing)
                     log.warning("%s", text)
                     self.say(text)
             except Exception as e:
