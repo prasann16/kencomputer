@@ -1590,6 +1590,19 @@ async def stop_all_work() -> None:
         await ENGINE.stop_run(run["id"], by="Ken")
 
 
+def ask_to_clear(brief: str) -> bool:
+    """Start the background job that lists what could be cleared off a filling disk (see Usage.watch_disk). Its report
+    comes back to Ken as one question for them; Ken deletes only what they say yes to."""
+    if ENGINE.is_off() or asking_ai():
+        return False
+    try:
+        ENGINE.start_run(HOME, "What could be cleared", brief, source="Ken")
+        return True
+    except Exception as e:
+        log.warning("couldn't start the disk list: %s", e)
+        return False
+
+
 def more_space() -> str:
     """How to get a bigger disk: a Ken in the cloud's plan page on its site, else clearing some room."""
     site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
@@ -1858,8 +1871,12 @@ def refresh_default_jobs() -> None:
 OLD_NIGHTLY_TAILS = (
     "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance.",
     "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\"",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, caches), list the biggest few with sizes. Never offer browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never offer their own uploads in ~/.ken/inbox. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
 )
-NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
+# They decide what goes, their uploads included; the one thing never listed is a browser profile, which holds their
+# sign-ins (clearing one signs them out of their sites).
+NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
 
 
 def migrate_jobs() -> None:
@@ -3039,7 +3056,7 @@ async def run() -> None:
     # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
     ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
-                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space())),
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
                   asyncio.create_task(runtimes.update(signed_in()))]
     try:
