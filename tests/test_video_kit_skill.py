@@ -1,0 +1,292 @@
+"""The video kit skill's ElevenLabs helper (skills/video-kit/scripts/eleven.py), with every HTTP call faked."""
+import importlib.util
+import io
+import json
+import subprocess
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).resolve().parent.parent / "skills" / "video-kit" / "scripts" / "eleven.py"
+spec = importlib.util.spec_from_file_location("eleven", SCRIPT)
+eleven = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(eleven)
+
+KEY = "sk_test_never_print_me_1234567890"
+
+
+class Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class FakeAPI:
+    """Answers urlopen by (method, path prefix); records every request."""
+
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+    def __call__(self, req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else req
+        method = req.get_method() if hasattr(req, "get_method") else "GET"
+        path = url.split("api.elevenlabs.io", 1)[-1]
+        self.calls.append({"method": method, "path": path, "headers": dict(req.header_items()), "data": req.data, "url": url})
+        for (m, prefix), answer in self.routes.items():
+            if m == method and path.startswith(prefix):
+                answer = answer(len(self.calls)) if callable(answer) else answer
+                if isinstance(answer, int):
+                    raise urllib.error.HTTPError(url, answer, "err", {}, io.BytesIO(b'{"detail":"nope"}'))
+                return Resp(answer if isinstance(answer, bytes) else json.dumps(answer).encode())
+        raise AssertionError(f"unexpected call {method} {path}")
+
+
+@pytest.fixture
+def api(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    monkeypatch.setattr(eleven, "duration", lambda p: 12.0)
+
+    def install(routes):
+        fake = FakeAPI(routes)
+        monkeypatch.setattr(eleven.urllib.request, "urlopen", fake)
+        return fake
+    return install
+
+
+def run(argv, capsys):
+    code = eleven.main(argv)
+    out, err = capsys.readouterr()
+    assert KEY not in out and KEY not in err
+    return code, (json.loads(out.strip().splitlines()[-1]) if out.strip() else None), err
+
+
+def test_no_key_says_where_to_add_it(monkeypatch, capsys):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    code, _, err = run(["check"], capsys)
+    assert code == 1 and "ELEVENLABS_API_KEY" in err and "Brain" in err
+
+
+def test_check_reports_credits_left_and_sends_the_key_only_as_a_header(api, capsys):
+    fake = api({("GET", "/v1/user/subscription"): {"tier": "starter", "character_count": 1000, "character_limit": 30000,
+                                                  "can_use_instant_voice_cloning": True, "voice_slots_used": 1, "voice_limit": 10}})
+    code, out, _ = run(["check"], capsys)
+    assert code == 0 and out["credits_left"] == 29000 and out["can_clone"] is True
+    assert fake.calls[0]["headers"]["Xi-api-key"] == KEY and KEY not in fake.calls[0]["url"]
+
+
+def test_tts_writes_audio_and_prices_by_characters(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/text-to-speech/VOICE"): b"ID3audio"})
+    out = tmp_path / "vo.mp3"
+    code, info, _ = run(["tts", "--voice", "VOICE", "--text", "x" * 500, "--out", str(out)], capsys)
+    assert code == 0 and out.read_bytes() == b"ID3audio" and info["usd"] == 0.04
+    body = json.loads(fake.calls[0]["data"])
+    assert body["model_id"] == "eleven_multilingual_v2" and "output_format=mp3_44100_128" in fake.calls[0]["path"]
+
+
+def test_errors_are_explained_and_never_echo_the_key(api, tmp_path, capsys):
+    api({("POST", "/v1/text-to-speech/"): 401})
+    code, _, err = run(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and "401" in err and "Brain" in err
+
+
+def test_clone_refuses_without_own_voice_or_consent(api, tmp_path, capsys):
+    fake = api({})
+    sample = tmp_path / "me.mp3"
+    sample.write_bytes(b"a")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--consent", str(tmp_path / "consent.mp3"), "--own-voice"], capsys)
+    assert code == 1 and "No file" in err
+    (tmp_path / "consent.mp3").write_bytes(b"c")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--consent", str(tmp_path / "consent.mp3")], capsys)
+    assert code == 1 and "own voice" in err
+    assert fake.calls == []
+
+
+def test_clone_uploads_every_sample_and_labels_the_consent(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/voices/add"): {"voice_id": "v123", "requires_verification": False}})
+    a, b, c = (tmp_path / n for n in ("a.mp3", "b.mp3", "consent.mp3"))
+    for f in (a, b, c):
+        f.write_bytes(b"x")
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--sample", str(b), "--consent", str(c), "--own-voice"], capsys)
+    assert code == 0 and info["voice_id"] == "v123"
+    data = fake.calls[0]["data"]
+    assert data.count(b'name="files"') == 2 and b"consent.mp3" in data and b'name="consent' not in data
+
+
+def test_clone_needs_ten_seconds_of_samples(api, tmp_path, capsys, monkeypatch):
+    api({})
+    monkeypatch.setattr(eleven, "duration", lambda p: 4.0)
+    a, c = tmp_path / "a.mp3", tmp_path / "c.mp3"
+    a.write_bytes(b"x"); c.write_bytes(b"x")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(a), "--consent", str(c), "--own-voice"], capsys)
+    assert code == 1 and "10 s" in err
+
+
+def test_isolate_puts_clean_audio_back_into_a_video(api, tmp_path, capsys, monkeypatch):
+    api({("POST", "/v1/audio-isolation"): b"clean"})
+    swapped = []
+    monkeypatch.setattr(eleven, "swap_audio", lambda v, au, out: swapped.append((v.name, au.read_bytes(), out.name)) or out)
+    src = tmp_path / "talk.mp4"
+    src.write_bytes(b"video")
+    code, info, _ = run(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.mp4")], capsys)
+    assert code == 0 and swapped == [("talk.mp4", b"clean", "clean.mp4")] and info["usd"] == 0.024
+
+
+def test_isolate_audio_in_audio_out(api, tmp_path, capsys):
+    api({("POST", "/v1/audio-isolation"): b"clean"})
+    src = tmp_path / "talk.m4a"
+    src.write_bytes(b"a")
+    code, _, _ = run(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.mp3")], capsys)
+    assert code == 0 and (tmp_path / "clean.mp3").read_bytes() == b"clean"
+
+
+def test_voice_changer_uses_the_current_path_and_multilingual_model(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/voice-changer/V"): b"new"})
+    src = tmp_path / "take.mp3"
+    src.write_bytes(b"a")
+    code, _, _ = run(["changer", "--voice", "V", "--in", str(src), "--out", str(tmp_path / "o.mp3")], capsys)
+    assert code == 0 and b"eleven_multilingual_sts_v2" in fake.calls[0]["data"]
+
+
+def test_sfx_clamps_duration(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/sound-generation"): b"boom"})
+    run(["sfx", "--text", "boom", "--seconds", "90", "--out", str(tmp_path / "b.mp3")], capsys)
+    assert json.loads(fake.calls[0]["data"])["duration_seconds"] == 30.0
+
+
+def test_music_sends_length_in_ms(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/music"): b"song"})
+    code, info, _ = run(["music", "--prompt", "lofi", "--seconds", "20", "--instrumental", "--out", str(tmp_path / "m.mp3")], capsys)
+    body = json.loads(fake.calls[0]["data"])
+    assert code == 0 and body["music_length_ms"] == 20000 and body["force_instrumental"] is True and info["usd"] == 0.05
+
+
+WORDS = [
+    {"text": "Hello", "start": 0.0, "end": 0.4, "type": "word"}, {"text": " ", "start": 0.4, "end": 0.5, "type": "spacing"},
+    {"text": "everyone.", "start": 0.5, "end": 1.0, "type": "word"},
+    {"text": "(laughs)", "start": 1.0, "end": 1.2, "type": "audio_event"},
+    {"text": "This", "start": 2.0, "end": 2.2, "type": "word"}, {"text": "is", "start": 2.2, "end": 2.3, "type": "word"},
+    {"text": "Ken", "start": 2.3, "end": 2.6, "type": "word"},
+]
+
+
+def test_words_to_srt_breaks_on_sentences_and_skips_events():
+    srt = eleven.words_to_srt(WORDS)
+    assert srt == "1\n00:00:00,000 --> 00:00:01,000\nHello everyone.\n\n2\n00:00:02,000 --> 00:00:02,600\nThis is Ken\n\n"
+
+
+def test_words_to_srt_keeps_lines_short():
+    words = [{"text": "word", "start": i * 0.2, "end": i * 0.2 + 0.15, "type": "word"} for i in range(20)]
+    for cue in eleven.words_to_srt(words, max_chars=16).strip().split("\n\n"):
+        assert len(cue.split("\n")[2]) <= 16
+
+
+def test_captions_writes_srt_and_words(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/speech-to-text"): {"language_code": "hin", "text": "x", "words": WORDS, "audio_duration_secs": 60}})
+    src = tmp_path / "reel.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = run(["captions", "--in", str(src), "--out", str(tmp_path / "reel.srt"), "--lang", "hi"], capsys)
+    assert code == 0 and "Hello everyone." in (tmp_path / "reel.srt").read_text()
+    assert len(json.loads((tmp_path / "reel.words.json").read_text())["words"]) == 5
+    assert b"scribe_v2" in fake.calls[0]["data"] and b'name="language_code"\r\n\r\nhi' in fake.calls[0]["data"]
+    assert info["usd"] == round(0.2 / 60, 4)
+
+
+def test_dub_v1_polls_then_downloads_video_and_subtitles(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven.time, "sleep", lambda s: None)
+    states = iter(["preparing", "dubbing", "dubbed"])
+    fake = api({
+        ("POST", "/v1/dubbing"): {"dubbing_id": "d1", "expected_duration_sec": 30},
+        ("GET", "/v1/dubbing/d1/audio/hi"): b"mp4bytes",
+        ("GET", "/v1/dubbing/d1/transcripts/hi/format/srt"): {"srt": "1\n00:00:00,000 --> 00:00:01,000\nनमस्ते\n"},
+        ("GET", "/v1/dubbing/d1"): lambda n: {"status": next(states)},
+    })
+    src = tmp_path / "reel.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = run(["dub", "--in", str(src), "--to", "hi", "--out", str(tmp_path / "reel.hi.mp4")], capsys)
+    assert code == 0 and info["job"] == "v1:d1" and (tmp_path / "reel.hi.mp4").read_bytes() == b"mp4bytes"
+    assert "नमस्ते" in (tmp_path / "reel.hi.hi.srt").read_text() and info["usd"] == 0.1
+    create = fake.calls[0]["data"]
+    assert b'name="target_lang"\r\n\r\nhi' in create and b'name="watermark"\r\n\r\nfalse' in create
+
+
+def test_dub_failure_is_reported_once(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven.time, "sleep", lambda s: None)
+    api({("POST", "/v1/dubbing"): {"dubbing_id": "d2"}, ("GET", "/v1/dubbing/d2"): {"status": "failed", "error": "no speech"}})
+    src = tmp_path / "r.mp4"
+    src.write_bytes(b"v")
+    code, _, err = run(["dub", "--in", str(src), "--to", "ta", "--out", str(tmp_path / "o.mp4")], capsys)
+    assert code == 1 and "no speech" in err and "v1:d2" in err
+
+
+def test_dub_v2_adds_language_downloads_signed_audio_and_remuxes(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven.time, "sleep", lambda s: None)
+    monkeypatch.setattr(eleven, "download", lambda url, out: (out.write_bytes(url.encode()), out)[1])
+    swapped = []
+    monkeypatch.setattr(eleven, "swap_audio", lambda v, au, out: (swapped.append((v.name, au.name)), out.write_bytes(b"muxed"), out)[2])
+    fake = api({
+        ("POST", "/v1/dubbing/project/p1/language"): {"language_id": "l1"},
+        ("POST", "/v1/dubbing/project"): {"project_id": "p1", "status": "queued", "language_ids": []},
+        ("GET", "/v1/dubbing/project/p1/language/l1"): lambda n: (
+            {"status": "processing"} if n < 4 else
+            {"status": "completed", "outputs": {"lossless_audio": "https://signed/a.flac", "subtitles": "https://signed/s.vtt"}}),
+    })
+    src = tmp_path / "reel.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = run(["dub", "--in", str(src), "--to", "es", "--out", str(tmp_path / "reel.es.mp4"), "--v2"], capsys)
+    assert code == 0 and info["job"] == "v2:p1:l1" and swapped == [("reel.mp4", "reel.es.dub.flac")]
+    assert (tmp_path / "reel.es.es.vtt").read_text() == "https://signed/s.vtt" and info["usd"] == 0.44
+    assert b"dubbing_v2" in fake.calls[0]["data"]
+
+
+def test_dub_status_hides_signed_links(api, capsys):
+    api({("GET", "/v1/dubbing/project/p/language/l"): {"status": "completed", "outputs": {"lossless_audio": "https://secret"}}})
+    code, info, _ = run(["dub-status", "v2:p:l"], capsys)
+    assert code == 0 and info["state"] == "done" and "outputs" not in info
+
+
+def test_design_saves_previews(api, tmp_path, capsys):
+    import base64
+    api({("POST", "/v1/text-to-voice/design"): {"text": "hi", "previews": [
+        {"audio_base_64": base64.b64encode(b"p1").decode(), "generated_voice_id": "g1"},
+        {"audio_base_64": base64.b64encode(b"p2").decode(), "generated_voice_id": "g2"}]}})
+    code, info, _ = run(["design", "--describe", "calm narrator", "--out-dir", str(tmp_path / "pv")], capsys)
+    assert code == 0 and [p["generated_voice_id"] for p in info["previews"]] == ["g1", "g2"]
+    assert (tmp_path / "pv" / "preview-2.mp3").read_bytes() == b"p2"
+
+
+def test_estimate_costs_without_calling_the_api(api, tmp_path, capsys):
+    fake = api({})
+    src = tmp_path / "r.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = run(["estimate", "dub", str(src)], capsys)
+    assert code == 0 and info["usd"] == 0.1 and fake.calls == []
+    _, info, _ = run(["estimate", "tts", "--chars", "2000"], capsys)
+    assert info["usd"] == 0.16
+
+
+def test_swap_audio_with_real_ffmpeg(tmp_path):
+    ff = ["ffmpeg", "-v", "error", "-y"]
+    try:
+        subprocess.run(ff + ["-f", "lavfi", "-i", "color=c=black:s=64x64:d=1", "-f", "lavfi", "-i", "sine=f=220:d=1",
+                             "-shortest", str(tmp_path / "v.mp4")], check=True)
+        subprocess.run(ff + ["-f", "lavfi", "-i", "sine=f=880:d=1", str(tmp_path / "a.mp3")], check=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no ffmpeg")
+    out = eleven.swap_audio(tmp_path / "v.mp4", tmp_path / "a.mp3", tmp_path / "o.mp4")
+    assert out.stat().st_size > 0 and 0.5 < eleven.duration(out) < 1.5
+
+
+def test_ken_runs_the_helper_with_its_own_python(tmp_path):
+    import os
+    import sys
+    env = {**os.environ, "KEN_HOME": str(tmp_path)}
+    env.pop("ELEVENLABS_API_KEY", None)
+    bot = SCRIPT.parent.parent.parent.parent / "bot.py"
+    r = subprocess.run([sys.executable, str(bot), "--eleven", "estimate", "tts", "--chars", "1000"],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 0 and json.loads(r.stdout)["usd"] == 0.08
+    r = subprocess.run([sys.executable, str(bot), "--eleven", "check"], capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 1 and "ELEVENLABS_API_KEY" in r.stderr
