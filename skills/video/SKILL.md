@@ -101,7 +101,9 @@ Pick the words to keep as numbered ranges, in the order they were said, and cut:
 
 It finds where their voice really starts and stops, so no word gets clipped, and holds a second after the last
 word so the ending settles. It writes `cut.mp4` (vertical 1080x1920) and `props.json` with every kept word timed on
-the new video, and prints the reel's script with `/` at each cut.
+the new video, and prints the reel's script with `/` at each cut. Footage filmed in HDR (iPhones do by default) is
+converted to normal colours here, and so are clips a graphic shows when you check stills or render: never convert
+colours yourself (frames grabbed straight from an HDR source look pale; the reel won't).
 
 **Read that script as a viewer would.** Does it follow what they said, start on a line that says something, and
 end on a strong one? Does every sentence finish? Does anything refer to something you cut ("like I said", "that
