@@ -254,16 +254,17 @@ def test_disk_with_room_asks_nothing_and_clears_nothing(monkeypatch):
     assert watch(u, monkeypatch, free_gb=6) == (False, [])          # 70% full
     stopped, briefs = watch(u, monkeypatch, free_gb=4.4)            # 78%: the list is made, nothing deleted
     assert not stopped and len(briefs) == 1 and keep.exists() and said == []
-    assert "DELETE NOTHING" in briefs[0] and "78% full" in briefs[0] and "Clear them?" in briefs[0]
+    assert "Delete nothing" in briefs[0] and "78% full" in briefs[0] and "Which should I clear?" in briefs[0]
 
 
-def test_the_list_never_offers_browser_profiles_or_their_uploads():
+def test_the_list_never_offers_browser_profiles_and_labels_uploads():
+    """Browser profiles hold their sign-ins: never listed. Their uploads are listed like the rest, labeled; they decide."""
     u, _ = fresh()
     brief = u.clear_brief(20 * GB, int(4 * GB))
     home = u.path.parent
-    assert f"Never offer a browser profile or signed-in browser: {home / 'signin-browser'}" in brief
+    assert f"Never list a browser profile or signed-in browser ({home / 'signin-browser'}" in brief
     assert "puppeteer_dev_chrome_profile-*" in brief and "Chromium user-data" in brief
-    assert f"Never offer their own uploads in {home / 'inbox'}" in brief
+    assert f"their uploads in {home / 'inbox'}" in brief and "clearly labeled with its size" in brief
 
 
 def test_the_list_comes_once_a_day_or_when_it_gets_worse():

@@ -421,24 +421,21 @@ class Usage:
         pct, home = f"{100 * (total - free) / total:.0f}", self.path.parent
         paused = (" Ken has paused all work until there's room again: start the message by saying so, and that a yes "
                   "lets work carry on." if stopped else "")
-        return (f"The disk on this computer is {pct}% full ({gb(free)} left).{paused} Find what could be cleared, but "
-                "DELETE NOTHING and move nothing: they decide. Look with du at where Ken's work piles up: the working "
-                f"folder {home / 'work'} (videos, renders, downloads), temp files in /tmp and regenerable caches "
-                "(~/.cache/pip, ~/.npm/_cacache and the like). Use your judgment on what is safe to offer: copies of "
-                "files that also live in the cloud (Drive or Dropbox downloads), in-between renders and older drafts "
-                "where a finished version exists, temp files and caches nothing is using now. Always keep the latest "
-                "finished version of each thing and the project files needed to change it again (edit scripts, video "
-                "projects, cut lists). Never offer a browser profile or signed-in browser: "
-                f"{home / 'signin-browser'}, /tmp/puppeteer_dev_chrome_profile-*, or any Chrome or Chromium user-data "
-                "folder (clearing one signs them out of their sites). Never offer their own uploads in "
-                f"{home / 'inbox'} or anything they made themselves. Your report starts with ONE short, phone-sized "
-                "message for them: about how much can be freed, grouped by kind with sizes, ending with the question. "
-                f"Like: \"Your disk is {pct}% full. I can free about 6 GB: old drafts of 3 reels (2.1 GB, finished "
-                "versions kept), copies of your Drive files (3.5 GB, still on Drive), temp files (0.6 GB). Clear "
-                "them?\" Save the exact paths behind each group, grouped the same way, to "
+        return (f"The disk on this computer is {pct}% full ({gb(free)} left).{paused} With du, find what takes the "
+                f"space: the working folder {home / 'work'} (videos, renders, downloads), their uploads in "
+                f"{home / 'inbox'}, temp files in /tmp and caches like ~/.cache/pip and ~/.npm/_cacache. Delete "
+                "nothing and move nothing: they decide. Group what could go by what it is, each clearly labeled with "
+                "its size and what they'd want to know (still on Drive or on their phone, the finished version is "
+                "kept, still being worked on). Never list a browser profile or signed-in browser "
+                f"({home / 'signin-browser'}, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium user-data "
+                "folder): clearing one signs them out of their sites. Your report starts with ONE short, phone-sized "
+                f"message for them, ending with the question, like: \"Your disk is {pct}% full. I can free about "
+                "6 GB: old drafts of 3 reels (2.1 GB, finished versions kept), copies of your Drive files (3.5 GB, "
+                "still on Drive), your original clips for the Albanian food reel (1.8 GB, still on your phone). "
+                "Which should I clear?\" Save the exact paths behind each group to "
                 f"{home / 'work' / 'disk-clear-list.txt'} and name that file below the message, for Ken only: when "
-                "they say yes (to all or some), Ken deletes only those paths. If nothing is safe to offer, say so in "
-                "one line.")
+                "they say yes (to all or some), Ken deletes only those paths. If nothing is worth offering, say so "
+                "in one line.")
 
     def disk_text(self, what: str, total: int, free: int, more: str, listing: bool = False) -> str:
         computer = "Mac" if sys.platform == "darwin" else "computer"
