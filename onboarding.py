@@ -110,10 +110,15 @@ def included_ai_model() -> str:
     return os.environ.get("KEN_INCLUDED_AI_MODEL", "").strip()
 
 
+def own_claude() -> bool:
+    return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+
+
 def use_included_ai() -> bool:
-    """Point Claude Code at the plan's included AI when the person hasn't connected their own Claude, and back
-    off it when they have. Returns whether the included AI is in use."""
-    own = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+    """Point Claude Code at the plan's included AI when the person hasn't connected their own Claude, or picked Ken AI
+    credits in Settings → AI (KEN_USE_CREDITS: their own sign-in stays saved), and back off it otherwise. Returns
+    whether the included AI is in use."""
+    own = own_claude() and os.environ.get("KEN_USE_CREDITS") != "1"
     key = included_ai_key()
     if key and not own:
         os.environ["ANTHROPIC_BASE_URL"] = os.environ["KEN_INCLUDED_AI_URL"].rstrip("/")
@@ -173,7 +178,10 @@ class Onboarding:
         connected = self.connected() and not (self.active and not included)
         return {"claude": connected, "connected": connected, "backend": "claude",
                 **({"renewing": True} if self.active and self.connected() and not included else {}),
-                "how": "included" if included else "key" if os.environ.get("ANTHROPIC_API_KEY") else "account" if self.connected() else "",
+                # Picked Ken AI credits while their own Claude stays connected: it still shows as theirs, not in use.
+                **({"use_credits": True} if included and own_claude() else {}),
+                "how": ("key" if os.environ.get("ANTHROPIC_API_KEY") else "account") if own_claude()
+                       else "included" if included else "account" if self.connected() else "",
                 "phone": self.phone_step(), "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
 
     # The second fixed step: Ken on your phone, which they can skip. "unset" until done or skipped.
@@ -295,6 +303,7 @@ class Onboarding:
             return
         self.saved = token
         save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
+        drop_env(self.env_file, "KEN_USE_CREDITS")  # connecting their own Claude is choosing it
         use_included_ai()  # their own Claude now comes first
         try:
             await self.on_connected()  # the token is saved either way
@@ -321,11 +330,27 @@ class Onboarding:
             raise ValueError(problem)
         self.error = ""
         save_env(self.env_file, "ANTHROPIC_API_KEY", key)
+        drop_env(self.env_file, "KEN_USE_CREDITS")
         use_included_ai()
         try:
             await self.on_connected()
         except Exception:
             log.exception("post-connect refresh failed")
+        return self.status()
+
+    async def use_credits(self, on: bool) -> dict:
+        """Settings → AI: Ken AI credits as the AI in use (on), or their own Claude again (off). Nothing is signed out."""
+        if on and not included_ai_key():
+            raise ValueError("Ken AI credits aren't part of this plan.")
+        if on:
+            save_env(self.env_file, "KEN_USE_CREDITS", "1")
+        else:
+            drop_env(self.env_file, "KEN_USE_CREDITS")
+        use_included_ai()
+        try:
+            await self.on_connected()  # open chats reopen on the AI now in use
+        except Exception:
+            log.exception("refresh after switching AI failed")
         return self.status()
 
     async def disconnect(self) -> dict:
@@ -334,6 +359,7 @@ class Onboarding:
         self.saved = self.error = ""
         drop_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN")
         drop_env(self.env_file, "ANTHROPIC_API_KEY")
+        drop_env(self.env_file, "KEN_USE_CREDITS")
         use_included_ai()
         try:
             await self.on_connected()
@@ -649,6 +675,10 @@ class BrainOnboarding:
 
     async def disconnect(self, backend=None):
         await self.provider(backend).disconnect()
+        return self.status()
+
+    async def use_credits(self, on: bool):
+        await self.providers["claude"].use_credits(on)
         return self.status()
 
     def stop(self):
