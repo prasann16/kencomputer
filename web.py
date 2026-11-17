@@ -301,6 +301,7 @@ class WebApp:
                 if ai == "credits" and not included_ai_key():
                     raise ValueError("Ken AI credits aren't part of this plan.")
                 backend = "claude" if ai == "credits" else ai  # Ken AI credits run on Claude
+                self.engine.back_from_credits(force=True)  # their own pick wins over Ken's switch for now
                 if backend != self.engine.backend(HOME):
                     await self.engine.set_runtime(HOME, backend=backend)
                 return _json(await self.setup.use_credits(ai == "credits"))

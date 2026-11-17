@@ -205,6 +205,7 @@ class ClaudeSession(Session):
         # Messages sent into the running turn that Claude Code hasn't taken in yet (it echoes each one it takes).
         self._waiting: list[str] = []
         self._stopping = self._ended = False
+        self._on_credits = False
 
     async def _connect(self, resume: str | None) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -214,7 +215,8 @@ class ClaudeSession(Session):
         system = self.system() if callable(self.system) else self.system
         # On Ken AI credits while their own Claude stays connected (picked in Settings → AI): their own sign-in and key
         # are blanked for Claude Code (it treats an empty one as not set), so only the credits are used or charged.
-        credits = {"CLAUDE_CODE_OAUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""} if included_ai_in_use() else {}
+        self._on_credits = included_ai_in_use()
+        credits = {"CLAUDE_CODE_OAUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""} if self._on_credits else {}
         model = self.model_fn()
         options = ClaudeAgentOptions(
             system_prompt={"type": "preset", "preset": "claude_code", "append": system},
@@ -335,7 +337,8 @@ class ClaudeSession(Session):
                 if sid:
                     self.session_id = sid
                 if isinstance(msg, RateLimitEvent):  # the plan's usage changed: Ken keeps it for /usage and alerts
-                    if self.brain.on_rate_limit is not None:
+                    # On Ken AI credits they aren't about their own plan: kept, they'd say its limit had cleared.
+                    if self.brain.on_rate_limit is not None and not self._on_credits:
                         info = msg.rate_limit_info
                         self.brain.on_rate_limit(info.raw or {"status": info.status, "resetsAt": info.resets_at,
                                                               "rateLimitType": info.rate_limit_type, "utilization": info.utilization})

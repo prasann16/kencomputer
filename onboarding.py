@@ -118,7 +118,8 @@ def use_included_ai() -> bool:
     """Point Claude Code at the plan's included AI when the person hasn't connected their own Claude, or picked Ken AI
     credits in Settings → AI (KEN_USE_CREDITS: their own sign-in stays saved), and back off it otherwise. Returns
     whether the included AI is in use."""
-    own = own_claude() and os.environ.get("KEN_USE_CREDITS") != "1"
+    # KEN_CREDITS_FOR_NOW: Ken switched for them while their own plan is at its limit (engine.py), until it resets.
+    own = own_claude() and "1" not in (os.environ.get("KEN_USE_CREDITS"), os.environ.get("KEN_CREDITS_FOR_NOW"))
     key = included_ai_key()
     if key and not own:
         os.environ["ANTHROPIC_BASE_URL"] = os.environ["KEN_INCLUDED_AI_URL"].rstrip("/")
