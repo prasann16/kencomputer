@@ -22,7 +22,8 @@ log = logging.getLogger("ken")
 HDR_TRANSFERS = {"arib-std-b67", "smpte2084"}  # HLG, PQ
 # ffprobe's names for the source's colours, in zscale's words. Passed explicitly rather than trusting the tags to
 # survive every filter on the way.
-_ZSCALE_TRANSFER = {"arib-std-b67": "arib-std-b67", "smpte2084": "smpte2084", "bt2020-10": "2020_10", "bt2020-12": "2020_12"}
+_ZSCALE_TRANSFER = {"arib-std-b67": "arib-std-b67", "smpte2084": "smpte2084", "bt2020-10": "2020_10", "bt2020-12": "2020_12",
+                    "bt709": "709"}
 _ZSCALE_MATRIX = {"bt2020nc": "2020_ncl", "bt2020c": "2020_cl", "bt709": "709"}
 # What an HDR video is tagged as after converting, so players don't guess.
 BT709 = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
@@ -54,13 +55,15 @@ def has_zscale() -> bool:
 def sdr_filter(stream: dict) -> str:
     """ffmpeg filters that turn this HDR stream into normal 8-bit bt709 video (yuv420p) with its colours kept.
     The proper way is zscale's tone map; mobius keeps everyday colours as they are and only rolls off the
-    highlights (hable, the usual pick, left faces and colours dull). An ffmpeg without zscale gets a plain
-    colour-space conversion with a lift in saturation and contrast: close, not exact."""
+    highlights (hable, the usual pick, left colours dull). An ffmpeg without zscale gets a plain colour-space
+    conversion with a lift in saturation and contrast: close for HLG (what phones film), still pale for PQ."""
     if has_zscale():
         tin = _ZSCALE_TRANSFER.get(stream.get("color_transfer"), "arib-std-b67")  # untagged Dolby Vision: iPhones' is HLG
         min_ = _ZSCALE_MATRIX.get(stream.get("color_space"), "2020_ncl")
         rin = "full" if stream.get("color_range") == "pc" else "limited"
-        return (f"zscale=tin={tin}:pin=2020:min={min_}:rin={rin}:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+        # Both sides of the first step are spelled out: a clip tagged only in part (just the transfer, or only
+        # Dolby Vision side data) otherwise leaves zscale with "no path between colorspaces".
+        return (f"zscale=tin={tin}:pin=2020:min={min_}:rin={rin}:t=linear:npl=100:p=bt709,format=gbrpf32le,"
                 "tonemap=tonemap=mobius:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
     return "colorspace=all=bt709:iall=bt2020:format=yuv420p,eq=saturation=1.3:contrast=1.3"
 

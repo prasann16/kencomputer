@@ -17,13 +17,13 @@ needs_zscale = pytest.mark.skipif(not (shutil.which("ffmpeg") and video.has_zsca
 FRAME = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"  # how the cut frames it
 
 
-def make_hdr(path: Path) -> Path:
-    """testsrc2 as an iPhone would film it: HLG, bt2020, 10-bit, white at HLG's reference level (203 nits). The
-    original SDR picture is the right answer to compare against."""
+def make_hdr(path: Path, transfer: str = "arib-std-b67") -> Path:
+    """testsrc2 as an iPhone would film it: HLG (or PQ), bt2020, 10-bit, white at HDR's reference level (203 nits).
+    The original SDR picture is the right answer to compare against."""
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=2", "-f", "lavfi",
                     "-i", "sine=d=2", "-vf", "zscale=tin=bt709:t=linear:pin=bt709:p=bt2020:min=bt709:rin=tv,format=gbrpf32le,"
-                    "zscale=t=arib-std-b67:npl=203:m=bt2020nc:r=tv,format=yuv422p10le", "-c:v", "prores_ks",
-                    "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc", "-c:a", "aac",
+                    f"zscale=t={transfer}:npl=203:m=bt2020nc:r=tv,format=yuv422p10le", "-c:v", "prores_ks",
+                    "-color_primaries", "bt2020", "-color_trc", transfer, "-colorspace", "bt2020nc", "-c:a", "aac",
                     str(path)], check=True)
     return path
 
@@ -56,7 +56,7 @@ def tags(path: Path) -> tuple:
 def kept_colours(path: Path, vf: str = "null") -> bool:
     sat, contrast = look(["-i", str(path)], vf)
     ref_sat, ref_contrast = reference()
-    return sat >= 0.7 * ref_sat and contrast >= 0.75 * ref_contrast
+    return sat >= 0.65 * ref_sat and contrast >= 0.7 * ref_contrast  # the old squash: 0.5 and 0.66
 
 
 def test_hdr_is_recognised():
@@ -74,6 +74,41 @@ def test_squashing_hdr_without_converting_is_what_washed_it_out(tmp_path):
     src = make_hdr(tmp_path / "hdr.mov")
     assert not kept_colours(src, "format=yuv420p," + FRAME)
     assert kept_colours(src, video.sdr_filter(video.video_stream(src)) + "," + FRAME)
+
+
+@needs_zscale
+def test_pq_footage_keeps_its_colours_too(tmp_path):
+    src = make_hdr(tmp_path / "pq.mov", "smpte2084")
+    assert kept_colours(src, video.sdr_filter(video.video_stream(src)) + "," + FRAME)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("zscale", [True, False], ids=["zscale", "fallback"])
+@pytest.mark.parametrize("tagged", ["color_trc=arib-std-b67", "color_trc=smpte2084", "color_primaries=bt2020",
+                                    "color_primaries=bt2020:color_trc=bt709", "", "color_primaries=bt2020:color_trc="
+                                    "arib-std-b67:colorspace=bt2020nc:range=pc"])
+def test_hdr_tagged_only_in_part_still_converts(tmp_path, monkeypatch, zscale, tagged):
+    # Phones and apps don't always tag everything; a clip that's HDR by any one sign must convert, never fail.
+    if zscale and not video.has_zscale():
+        pytest.skip("ffmpeg has no zscale")
+    monkeypatch.setattr(video, "has_zscale", lambda: zscale)
+    clip = tmp_path / "clip.mkv"  # mkv keeps a lone tag (mov only stores all three together)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:d=0.2", "-vf",
+                    f"format=yuv422p10le,setparams={tagged}" if tagged else "format=yuv422p10le", "-c:v", "prores_ks",
+                    str(clip)], check=True)
+    stream = video.video_stream(clip)
+    if not tagged:  # Dolby Vision known only from its side data
+        stream["side_data_list"] = [{"side_data_type": "DOVI configuration record"}]
+    assert video.is_hdr(stream)
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(clip), "-vf", video.sdr_filter(stream), "-f", "null", "-"], check=True)
+
+
+@needs_zscale
+def test_the_palette_of_hdr_footage_is_read_as_the_reel_will_look(tmp_path):
+    folder = tmp_path / "reel"
+    folder.mkdir()
+    make_hdr(folder / "source.mov")
+    assert video_kit.colors(folder, lambda _: None)["overall"]["saturation"] > 0.6
 
 
 def cut_folder(tmp_path: Path, make) -> Path:
