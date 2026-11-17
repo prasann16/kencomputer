@@ -270,11 +270,13 @@ def test_the_list_comes_once_a_day_or_when_it_gets_worse():
     u, _ = fresh()
     assert u.clear_due(20 * GB, int(4.4 * GB), now=NOW)                     # 78%
     u.asked_to_clear(20 * GB, int(4.4 * GB), now=NOW)
-    assert not u.clear_due(20 * GB, int(4.2 * GB), now=NOW + 3600)          # 79%, same day: no
-    assert u.clear_due(20 * GB, int(3.2 * GB), now=NOW + 3600)              # 84%: worse, asks again
-    assert u.clear_due(20 * GB, int(4.4 * GB), now=NOW + 86400)             # next day
+    assert not u.clear_due(20 * GB, int(3.2 * GB), now=NOW + 3600)          # 84% but the same day: no
+    assert not u.clear_due(20 * GB, int(4.4 * GB), now=NOW + 86400)         # next day, no worse (they said no): no
+    assert u.clear_due(20 * GB, int(3.2 * GB), now=NOW + 86400)             # next day and worse: asks again
     assert not u.clear_due(1000 * GB, 100 * GB, now=NOW + 86400)            # 90% of a big disk, 100 GB left: fine
     assert u.clear_due(20 * GB, int(1.6 * GB), stop=True, now=NOW + 60)     # the stop level always asks
+    assert not u.clear_due(20 * GB, int(8 * GB), now=NOW + 86400)           # 60%: room again (they cleared it)
+    assert u.clear_due(20 * GB, int(4.4 * GB), now=NOW + 86400)             # filling up again later: a new ask
 
 
 def test_stop_level_pauses_and_the_list_comes_with_it(monkeypatch):

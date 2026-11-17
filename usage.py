@@ -396,14 +396,19 @@ class Usage:
         return {DISK_WARN: "warn", DISK_STOP: "stop"}.get(level, "") if level > said else ""
 
     def clear_due(self, total: int, free: int, stop: bool = False, now: float | None = None) -> bool:
-        """Time to offer a list of what could be cleared: at DISK_STOP, else from DISK_ASK once a day or when worse."""
+        """Time to offer a list of what could be cleared: at DISK_STOP, else from DISK_ASK, at most once a day and after
+        the first time only when it's worse than when they last heard (a "no" isn't asked again every day)."""
         now, pct = time.time() if now is None else now, 100 * (total - free) / total
         if stop:
             return True
-        if pct < DISK_ASK or free >= DISK_LEFT_GB[DISK_WARN] * 1024 ** 3:  # a big disk with room left: nothing to ask
+        state = self.load()
+        last = state.get("disk_asked") or {}
+        if pct < DISK_ASK or free >= DISK_LEFT_GB[DISK_WARN] * 1024 ** 3:  # room again: next time counts as new
+            if last.get("pct"):
+                state["disk_asked"] = {**last, "pct": 0}
+                self.save(state)
             return False
-        last = self.load().get("disk_asked") or {}
-        return now - last.get("at", 0) >= 86400 or pct >= last.get("pct", 0) + ASK_WORSE
+        return now - last.get("at", 0) >= 86400 and pct >= last.get("pct", 0) + ASK_WORSE
 
     def asked_to_clear(self, total: int, free: int, now: float | None = None) -> None:
         state = self.load()
@@ -414,7 +419,8 @@ class Usage:
         """The background job's brief: find what could go and write the one question for them. The job deletes
         nothing; Ken deletes only what they say yes to, from the paths the job lists."""
         pct, home = f"{100 * (total - free) / total:.0f}", self.path.parent
-        paused = " Ken has paused all work until there's room again." if stopped else ""
+        paused = (" Ken has paused all work until there's room again: start the message by saying so, and that a yes "
+                  "lets work carry on." if stopped else "")
         return (f"The disk on this computer is {pct}% full ({gb(free)} left).{paused} Find what could be cleared, but "
                 "DELETE NOTHING and move nothing: they decide. Look with du at where Ken's work piles up: the working "
                 f"folder {home / 'work'} (videos, renders, downloads), temp files in /tmp and regenerable caches "
@@ -429,8 +435,10 @@ class Usage:
                 "message for them: about how much can be freed, grouped by kind with sizes, ending with the question. "
                 f"Like: \"Your disk is {pct}% full. I can free about 6 GB: old drafts of 3 reels (2.1 GB, finished "
                 "versions kept), copies of your Drive files (3.5 GB, still on Drive), temp files (0.6 GB). Clear "
-                "them?\" Below it, for Ken only, list the exact paths behind each group, so when they say yes (to "
-                "all or some) Ken deletes only those. If nothing is safe to offer, say so in one line.")
+                "them?\" Save the exact paths behind each group, grouped the same way, to "
+                f"{home / 'work' / 'disk-clear-list.txt'} and name that file below the message, for Ken only: when "
+                "they say yes (to all or some), Ken deletes only those paths. If nothing is safe to offer, say so in "
+                "one line.")
 
     def disk_text(self, what: str, total: int, free: int, more: str, listing: bool = False) -> str:
         computer = "Mac" if sys.platform == "darwin" else "computer"
