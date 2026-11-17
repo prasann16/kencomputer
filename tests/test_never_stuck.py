@@ -350,3 +350,18 @@ async def test_a_plan_at_its_limit_says_when_it_opens_again(flaky, monkeypatch):
     flaky.limit_resets = lambda backend: ""  # no reading yet: the plain sentence
     assert not await flaky.send_message(HOME, "draft my post", log_user=False)
     assert flaky.messages(HOME)[-1]["text"] == "You've reached your Claude plan's limit for now."
+
+
+async def test_a_plan_at_its_limit_is_named_even_when_the_error_only_says_it_failed(flaky, monkeypatch):
+    """Claude's own usage reading says the plan is at its limit, but the error that comes back is a bare failure (what a
+    person saw as "Something went wrong on Ken's side" five times in a row): the limit is the reason they're told."""
+    async def bare(self, prompt, on_text, on_tool=None, on_delta=None):
+        raise RuntimeError("Command failed with exit code 1")
+    monkeypatch.setattr(FailingSession, "ask", bare)
+    flaky.limit_resets = lambda backend: "22:20"
+    flaky.log_message(HOME, "you", "change my settings")
+    assert not await flaky.send_message(HOME, "change my settings", log_user=False)
+    assert flaky.messages(HOME)[-1]["text"] == "You've reached your Claude plan's limit for now. It resets at 22:20."
+    flaky.limit_resets = lambda backend: ""  # not at a limit: the plain sentence, as before
+    assert not await flaky.send_message(HOME, "change my settings", log_user=False)
+    assert flaky.messages(HOME)[-1]["text"] == "Something went wrong on Ken's side."

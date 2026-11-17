@@ -124,7 +124,7 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
         return f"{name} didn't answer, so I stopped waiting.", "retry"
     if has("model") and has("not supported", "not found", "does not exist", "not available"):
         return f"{name} can't use that model with your account. Pick another model at the top.", "retry"
-    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit"):
+    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit", "hit your limit", "limit reached"):
         return f"You've reached your {name} plan's limit for now.", "retry"
     if status == 402 or "402" in codes or has("credit balance", "billing"):
         return f"Your {name} account is out of credit.", "reconnect"
@@ -1613,11 +1613,9 @@ class Engine:
                 self.chats.pop(pid, None)
                 quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
                 msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
-                               if quiet else explain_failure(e, self.backend(pid)))
+                               if quiet else self.explain(e, pid))
                 if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
                     msg, action = await self._dead_claude(msg, action)
-                if msg.startswith("You've reached your") and self.limit_resets and (at := self.limit_resets(self.backend(pid))):
-                    msg = f"{msg[:-1]}. It resets at {at}."
                 # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
                 # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
                 # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
@@ -1733,7 +1731,7 @@ class Engine:
             text = (final or last or "").strip()
         except Exception as e:
             log.warning("job %s failed: %s", (job or {}).get("name", "job"), e)
-            text, failed = "", friendly_error(e, self.backend(pid))
+            text, failed = "", self.explain(e, pid)[0]
         finally:
             name = (job or {}).get("name")  # a job they named themselves stays "custom": names are theirs
             self.record_usage(session, pid, "job", job=name if name in ("morning-brief", "nightly-review") else "custom")
@@ -2062,7 +2060,8 @@ class Engine:
             run = self._run_row(rid)
             if run["status"] not in ("queued", "running"):
                 return  # it had already finished; only what came after went wrong
-            pid, reason = run["project"], friendly_error(e, self.backend(run["project"]))
+            pid = run["project"]
+            reason = self.explain(e, pid)[0]
             self._set_run(rid, status="failed", finished=time.time(), summary=f"Failed: {reason}", activity="")
             self.emit("run.finished", project=pid, run=rid, status="failed", title=run["title"], summary=f"Failed: {reason}",
                       origin=self.origins.pop(rid, None))
@@ -2123,7 +2122,7 @@ class Engine:
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
                 if isinstance(e, NoAnswer) or not isinstance(e, asyncio.TimeoutError):
-                    reason = friendly_error(e, self.backend(pid))
+                    reason = self.explain(e, pid)[0]
                     summary = f"Failed: {reason}"
                 else:
                     out_of_time = time.monotonic() - began >= RUN_LIMIT - 60
@@ -2216,6 +2215,16 @@ class Engine:
         else:
             text = f'■ Your background job "{title}" didn\'t finish. {reason or "Something went wrong."} Ask me to try again.'
         self.log_message(HOME, "ken", text, via="background")
+
+    def explain(self, e: BaseException, pid: str) -> tuple[str, str]:
+        """explain_failure, plus what Ken already knows: when their own plan is at its limit right now, that's the reason
+        (Claude's usage readings say so even when the error itself only says it failed), with when it opens again."""
+        msg, action = explain_failure(e, self.backend(pid))
+        at = self.limit_resets(self.backend(pid)) if self.limit_resets else ""
+        if at and action == "retry" and "can't use that model" not in msg:
+            name = "ChatGPT" if self.backend(pid) == "codex" else "Claude"
+            msg = f"You've reached your {name} plan's limit for now. It resets at {at}."
+        return msg, action
 
     async def stop_run(self, rid: str, by: str = "") -> None:
         run = self._run_row(rid)
