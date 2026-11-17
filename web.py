@@ -293,6 +293,17 @@ class WebApp:
                 return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
             if b.get("action") == "disconnect":
                 return _json(await self.setup.disconnect(backend=b.get("backend")))
+            if b.get("action") == "use":  # Settings → AI: "credits", or their own "claude" / "codex"; nothing signs out
+                ai = str(b.get("ai", ""))
+                from onboarding import included_ai_key
+                if ai not in ("credits", "claude", "codex"):
+                    raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
+                if ai == "credits" and not included_ai_key():
+                    raise ValueError("Ken AI credits aren't part of this plan.")
+                backend = "claude" if ai == "credits" else ai  # Ken AI credits run on Claude
+                if backend != self.engine.backend(HOME):
+                    await self.engine.set_runtime(HOME, backend=backend)
+                return _json(await self.setup.use_credits(ai == "credits"))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
         except (RuntimeError, ValueError) as exc:

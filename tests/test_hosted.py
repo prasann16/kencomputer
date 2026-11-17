@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import onboarding  # noqa: E402
 import pins  # noqa: E402
-from engine import friendly_error  # noqa: E402
+from engine import HOME, friendly_error  # noqa: E402
 from onboarding import BrainOnboarding, CodexOnboarding, Onboarding  # noqa: E402
 from web import WebApp  # noqa: E402
 
@@ -44,7 +44,7 @@ def hosted(monkeypatch):
 @pytest.fixture
 def clean_ai(monkeypatch):
     for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-              "KEN_INCLUDED_AI_TOKEN", "OPENAI_API_KEY", "KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_MODEL"):
+              "KEN_INCLUDED_AI_TOKEN", "OPENAI_API_KEY", "KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_MODEL", "KEN_USE_CREDITS"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -385,6 +385,91 @@ def test_included_ai_running_out_is_said_plainly(monkeypatch, clean_ai):
     assert msg == "You've used your Ken AI credits."
     monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
     assert "included" not in friendly_error(Exception("API Error: 402 Out of included AI"), "claude")
+
+
+async def test_picking_credits_keeps_their_own_claude_connected(tmp_path, monkeypatch, clean_ai):
+    """Settings → AI: one tap to Ken AI credits and one tap back; their own sign-in is never dropped."""
+    included(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    refreshed = []
+
+    async def on_connected():
+        refreshed.append(onboarding.included_ai_in_use())  # open chats reopen on the AI now in use
+
+    o = Onboarding(tmp_path, lambda: True, on_connected, lambda: True)
+    status = await o.use_credits(True)
+    assert onboarding.included_ai_in_use() and os.environ["ANTHROPIC_AUTH_TOKEN"] == "person-token"
+    assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == TOKEN and "KEN_USE_CREDITS=1" in (tmp_path / ".env").read_text()
+    assert status["use_credits"] and status["how"] == "account" and status["connected"]
+    status = await o.use_credits(False)
+    assert not onboarding.included_ai_in_use() and "ANTHROPIC_AUTH_TOKEN" not in os.environ
+    assert "use_credits" not in status and "KEN_USE_CREDITS" not in (tmp_path / ".env").read_text()
+    assert refreshed == [True, False]
+    monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")  # a plan without Ken AI credits (a Mac): nothing to pick
+    with pytest.raises(ValueError):
+        await o.use_credits(True)
+
+
+async def test_claude_code_never_gets_their_own_login_on_credits(monkeypatch, clean_ai):
+    """On credits by choice, their own sign-in and key are blanked for Claude Code, so only the credits are used."""
+    import claude_agent_sdk
+
+    import brains
+    seen = {}
+
+    class Client:
+        def __init__(self, options):
+            seen.update(options.env)
+
+        async def connect(self):
+            pass
+
+    async def ready(name):
+        pass
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", Client)
+    monkeypatch.setattr(brains.runtimes, "ensure", ready)
+    included(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    monkeypatch.setenv("KEN_USE_CREDITS", "1")
+    onboarding.use_included_ai()
+    await brains.ClaudeSession(brains.ClaudeBrain(), ".", "", None)._connect(None)
+    assert seen["CLAUDE_CODE_OAUTH_TOKEN"] == "" and seen["ANTHROPIC_API_KEY"] == ""
+    monkeypatch.delenv("KEN_USE_CREDITS")
+    onboarding.use_included_ai()
+    seen.clear()
+    await brains.ClaudeSession(brains.ClaudeBrain(), ".", "", None)._connect(None)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in seen  # their own Claude: left as it is
+
+
+async def test_settings_switches_a_chatgpt_chat_to_credits_and_back(engine, aiohttp_client, monkeypatch, clean_ai):
+    included(monkeypatch)
+    o = Onboarding(engine.home, lambda: True, _noop, lambda: True)
+    o.status = lambda: {"connected": True}
+    setup = BrainOnboarding({"claude": o, "codex": o}, lambda: engine.backend(HOME))
+    _, client = await signed_in(engine, aiohttp_client, setup=setup)
+    from test_engine import FakeBrain
+    engine.brain.name = "claude"
+    engine.brains = {"claude": engine.brain, "codex": FakeBrain()}
+    await engine.set_runtime(HOME, backend="codex")
+    assert (await client.post("/api/setup", json={"action": "use", "ai": "credits"})).status == 200
+    assert engine.backend(HOME) == "claude" and os.environ.get("KEN_USE_CREDITS") == "1"  # credits run on Claude
+    assert (await client.post("/api/setup", json={"action": "use", "ai": "codex"})).status == 200
+    assert engine.backend(HOME) == "codex" and "KEN_USE_CREDITS" not in os.environ
+    assert (await client.post("/api/setup", json={"action": "use", "ai": "bogus"})).status == 400
+
+
+def test_a_plan_at_its_limit_points_to_credits_only_where_there_are_some(tmp_path, monkeypatch, clean_ai):
+    from brains import AIUnavailable
+    from engine import Engine
+    e = Engine(tmp_path, type("B", (), {"name": "claude"})())
+    e.limit_resets = lambda backend: "22:20"
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    assert e.explain(AIUnavailable(429, "rate_limit"), HOME)[0] == "You've reached your Claude plan's limit for now. It resets at 22:20."
+    included(monkeypatch)
+    assert e.explain(AIUnavailable(429, "rate_limit"), HOME)[0] == (
+        "You've reached your Claude plan's limit for now. It resets at 22:20. "
+        "To keep going now, switch to Ken AI credits in Settings → AI.")
 
 
 # ------------------------------------------------------------------ bot: hosted bits

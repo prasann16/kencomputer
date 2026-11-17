@@ -208,9 +208,13 @@ class ClaudeSession(Session):
 
     async def _connect(self, resume: str | None) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        from onboarding import included_ai_in_use
 
         await runtimes.ensure("claude")
         system = self.system() if callable(self.system) else self.system
+        # On Ken AI credits while their own Claude stays connected (picked in Settings → AI): their own sign-in and key
+        # are blanked for Claude Code (it treats an empty one as not set), so only the credits are used or charged.
+        credits = {"CLAUDE_CODE_OAUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""} if included_ai_in_use() else {}
         model = self.model_fn()
         options = ClaudeAgentOptions(
             system_prompt={"type": "preset", "preset": "claude_code", "append": system},
@@ -219,7 +223,7 @@ class ClaudeSession(Session):
             mcp_servers=self.mcp_fn() if self.mcp_fn else {},
             # No Claude Code background helpers: their results arrive after Ken's reply has ended and are
             # lost. Long work goes to Ken's own background jobs, which report back (engine.start_run).
-            env={**(self.env_fn() if self.env_fn else {}), "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
+            env={**(self.env_fn() if self.env_fn else {}), **credits, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
             include_partial_messages=True,
             cwd=self.cwd,
             model=model or None,

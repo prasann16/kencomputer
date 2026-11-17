@@ -2219,11 +2219,15 @@ class Engine:
     def explain(self, e: BaseException, pid: str) -> tuple[str, str]:
         """explain_failure, plus what Ken already knows: when their own plan is at its limit right now, that's the reason
         (Claude's usage readings say so even when the error itself only says it failed), with when it opens again."""
+        from onboarding import included_ai_key
+
         msg, action = explain_failure(e, self.backend(pid))
         at = self.limit_resets(self.backend(pid)) if self.limit_resets else ""
         if at and action == "retry" and "can't use that model" not in msg:
             name = "ChatGPT" if self.backend(pid) == "codex" else "Claude"
             msg = f"You've reached your {name} plan's limit for now. It resets at {at}."
+        if "plan's limit" in msg and included_ai_key():  # their plan has Ken AI credits: a way to keep going now
+            msg += " To keep going now, switch to Ken AI credits in Settings → AI."
         return msg, action
 
     async def stop_run(self, rid: str, by: str = "") -> None:

@@ -1643,19 +1643,23 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
   ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
-  ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
+  ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not or when you pick them.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
     <div class="conn-list ai-uses">${(() => {
       // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
-      const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // Ken AI credits are in use when the chat runs on Claude without their own Claude, or they picked credits here.
+      const onCredits = HOSTED && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
+      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // Hosted: one tap moves between their own account and Ken AI credits, without signing out of anything.
+      const use = (id, label) => html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'use', ai: id } }).then((r) => { onConnected(r); toast(`Ken now uses ${label}.`); }).catch((e) => setError(e.message))}>Use ${id === 'credits' ? 'Ken AI credits' : `my own ${label}`}</button>`;
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
       const rows = [['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => html`<div>${name(id, label)}<span class="ai-state">${own[id] ? `Connected${inUse === id ? ' · in use' : ''}` : 'Not connected'}</span>
-        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
+        <span class="ai-actions">${HOSTED && own[id] && inUse !== id && use(id, label)}<button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
         ${own[id] && limits && html`<${PlanLimits} windows=${limits[id] || []} label=${label}/>`}</div>`);
       const usage = meta.usage || {};
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
-        <span class="ai-actions">${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
+        <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
       return rows;
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
