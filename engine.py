@@ -2185,9 +2185,7 @@ class Engine:
         except Exception as e:
             log.warning("couldn't carry on with run %s: %s", run["id"], e)
             return False
-        self.log_message(run["project"], "ken", f'⏳ "{base}" is taking more than an hour, so I\'m carrying on with it.',
-                         **({"via": "background"} if run["project"] == HOME else {}))
-        return True
+        return True  # quietly: they hear only how the whole job ends
 
     async def _report_run(self, run: dict, status: str, summary: str, reason: str) -> None:
         """Ken tells them how a background job went, in its own words. When that turn fails or says nothing (the AI

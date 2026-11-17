@@ -115,10 +115,7 @@ async def test_a_job_cut_off_by_the_time_limit_carries_on_from_its_files(engine,
     assert nxt["status"] == "done" and nxt["source"] == "ken"
     assert nxt["prompt"].startswith("make 30 posts") and "Made 12 of 30 posts so far" in nxt["prompt"]
     assert "Don't start over" in nxt["prompt"] and str(engine.home_cwd) in nxt["prompt"]
-    lines = ken_lines(engine)
-    assert lines[0] == '⏳ "Instagram posts" is taking more than an hour, so I\'m carrying on with it.'
-    assert lines[-1] == "did it"  # then the finished job is reported as usual
-    assert not any("didn't finish" in t for t in lines)
+    assert ken_lines(engine) == ["did it"]  # carrying on is quiet: they hear only the finished job
 
 
 async def test_a_job_carries_on_twice_at_most_then_says_it_didnt_finish(engine, monkeypatch):
