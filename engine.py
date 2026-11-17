@@ -2052,6 +2052,25 @@ class Engine:
         yield
 
     async def _execute(self, rid: str) -> None:
+        """Run a background job. Whatever goes wrong, it never stays "running" with nobody told: a failure before the
+        job even got going (setting up its skills or its AI session) still ends it, with one plain line."""
+        try:
+            await self._execute_run(rid)
+        except Exception as e:
+            log.warning("run %s broke before it could finish: %s", rid, e)
+            crash.report(e, f"run failed to start: {e}", where="engine._execute")
+            run = self._run_row(rid)
+            if run["status"] not in ("queued", "running"):
+                return  # it had already finished; only what came after went wrong
+            pid, reason = run["project"], friendly_error(e, self.backend(run["project"]))
+            self._set_run(rid, status="failed", finished=time.time(), summary=f"Failed: {reason}", activity="")
+            self.emit("run.finished", project=pid, run=rid, status="failed", title=run["title"], summary=f"Failed: {reason}",
+                      origin=self.origins.pop(rid, None))
+            text = f'■ Your background job "{self._CARRIED.sub("", run["title"])}" didn\'t finish. {reason} Ask me to try again.'
+            self.log_message(pid, "ken", text, **({"via": "background"} if pid == HOME else
+                                                  {"run": rid, "run_title": run["title"], "run_status": "failed"}))
+
+    async def _execute_run(self, rid: str) -> None:
         run = self._run_row(rid)
         pid = run["project"]
         async with self._room(rid):

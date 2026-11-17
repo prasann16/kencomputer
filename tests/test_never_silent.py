@@ -266,3 +266,18 @@ async def test_nothing_to_say_stays_silent_but_is_traced(engine, monkeypatch):
                                 listener=listener) == ""
     assert heard == [] and ken_lines(engine) == []
     assert ("job_quiet", {"builtin": False}) in tracked
+
+
+async def test_a_job_that_breaks_before_it_starts_isnt_left_running(engine, monkeypatch):
+    def broken():
+        raise OSError("disk full")
+    monkeypatch.setattr(engine, "sync_skills", broken)  # fails before the job reaches the AI at all
+    q = engine.subscribe()
+    run = engine.start_run(HOME, "Instagram posts", "make 30 posts", source="ken")
+    await all_done(engine)
+    row = engine._run_row(run["id"])
+    assert row["status"] == "failed" and row["finished"]
+    assert any(e["type"] == "run.finished" and e["status"] == "failed" for e in (q.get_nowait() for _ in range(q.qsize())))
+    assert ken_lines(engine) == [
+        '■ Your background job "Instagram posts" didn\'t finish. Something went wrong on Ken\'s side. Ask me to try again.']
+    assert engine.messages(HOME)[-1]["via"] == "background"
