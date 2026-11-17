@@ -211,6 +211,9 @@ def test_untouched_nightly_review_gets_the_disk_check():
         prompt = json.loads(bot.JOBS_FILE.read_text())[0]["prompt"]
         assert prompt == start + bot.NEW_NIGHTLY_TAIL
         assert "check disk space" in prompt and "Never delete anything yourself" in prompt
+        # Browser profiles are never listed; uploads are, labeled, and they decide.
+        assert "Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*" in prompt
+        assert "Chromium profile" in prompt and "uploads included, each labeled with what it is and its size" in prompt
     mine = [{"name": "nightly-review", "time": "21:00", "prompt": "My own review."}]
     bot.JOBS_FILE.write_text(json.dumps(mine))
     bot.refresh_default_jobs()
