@@ -2,8 +2,9 @@
 
 ## Clone their voice (once)
 
-Only the voice of the person you're chatting with. Instant Voice Clone needs a paid ElevenLabs plan (Starter, $6 a
-month, and up): `eleven.py check` shows `can_clone`.
+Only the voice of the person you're chatting with. `eleven.py check` shows `can_clone`. On Ken's account it's
+included in paid plans (not the free trial; say so plainly if it's false); on their own key it needs a paid
+ElevenLabs plan (Starter and up).
 
 1. **Consent, recorded.** Ask them to send a voice note saying, in their words: "I'm <name>, this is my own voice,
    and I agree to Ken making a copy of it for my own videos." Save it as `voice/consent.<ext>` in your workspace.
@@ -53,7 +54,7 @@ cleaner voice over a rough take. Not someone else's real voice.
 
     <ken> --eleven changer --voice <voice_id> --in take.mp3 --out new.mp3 [--denoise]
 
-5 minutes per file at most (split longer ones). About $0.12 a minute. A video in and a video out keeps the picture.
+5 minutes per file at most (split longer ones). A video in and a video out keeps the picture.
 
 ## Design a new voice
 

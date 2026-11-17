@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """ElevenLabs for the video kit: one small command per feature, Python standard library only (no installs).
 
-The key is read from ELEVENLABS_API_KEY and never printed. Every command prints one JSON line on success
-(the files it wrote, the job id, the estimated cost) so the chat can read it back; errors go to stderr.
+Two ways in. On hosted Ken (the computer has a host: KEN_INCLUDED_AI_URL/TOKEN, or KEN_ELEVEN_URL/TOKEN) every call
+goes through the host's /box/eleven, which uses Ken's own ElevenLabs account with a monthly allowance per person: no
+key here, nothing for them to pay. Anywhere else, their own key from ELEVENLABS_API_KEY (never printed).
+KEN_ELEVEN=own uses their own key even on hosted Ken. Every command prints one JSON line on success (the files it
+wrote, the job id, and the estimated cost on their key or what's left of the allowance on Ken's); errors go to stderr.
 
-    eleven.py check                                      plan, credits left, whether voice cloning is on
+    eleven.py check                                      what's left (Ken's allowance, or their plan's credits)
     eleven.py voices [--search calm]                     their voices (id, name, kind)
     eleven.py estimate <feature> [file] [--chars N]      what a run would cost, before spending anything
     eleven.py tts --voice ID (--text "..." | --text-file f) --out vo.mp3 [--model eleven_multilingual_v2]
@@ -18,6 +21,7 @@ The key is read from ELEVENLABS_API_KEY and never printed. Every command prints 
     eleven.py design-save --id GENERATED_ID --name "Narrator" --describe "..."
     eleven.py dub --in reel.mp4 --to hi [--from en] --out reel.hi.mp4 [--v2] [--speakers 1]
     eleven.py dub-start / dub-status ID / dub-get ID --to hi --out f    the same, in steps (a long video)
+    eleven.py voice-delete ID                            delete a voice they made (frees a slot)
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +44,7 @@ from pathlib import Path
 API = os.environ.get("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io")
 KEY_HELP = ("No ElevenLabs key. Ask them to add it in the Brain tab, under Accounts & passwords, "
             "named ELEVENLABS_API_KEY (elevenlabs.io → Developers → API keys).")
+HOST_MAX_UPLOAD = 95 * 1024 * 1024  # the host takes 100 MB a request
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".wmv", ".flv", ".mpeg", ".3gp"}
 
 # USD from https://elevenlabs.io/pricing/api (read Nov 17 2026). API usage is billed in dollars; on a plan it comes out of
@@ -71,9 +77,28 @@ def key() -> str:
     return k
 
 
+def host() -> tuple[str, str] | None:
+    """Hosted Ken's /box/eleven and this computer's token for it, or None (no host, or KEN_ELEVEN=own)."""
+    if os.environ.get("KEN_ELEVEN", "").strip().lower() == "own":
+        return None
+    url = os.environ.get("KEN_ELEVEN_URL", "").strip().rstrip("/")
+    if not url:
+        ai = os.environ.get("KEN_INCLUDED_AI_URL", "").strip().rstrip("/")
+        if ai.startswith("https://") and ai.endswith("/ai"):
+            url = ai[: -len("/ai")] + "/box/eleven"
+    token = (os.environ.get("KEN_ELEVEN_TOKEN") or os.environ.get("KEN_INCLUDED_AI_TOKEN") or "").strip()
+    local = url.startswith(("http://localhost", "http://127.0.0.1"))  # a test copy of the host
+    return (url, token) if token and (url.startswith("https://") or local) else None
+
+
+QUOTA_LEFT: list[str] = []  # what the host said is left after the last call ("540 seconds")
+
+
 def _redact(text: str) -> str:
-    k = os.environ.get("ELEVENLABS_API_KEY", "")
-    return text.replace(k, "[key]") if k else text
+    for name in ("ELEVENLABS_API_KEY", "KEN_ELEVEN_TOKEN", "KEN_INCLUDED_AI_TOKEN"):
+        k = os.environ.get(name, "")
+        text = text.replace(k, "[key]") if len(k) > 4 else text
+    return text
 
 
 # ---------- HTTP (urllib, so it runs on any Python Ken has) ----------
@@ -98,25 +123,53 @@ def multipart(fields: dict, files: list[tuple[str, Path]]) -> tuple[bytes, str]:
 
 
 def call(method: str, path: str, *, query: dict | None = None, json_body: dict | None = None,
-         fields: dict | None = None, files: list | None = None, raw: bool = False, timeout: int = 600):
-    """One API call. Returns parsed JSON, or bytes when raw=True. Errors become a readable Fail."""
-    url = API + path + ("?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None}) if query else "")
-    headers = {"xi-api-key": key(), "User-Agent": "ken-video-kit/1"}
+         fields: dict | None = None, files: list | None = None, raw: bool = False, timeout: int = 600,
+         seconds: float | None = None, headers: dict | None = None):
+    """One API call (through the host, or straight to ElevenLabs with their key). Returns parsed JSON, or bytes when
+    raw=True. Errors become a readable Fail. seconds: how long the uploaded media is (the host counts it)."""
+    via = host()
+    url = (via[0] if via else API) + path + ("?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None}) if query else "")
+    # A named client: Cloudflare in front of the host refuses Python's default "Python-urllib".
+    sent = {"User-Agent": "Ken"} if via else {"xi-api-key": key(), "User-Agent": "ken-video-kit/1"}
+    if via:
+        sent["Authorization"] = f"Bearer {via[1]}"
+        if seconds is not None:
+            sent["X-Ken-Seconds"] = f"{max(seconds, 0.1):.2f}"
+        sent.update(headers or {})
     data = None
     if json_body is not None:
-        data, headers["Content-Type"] = json.dumps(json_body).encode(), "application/json"
+        data, sent["Content-Type"] = json.dumps(json_body).encode(), "application/json"
     elif fields is not None or files:
-        data, headers["Content-Type"] = multipart(fields or {}, files or [])
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        data, sent["Content-Type"] = multipart(fields or {}, files or [])
+    if via and data and len(data) > HOST_MAX_UPLOAD:
+        raise Fail(f"That's {len(data) // 1048576} MB to send; 95 MB is the most at once. Cut it into parts first.")
+    req = urllib.request.Request(url, data=data, headers=sent, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read()
+            left = getattr(r, "headers", None) and r.headers.get("x-ken-quota-left")
+            if left:
+                QUOTA_LEFT[:] = [left]
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:600]
-        raise Fail(_explain(e.code, _redact(detail)))
+        raise Fail(_explain_host(e.code, detail) if via else _explain(e.code, _redact(detail)))
     except urllib.error.URLError as e:
-        raise Fail(f"Couldn't reach ElevenLabs: {e.reason}")
+        raise Fail(f"Couldn't reach {'Ken' if via else 'ElevenLabs'}: {e.reason}")
     return body if raw else json.loads(body or b"{}")
+
+
+def _explain_host(code: int, detail: str) -> str:
+    """The host's answer ({"error", "code"}), for the chat: what happened and what to do, never a price."""
+    try:
+        said = json.loads(detail)
+    except ValueError:
+        said = {}
+    error, kind = _redact(str(said.get("error") or detail)), said.get("code")
+    if kind == "quota":
+        return f"Allowance used up: {error} Tell them in one line; if they have their own ElevenLabs key, it can run on that (KEN_ELEVEN=own)."
+    if kind in ("eleven_down", "busy"):
+        return f"{error} Don't retry in a loop."
+    return f"{error} ({code})"
 
 
 def _explain(code: int, detail: str) -> str:
@@ -159,6 +212,20 @@ def swap_audio(video: Path, audio: Path, out: Path) -> Path:
     return out
 
 
+def audio_only(src: Path) -> tuple[Path, bool]:
+    """On hosted Ken, a video goes up as its audio only (far smaller; the picture never leaves). Returns the file to
+    send and whether it's a temporary copy to delete."""
+    if not host() or not is_video(src) or not shutil.which("ffmpeg"):
+        return src, False
+    tmp = Path(tempfile.mkdtemp(prefix="ken-eleven-")) / (src.stem + ".audio.mp3")
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2", "-ar", "44100", "-c:a", "libmp3lame",
+                        "-b:a", "192k", str(tmp)], check=True)
+    except (OSError, subprocess.CalledProcessError):
+        raise Fail(f"Couldn't take the audio out of {src.name} (does it have sound?)")
+    return tmp, True
+
+
 def need(path: str) -> Path:
     p = Path(path).expanduser()
     if not p.is_file():
@@ -176,8 +243,24 @@ def cost(feature: str, *, seconds: float = 0, chars: int = 0) -> float:
 
 
 def done(**info) -> dict:
+    if host():  # Ken's account: no prices for the chat, only what's left
+        info.pop("usd", None)
+        if QUOTA_LEFT:
+            info["quota_left"] = _readable(QUOTA_LEFT[0])
     print(json.dumps(info, ensure_ascii=False))
     return info
+
+
+def _readable(left: str) -> str:
+    """"540 seconds" → "9 min"; other units as they are."""
+    n, _, unit = left.partition(" ")
+    if unit == "seconds" and n.isdigit():
+        return f"{int(n) / 60:.1f}".rstrip("0").rstrip(".") + " min"
+    return left
+
+
+# The host's feature names, for estimate (tts on Flash and v2 dubs are counted under their own).
+QUOTA_FEATURE = {"tts_flash": "tts", "dub_v2": "dub_v2"}
 
 
 # ---------- captions: Scribe words → SRT ----------
@@ -221,6 +304,10 @@ def words_to_srt(words: list[dict], max_chars: int = 32, max_secs: float = 2.5, 
 # ---------- commands ----------
 
 def cmd_check(a):
+    if host():
+        q = call("GET", "/quota")
+        left = {f: _readable(f"{v['left']} {v['unit']}") for f, v in q.get("features", {}).items()}
+        return done(account="ken", left=left, resets=q.get("resets"), can_clone=q.get("features", {}).get("clone", {}).get("left", 0) > 0)
     s = call("GET", "/v1/user/subscription")
     left = (s.get("character_limit") or 0) - (s.get("character_count") or 0)
     return done(tier=s.get("tier"), credits_used=s.get("character_count"), credits_limit=s.get("character_limit"),
@@ -236,6 +323,13 @@ def cmd_voices(a):
 
 def cmd_estimate(a):
     secs = duration(need(a.file)) if a.file else (a.seconds or 0)
+    if host():
+        feature = QUOTA_FEATURE.get(a.feature, a.feature)
+        q = call("GET", "/quota").get("features", {}).get(feature, {})
+        unit = q.get("unit", "seconds")
+        needs = {"chars": a.chars or 0, "seconds": round(secs), "voices": 1, "runs": 1}.get(unit, 0)
+        return done(feature=a.feature, needs=_readable(f"{needs} {unit}"), left=_readable(f"{q.get('left', 0)} {unit}"),
+                    fits=needs <= q.get("left", 0))
     usd = cost(a.feature, seconds=secs, chars=a.chars or 0)
     return done(feature=a.feature, seconds=round(secs, 1), chars=a.chars, usd=usd,
                 note="Estimate from elevenlabs.io/pricing/api; on a plan it comes out of credits first.")
@@ -267,7 +361,8 @@ def cmd_clone(a):
     labels = json.dumps({"consent_recording": consent.name, "made_by": "ken"})
     r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
                                                "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
-             files=[("files", s) for s in samples])
+             files=[("files", s) for s in samples],
+             headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": consent.name[:200]})
     return done(voice_id=r.get("voice_id"), requires_verification=r.get("requires_verification"), sample_seconds=round(total, 1),
                 consent=str(consent))
 
@@ -276,9 +371,13 @@ def cmd_changer(a):
     src = need(a.inp)
     if duration(src) > 300:
         raise Fail("Voice changer takes 5 minutes at most per file: cut it into parts first")
-    audio = call("POST", f"/v1/voice-changer/{a.voice}", query={"output_format": "mp3_44100_128"},
-                 fields={"model_id": a.model, "remove_background_noise": "true" if a.denoise else "false"},
-                 files=[("audio", src)], raw=True)
+    send, tmp = audio_only(src)
+    try:
+        audio = call("POST", f"/v1/voice-changer/{a.voice}", query={"output_format": "mp3_44100_128"},
+                     fields={"model_id": a.model, "remove_background_noise": "true" if a.denoise else "false"},
+                     files=[("audio", send)], raw=True, seconds=duration(send))
+    finally:
+        _drop(send, tmp)
     return _audio_out(src, audio, Path(a.out), "changer")
 
 
@@ -286,8 +385,17 @@ def cmd_isolate(a):
     src = need(a.inp)
     if src.stat().st_size > 500 * 1024 * 1024:
         raise Fail("Voice isolator takes files up to 500 MB and 1 hour")
-    audio = call("POST", "/v1/audio-isolation", files=[("audio", src)], raw=True)
+    send, tmp = audio_only(src)
+    try:
+        audio = call("POST", "/v1/audio-isolation", files=[("audio", send)], raw=True, seconds=duration(send))
+    finally:
+        _drop(send, tmp)
     return _audio_out(src, audio, Path(a.out), "isolate")
+
+
+def _drop(path: Path, tmp: bool):
+    if tmp:
+        shutil.rmtree(path.parent, ignore_errors=True)
 
 
 def _audio_out(src: Path, audio: bytes, out: Path, feature: str):
@@ -323,7 +431,11 @@ def cmd_captions(a):
     src = need(a.inp)
     fields = {"model_id": a.model, "timestamps_granularity": "word", "tag_audio_events": "false",
               "diarize": "true" if a.speakers else "false", "language_code": a.lang}
-    r = call("POST", "/v1/speech-to-text", fields=fields, files=[("file", src)], timeout=1800)
+    send, tmp = audio_only(src)
+    try:
+        r = call("POST", "/v1/speech-to-text", fields=fields, files=[("file", send)], timeout=1800, seconds=duration(send))
+    finally:
+        _drop(send, tmp)
     words = r.get("words", [])
     out = Path(a.out)
     out.write_text(words_to_srt(words, max_chars=a.max_chars, speakers=a.speakers))
@@ -363,10 +475,23 @@ def dub_start(a) -> str:
         need(str(src))
     if not src and not a.url:
         raise Fail("Give --in a file or --url a link")
+    # On hosted Ken a video goes up as its audio, and the dubbed audio goes back over the original picture (":a").
+    send, tmp = audio_only(src) if src else (None, False)
+    try:
+        return _dub_start(a, send, send != src)
+    finally:
+        if send:
+            _drop(send, tmp)
+
+
+def _dub_start(a, send: Path | None, audio: bool) -> str:
+    src = send
     files = [("file", src)] if src else []
+    seconds = duration(src) if src else (getattr(a, "seconds", None) or 60)  # a link: the host corrects it from ElevenLabs
     if a.v2:
         r = call("POST", "/v1/dubbing/project", fields={"source_url": a.url, "source_language": a.src_lang,
-                                                       "target_language": a.to, "model_id": "dubbing_v2"}, files=files)
+                                                       "target_language": a.to, "model_id": "dubbing_v2"}, files=files,
+                 seconds=seconds)
         langs = r.get("language_ids") or []
         if not langs:
             lang = call("POST", f"/v1/dubbing/project/{r['project_id']}/language", json_body={"target_language": a.to})
@@ -374,8 +499,9 @@ def dub_start(a) -> str:
         return f"v2:{r['project_id']}:{langs[0]}"
     r = call("POST", "/v1/dubbing", fields={"source_url": a.url, "source_lang": a.src_lang or "auto", "target_lang": a.to,
                                            "num_speakers": str(a.speakers or 0), "watermark": "false",
-                                           "highest_resolution": "true", "name": src.stem if src else None}, files=files)
-    return f"v1:{r['dubbing_id']}"
+                                           "highest_resolution": "true", "name": src.stem.removesuffix(".audio") if src else None}, files=files,
+             seconds=seconds)
+    return f"v1:{r['dubbing_id']}" + (":a" if audio else "")
 
 
 def dub_status(job: str) -> dict:
@@ -405,7 +531,14 @@ def dub_get(job: str, to: str, out: Path, source: Path | None, status: dict | No
         else:
             flac.replace(out)
         return got
-    out.write_bytes(call("GET", f"/v1/dubbing/{ids[0]}/audio/{to}", raw=True, timeout=1800))
+    dubbed = call("GET", f"/v1/dubbing/{ids[0]}/audio/{to}", raw=True, timeout=1800)
+    if ids[1:] == ["a"] and source and is_video(source) and is_video(out):
+        track = out.with_suffix(".dub.mp3")
+        track.write_bytes(dubbed)
+        swap_audio(source, track, out)
+        track.unlink()
+    else:
+        out.write_bytes(dubbed)
     try:
         srt = call("GET", f"/v1/dubbing/{ids[0]}/transcripts/{to}/format/srt")
         if srt.get("srt"):
@@ -430,7 +563,7 @@ def cmd_dub(a):
     if status.get("state") == "failed":
         raise Fail(f"The dub failed: {status.get('error') or 'no reason given'} (job {job})")
     if status.get("state") != "done":
-        return done(job=job, state="still working", note=f"Run dub-get {job} --to {a.to} --out {a.out} later")
+        return done(job=job, state="still working", note=f"Run dub-get {job} --to {a.to} --out {a.out}" + (f" --source {a.inp}" if a.inp else "") + " later")
     got = dub_get(job, a.to, Path(a.out), Path(a.inp) if a.inp else None, status)
     return done(job=job, **got, usd=cost("dub_v2" if a.v2 else "dub", seconds=secs))
 
@@ -448,6 +581,11 @@ def cmd_dub_status(a):
 
 def cmd_dub_get(a):
     return done(**dub_get(a.job, a.to, Path(a.out), Path(a.source) if a.source else None))
+
+
+def cmd_voice_delete(a):
+    call("DELETE", f"/v1/voices/{a.id}")
+    return done(deleted=a.id)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -497,13 +635,15 @@ def parser() -> argparse.ArgumentParser:
     for name, fn in (("dub", cmd_dub), ("dub-start", cmd_dub_start)):
         s = sub.add_parser(name); s.add_argument("--in", dest="inp"); s.add_argument("--url"); s.add_argument("--to", required=True)
         s.add_argument("--from", dest="src_lang"); s.add_argument("--speakers", type=int); s.add_argument("--v2", action="store_true")
+        s.add_argument("--seconds", type=float, help="how long a --url video is, if known")
         if name == "dub":
             s.add_argument("--out", required=True); s.add_argument("--poll", type=int, default=15)
             s.add_argument("--max-wait", type=int, default=3000)
         s.set_defaults(fn=fn)
     s = sub.add_parser("dub-status"); s.add_argument("job"); s.set_defaults(fn=cmd_dub_status)
     s = sub.add_parser("dub-get"); s.add_argument("job"); s.add_argument("--to", required=True); s.add_argument("--out", required=True)
-    s.add_argument("--source", help="the original video, for v2 dubs"); s.set_defaults(fn=cmd_dub_get)
+    s.add_argument("--source", help="the original video (v2 dubs, and v1 dubs made on Ken's account)"); s.set_defaults(fn=cmd_dub_get)
+    s = sub.add_parser("voice-delete"); s.add_argument("id"); s.set_defaults(fn=cmd_voice_delete)
     return p
 
 

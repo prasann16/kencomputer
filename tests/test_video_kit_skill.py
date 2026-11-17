@@ -44,8 +44,13 @@ class FakeAPI:
         raise AssertionError(f"unexpected call {method} {path}")
 
 
+HOST_VARS = ("KEN_ELEVEN", "KEN_ELEVEN_URL", "KEN_ELEVEN_TOKEN", "KEN_INCLUDED_AI_URL", "KEN_INCLUDED_AI_TOKEN")
+
+
 @pytest.fixture
 def api(monkeypatch):
+    for name in HOST_VARS:  # their own key: a Ken with no host
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
     monkeypatch.setattr(eleven, "duration", lambda p: 12.0)
 
@@ -283,10 +288,188 @@ def test_ken_runs_the_helper_with_its_own_python(tmp_path):
     import os
     import sys
     env = {**os.environ, "KEN_HOME": str(tmp_path)}
-    env.pop("ELEVENLABS_API_KEY", None)
+    for name in ("ELEVENLABS_API_KEY", *HOST_VARS):
+        env.pop(name, None)
     bot = SCRIPT.parent.parent.parent.parent / "bot.py"
     r = subprocess.run([sys.executable, str(bot), "--eleven", "estimate", "tts", "--chars", "1000"],
                        capture_output=True, text=True, env=env, timeout=60)
     assert r.returncode == 0 and json.loads(r.stdout)["usd"] == 0.08
     r = subprocess.run([sys.executable, str(bot), "--eleven", "check"], capture_output=True, text=True, env=env, timeout=60)
     assert r.returncode == 1 and "ELEVENLABS_API_KEY" in r.stderr
+
+
+# ---------- hosted Ken: through the host's /box/eleven on Ken's own ElevenLabs account (ken-hosted src/eleven.ts)
+
+TOKEN = "ai_token_of_this_computer_123"
+
+
+class HostResp(Resp):
+    def __init__(self, data, left=None):
+        super().__init__(data)
+        self.headers = {"x-ken-quota-left": left} if left else {}
+
+
+class FakeHost(FakeAPI):
+    """The host: same paths as ElevenLabs under /box/eleven, answers may carry x-ken-quota-left."""
+
+    def __call__(self, req, timeout=None):
+        url = req.full_url
+        assert url.startswith("https://app.example.dev/box/eleven/"), url
+        path = url.split("/box/eleven", 1)[1]
+        self.calls.append({"method": req.get_method(), "path": path, "headers": dict(req.header_items()), "data": req.data, "url": url})
+        for (m, prefix), answer in self.routes.items():
+            if m == req.get_method() and path.startswith(prefix):
+                answer = answer(len(self.calls)) if callable(answer) else answer
+                if isinstance(answer, tuple) and isinstance(answer[0], int):
+                    raise urllib.error.HTTPError(url, answer[0], "err", {}, io.BytesIO(json.dumps(answer[1]).encode()))
+                left = None
+                if isinstance(answer, tuple):
+                    answer, left = answer
+                return HostResp(answer if isinstance(answer, bytes) else json.dumps(answer).encode(), left)
+        raise AssertionError(f"unexpected call {req.get_method()} {path}")
+
+
+QUOTA = {"period": "2026-11", "resets": "on the 1st of next month (UTC)", "features": {
+    "tts": {"unit": "chars", "limit": 20000, "used": 500, "left": 19500},
+    "dub": {"unit": "seconds", "limit": 600, "used": 60, "left": 540},
+    "clone": {"unit": "voices", "limit": 2, "used": 0, "left": 2}}}
+
+
+@pytest.fixture
+def hosted(monkeypatch):
+    for name in HOST_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://app.example.dev/ai")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", TOKEN)
+    monkeypatch.setattr(eleven, "duration", lambda p: 12.0)
+    eleven.QUOTA_LEFT.clear()
+
+    def install(routes):
+        fake = FakeHost(routes)
+        monkeypatch.setattr(eleven.urllib.request, "urlopen", fake)
+        return fake
+    return install
+
+
+def hrun(argv, capsys):
+    code = eleven.main(argv)
+    out, err = capsys.readouterr()
+    assert TOKEN not in out and TOKEN not in err
+    return code, (json.loads(out.strip().splitlines()[-1]) if out.strip() else None), err
+
+
+def test_host_is_the_default_and_uses_the_computers_token_not_a_key(hosted, tmp_path, capsys):
+    fake = hosted({("POST", "/v1/text-to-speech/V"): (b"ID3audio", "19489 chars")})
+    code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello world", "--out", str(tmp_path / "vo.mp3")], capsys)
+    assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
+    sent = fake.calls[0]["headers"]
+    assert sent["Authorization"] == f"Bearer {TOKEN}" and "Xi-api-key" not in sent and sent["User-agent"] == "Ken"
+    assert "usd" not in info and info["quota_left"] == "19489 chars"  # no prices on Ken's account
+
+
+def test_host_wins_over_their_own_key_unless_they_choose_it(hosted, monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    assert eleven.host() == ("https://app.example.dev/box/eleven", TOKEN)
+    monkeypatch.setenv("KEN_ELEVEN", "own")
+    assert eleven.host() is None
+    monkeypatch.delenv("KEN_ELEVEN")
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "http://evil.example/ai")  # never a plain-http host
+    assert eleven.host() is None
+    monkeypatch.setenv("KEN_ELEVEN_URL", "http://127.0.0.1:8787/box/eleven")  # a local test copy is fine
+    assert eleven.host() == ("http://127.0.0.1:8787/box/eleven", TOKEN)
+
+
+def test_check_on_the_host_shows_whats_left_not_money(hosted, capsys):
+    hosted({("GET", "/quota"): QUOTA})
+    code, info, _ = hrun(["check"], capsys)
+    assert code == 0 and info["account"] == "ken" and info["left"]["dub"] == "9 min" and info["can_clone"] is True
+    assert "usd" not in json.dumps(info) and "credits" not in json.dumps(info)
+
+
+def test_estimate_on_the_host_says_if_it_fits(hosted, tmp_path, capsys):
+    hosted({("GET", "/quota"): QUOTA})
+    src = tmp_path / "r.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = hrun(["estimate", "dub", str(src)], capsys)
+    assert code == 0 and info == {"feature": "dub", "needs": "0.2 min", "left": "9 min", "fits": True}
+
+
+def test_quota_reached_is_one_clear_line(hosted, tmp_path, capsys):
+    hosted({("POST", "/v1/text-to-speech/"): (402, {"code": "quota", "error": "That needs 900 chars of tts, and 10 chars are left this month."})})
+    code, _, err = hrun(["tts", "--voice", "V", "--text", "x" * 900, "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and "Allowance used up" in err and "10 chars are left" in err and "$" not in err
+
+
+def test_eleven_down_says_dont_loop(hosted, tmp_path, capsys):
+    hosted({("POST", "/v1/sound-generation"): (502, {"code": "eleven_down", "error": "ElevenLabs isn't answering right now."})})
+    code, _, err = hrun(["sfx", "--text", "boom", "--out", str(tmp_path / "b.mp3")], capsys)
+    assert code == 1 and "isn't answering" in err and "loop" in err
+
+
+def test_host_uploads_send_their_length_and_a_video_goes_up_as_audio(hosted, tmp_path, capsys, monkeypatch):
+    fake = hosted({("POST", "/v1/audio-isolation"): (b"clean", "1788 seconds")})
+    sent_audio = tmp_path / "x" / "talk.audio.mp3"
+
+    def fake_audio_only(src):
+        sent_audio.parent.mkdir()
+        sent_audio.write_bytes(b"just-audio")
+        return sent_audio, True
+    monkeypatch.setattr(eleven, "audio_only", fake_audio_only)
+    swapped = []
+    monkeypatch.setattr(eleven, "swap_audio", lambda v, au, out: swapped.append((v.name, au.read_bytes())) or out)
+    src = tmp_path / "talk.mp4"
+    src.write_bytes(b"the whole video")
+    code, info, _ = hrun(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.mp4")], capsys)
+    call = fake.calls[0]
+    assert code == 0 and call["headers"]["X-ken-seconds"] == "12.00"
+    assert b"just-audio" in call["data"] and b"the whole video" not in call["data"]
+    assert swapped == [("talk.mp4", b"clean")] and info["quota_left"] == "29.8 min"
+    assert not sent_audio.parent.exists()  # the temporary audio is gone
+
+
+def test_audio_only_with_real_ffmpeg(hosted, tmp_path):
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1", "-f", "lavfi",
+                        "-i", "sine=f=220:d=1", "-shortest", str(tmp_path / "v.mp4")], check=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no ffmpeg")
+    out, tmp = eleven.audio_only(tmp_path / "v.mp4")
+    assert tmp and out.suffix == ".mp3" and out.stat().st_size > 0
+    eleven._drop(out, tmp)
+    assert not out.exists()
+
+
+def test_host_clone_sends_consent(hosted, tmp_path, capsys):
+    fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, "1 voices")})
+    a, c = tmp_path / "a.mp3", tmp_path / "consent.mp3"
+    a.write_bytes(b"x"); c.write_bytes(b"c")
+    code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--consent", str(c), "--own-voice"], capsys)
+    h = fake.calls[0]["headers"]
+    assert code == 0 and info["voice_id"] == "v9" and h["X-ken-consent"] == "own-voice" and h["X-ken-consent-note"] == "consent.mp3"
+
+
+def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(hosted, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven.time, "sleep", lambda s: None)
+    monkeypatch.setattr(eleven, "audio_only", lambda src: (src.with_name("reel.audio.mp3"), False))
+    (tmp_path / "reel.audio.mp3").write_bytes(b"a")
+    swapped = []
+    monkeypatch.setattr(eleven, "swap_audio", lambda v, au, out: (swapped.append((v.name, au.read_bytes())), out.write_bytes(b"muxed"), out)[2])
+    fake = hosted({
+        ("POST", "/v1/dubbing"): ({"dubbing_id": "d1", "expected_duration_sec": 12}, "528 seconds"),
+        ("GET", "/v1/dubbing/d1/audio/hi"): b"dubbed-mp3",
+        ("GET", "/v1/dubbing/d1/transcripts/hi/format/srt"): {"srt": ""},
+        ("GET", "/v1/dubbing/d1"): {"status": "dubbed"},
+    })
+    src = tmp_path / "reel.mp4"
+    src.write_bytes(b"v")
+    code, info, _ = hrun(["dub", "--in", str(src), "--to", "hi", "--out", str(tmp_path / "reel.hi.mp4")], capsys)
+    assert code == 0 and info["job"] == "v1:d1:a" and swapped == [("reel.mp4", b"dubbed-mp3")]
+    assert (tmp_path / "reel.hi.mp4").read_bytes() == b"muxed" and info["quota_left"] == "8.8 min"
+    assert fake.calls[0]["headers"]["X-ken-seconds"] == "12.00" and b'name="name"\r\n\r\nreel\r\n' in fake.calls[0]["data"]
+
+
+def test_voice_delete(hosted, capsys):
+    fake = hosted({("DELETE", "/v1/voices/v9"): {"status": "ok"}})
+    code, info, _ = hrun(["voice-delete", "v9"], capsys)
+    assert code == 0 and info == {"deleted": "v9"} and fake.calls[0]["method"] == "DELETE"

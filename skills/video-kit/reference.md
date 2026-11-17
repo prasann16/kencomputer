@@ -1,5 +1,9 @@
 # ElevenLabs: prices, limits, plans (checked Nov 17 2026)
 
+On hosted Ken none of this is said to them: it runs on Ken's own account through the host (`/box/eleven`), and the
+only number that matters is what's left of their monthly allowance (`eleven.py check`). The table is for their own
+key, and for knowing the limits.
+
 API usage is billed in US dollars; on a subscription it comes out of the plan's included credits first. Prices
 change: `eleven.py estimate` uses the table in `scripts/eleven.py`, and `eleven.py check` shows what's left.
 Sources: https://elevenlabs.io/pricing/api , https://elevenlabs.io/pricing , https://api.elevenlabs.io/openapi.json
