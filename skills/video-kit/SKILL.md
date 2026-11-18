@@ -1,6 +1,6 @@
 ---
 name: video-kit
-description: Voice, audio and language tools for their videos, using ElevenLabs (Ken's own account on hosted Ken, their key elsewhere) plus ffmpeg. Dub a video into another language in the same voice, clone their own voice, write a new script in their own style and voice it (other languages too), voiceovers from a script, fix a wrong word without reshooting, change a voice, clean noisy audio, sound effects, background music, a new designed voice, captions/subtitles (SRT) in any language including Hinglish, find and write hooks, and cut a long video into short clips. Use when they ask to dub, translate, clone my voice, a script in my style, voiceover, read this in my voice, fix a word, clean/denoise the audio, remove background noise, add a sound effect, make music, add captions or subtitles, find hooks, or clip a podcast. For a full edited reel with graphics, the video skill does the edit and this kit adds the voice and sound.
+description: Voice, audio and language tools for their videos, using ElevenLabs (their own key whenever they add one, otherwise Ken's own account on hosted Ken) plus ffmpeg. Dub a video into another language in the same voice, clone their own voice, write a new script in their own style and voice it (other languages too), voiceovers from a script, fix a wrong word without reshooting, change a voice, clean noisy audio, sound effects, background music, a new designed voice, captions/subtitles (SRT) in any language including Hinglish, find and write hooks, and cut a long video into short clips. Use when they ask to dub, translate, clone my voice, a script in my style, voiceover, read this in my voice, fix a word, clean/denoise the audio, remove background noise, add a sound effect, make music, add captions or subtitles, find hooks, or clip a podcast. For a full edited reel with graphics, the video skill does the edit and this kit adds the voice and sound.
 ---
 
 # Video kit
@@ -35,18 +35,20 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 
 ## Rules for every flow
 
-- **Whose account.** Run `eleven.py check` once per chat before the first ElevenLabs call. `"account": "ken"`
-  means hosted Ken: it runs on Ken's own ElevenLabs account, included in their plan, with a monthly allowance per
-  feature (`left`). They need no ElevenLabs account and no key: never ask for one. Anything else is their own key.
-  If Ken's route isn't live on this computer yet, the helper uses their own `ELEVENLABS_API_KEY` when they added
-  one (its JSON then says `"account": "own"`: their money, the own-key rules below), or says so in one line.
+- **Whose account.** Run `eleven.py check` once per chat before the first ElevenLabs call. If they added their own
+  `ELEVENLABS_API_KEY` in Brain, it always wins, hosted Ken or not: `"account": "own"`, their money, the own-key
+  rules below. Otherwise `"account": "ken"` means hosted Ken: it runs on Ken's own ElevenLabs account, included in
+  their plan, with a monthly allowance per feature (`left`). They need no ElevenLabs account and no key: never ask
+  for one. If Ken's route isn't live on this computer yet, the helper says so in one line.
 - **On Ken's account, no money talk.** Never mention dollars, prices, credits or plans. The only number they hear
   is what's left, when it matters: before a dub or anything long, `eleven.py estimate <feature> <file>` and say it
   in one line ("that uses 3 of your 9 dub minutes this month"), then go; a small thing just runs. When `fits` is
   false or a call says the allowance is used up, say what's left and when it comes back, once. Only if they say
-  they have their own ElevenLabs key: it runs on that with `KEN_ELEVEN=own` in front of the command.
-- **On their own key** (not hosted Ken): it reads `ELEVENLABS_API_KEY` from the environment. Never print it, echo
-  it, write it to a file or put it in a command line. If it's missing, the helper says so: tell them in one line to
+  they have their own ElevenLabs key: adding it in Brain as `ELEVENLABS_API_KEY` runs everything on that.
+- **On their own key**: it reads `ELEVENLABS_API_KEY` from the environment. Never print it, echo it, write it to a
+  file or put it in a command line. When their credits run out, the helper says so: pass it on as is (top up on
+  elevenlabs.io, or on hosted Ken remove the key from Brain to go back to Ken's allowance). Never switch to Ken's
+  account yourself while their key is set. With no key and no host, the helper says so: tell them in one line to
   add it in the Brain tab under Accounts & passwords, named `ELEVENLABS_API_KEY` (elevenlabs.io → Developers → API
   keys), and that it works from their next message. It's their money: before anything over about $0.50, or any
   dub, tell them the estimate in one line and wait for a yes. Prices are in `reference.md`.

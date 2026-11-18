@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """ElevenLabs for the video kit: one small command per feature, Python standard library only (no installs).
 
-Two ways in. On hosted Ken (the computer has a host: KEN_INCLUDED_AI_URL/TOKEN, or KEN_ELEVEN_URL/TOKEN) every call
+Two ways in. Their own key from ELEVENLABS_API_KEY (never printed) always wins when they added one, even on hosted
+Ken. Without it, on hosted Ken (the computer has a host: KEN_INCLUDED_AI_URL/TOKEN, or KEN_ELEVEN_URL/TOKEN) every call
 goes through the host's /box/eleven, which uses Ken's own ElevenLabs account with a monthly allowance per person: no
-key here, nothing for them to pay. Anywhere else, their own key from ELEVENLABS_API_KEY (never printed).
-KEN_ELEVEN=own uses their own key even on hosted Ken, and so does a host without /box/eleven yet. Every command
+key here, nothing for them to pay. A key that runs out of credits never falls back to Ken's account. Every command
 prints one JSON line on success (the files it wrote, the job id, and the estimated cost on their key or what's left
 of the allowance on Ken's); errors go to stderr.
 
@@ -83,11 +83,18 @@ def key() -> str:
     return k
 
 
+def own_key() -> bool:
+    return bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
+
+
 def host() -> tuple[str, str] | None:
-    """Hosted Ken's /box/eleven and this computer's token for it, or None (no host, KEN_ELEVEN=own, or the route
-    isn't live and they have their own key)."""
-    if os.environ.get("KEN_ELEVEN", "").strip().lower() == "own" or HOST_NOT_LIVE:
-        return None
+    """Where the calls go: hosted Ken's /box/eleven and this computer's token for it, or None (no host, or they added
+    their own key, which always wins)."""
+    return None if own_key() else host_route()
+
+
+def host_route() -> tuple[str, str] | None:
+    """Hosted Ken's /box/eleven and this computer's token for it, whether or not their own key is in use."""
     url = os.environ.get("KEN_ELEVEN_URL", "").strip().rstrip("/")
     if not url:
         ai = os.environ.get("KEN_INCLUDED_AI_URL", "").strip().rstrip("/")
@@ -99,10 +106,10 @@ def host() -> tuple[str, str] | None:
 
 
 QUOTA_LEFT: list[str] = []  # what the host said is left after the last call ("540 seconds")
-HOST_NOT_LIVE: list[bool] = []  # set when the host has no /box/eleven yet and their own key took over
 NOT_LIVE = ("Ken's built-in ElevenLabs isn't switched on for this computer yet, so nothing ran. If they have their own "
             "ElevenLabs key, ask them to add it in the Brain tab, under Accounts & passwords, named ELEVENLABS_API_KEY: "
             "it runs on that from their next message.")
+OWN_CREDITS_GONE = "Their own ElevenLabs credits are used up"
 
 
 class _NotLive(Exception):
@@ -139,25 +146,19 @@ def multipart(fields: dict, files: list[tuple[str, Path]]) -> tuple[bytes, str]:
 
 def call(method: str, path: str, *, query: dict | None = None, json_body: dict | None = None,
          fields: dict | None = None, files: list | None = None, raw: bool = False, timeout: int = 600,
-         seconds: float | None = None, headers: dict | None = None, host_only: bool = False):
+         seconds: float | None = None, headers: dict | None = None):
     """One API call (through the host, or straight to ElevenLabs with their key). Returns parsed JSON, or bytes when
     raw=True. Errors become a readable Fail. seconds: how long the uploaded media is (the host counts it).
-    When the host has no ElevenLabs route yet and they have their own key, the call goes to ElevenLabs on that key
-    (host_only: a path only the host has, like /quota: None instead)."""
+    A host without a live ElevenLabs route is one plain line; it never switches to another account on its own."""
     via = host()
-    if via and files and path != "/quota" and call("GET", "/quota", host_only=True) is None:
-        via = None  # a quick look first, so a video isn't sent to a host that can't take it and then sent again
     try:
+        if via and files and path != "/quota":
+            _call(via, "GET", "/quota", query=None, json_body=None, fields=None, files=None, raw=False, timeout=30,
+                  seconds=None, headers=None)  # a quick look first, so a video isn't sent to a host that can't take it
         return _call(via, method, path, query=query, json_body=json_body, fields=fields, files=files, raw=raw,
                      timeout=timeout, seconds=seconds, headers=headers)
     except _NotLive as e:
-        if not os.environ.get("ELEVENLABS_API_KEY", "").strip():
-            raise Fail(str(e) or NOT_LIVE)
-        HOST_NOT_LIVE[:] = [True]
-        if host_only:
-            return None
-        return _call(None, method, path, query=query, json_body=json_body, fields=fields, files=files, raw=raw,
-                     timeout=timeout, seconds=seconds, headers=headers)
+        raise Fail(str(e) or NOT_LIVE)
 
 
 def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, seconds, headers):
@@ -192,7 +193,8 @@ def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, s
         raise Fail(_explain_host(e.code, detail) if via else _explain(e.code, _redact(detail)))
     except urllib.error.URLError as e:
         if via:
-            raise _NotLive(f"Couldn't reach Ken: {e.reason}")
+            raise _NotLive(f"Couldn't reach Ken's built-in ElevenLabs ({e.reason}), so nothing ran. Tell them in one "
+                           "line; try again later, not in a loop.")
         raise Fail(f"Couldn't reach ElevenLabs: {e.reason}")
     # A redirect (the host sends unknown paths to its homepage) or a web page instead of the answer: not the route.
     if via and (moved.split("?")[0] != url.split("?")[0] or "text/html" in (answered.get("content-type") or "")):
@@ -228,7 +230,8 @@ def _explain_host(code: int, detail: str) -> str:
         said = {}
     error, kind = _redact(str(said.get("error") or detail)), said.get("code")
     if kind == "quota":
-        return f"Allowance used up: {error} Tell them in one line; if they have their own ElevenLabs key, it can run on that (KEN_ELEVEN=own)."
+        return (f"Allowance used up: {error} Tell them in one line; if they have their own ElevenLabs key, adding it in "
+                "the Brain tab under Accounts & passwords as ELEVENLABS_API_KEY runs everything on that instead.")
     if kind in ("eleven_down", "busy"):
         return f"{error} Don't retry in a loop."
     return f"{error} ({code})"
@@ -243,9 +246,12 @@ def _explain(code: int, detail: str) -> str:
         said = None
     status = str(said.get("status") or said.get("code") or "") if isinstance(said, dict) else ""
     message = str(said.get("message") or "") if isinstance(said, dict) else ""
-    if status == "quota_exceeded":
-        return ("ElevenLabs: out of credits on their plan (" + (message or "quota exceeded") + "). Tell them in one line; "
-                "it comes back when the plan resets, or with a bigger plan. Don't retry.")
+    if status in ("quota_exceeded", "insufficient_credits", "payment_required") or code == 402:
+        # Their key, their credits: never quietly switch to Ken's account while their key is set.
+        fix = ("top up on elevenlabs.io, or remove ELEVENLABS_API_KEY from Brain (Accounts & passwords) to use Ken's "
+               "included allowance instead" if host_route() else "top up on elevenlabs.io, or wait for the plan to reset")
+        return (f"{OWN_CREDITS_GONE} ({message or 'quota exceeded'}): {fix}. Tell them exactly that in one line; "
+                "don't retry.")
     if status in ("missing_permissions", "missing_group_permissions"):
         perms = ", ".join((said.get("data") or {}).get(status) or []) or "this feature"
         return (f"ElevenLabs: their key isn't allowed to do this ({perms}). It's a setting, not their plan: in ElevenLabs, "
@@ -254,7 +260,6 @@ def _explain(code: int, detail: str) -> str:
     if status in ("invalid_api_key", "invalid_api_key_length") or (isinstance(said, dict) and said.get("type") == "authentication_error"):
         code = 401
     hint = {401: "the key is wrong or was revoked: ask them to check ELEVENLABS_API_KEY in Brain",
-            402: "out of credits or the plan doesn't include this",
             403: "the plan or the key's permissions don't include this (voice cloning and music need a paid plan)",
             413: "the file is too big for this feature",
             429: "too many jobs at once or rate limited: wait a minute, don't retry in a loop"}.get(code, "")
@@ -329,9 +334,10 @@ def done(**info) -> dict:
         info.pop("usd", None)
         if QUOTA_LEFT:
             info["quota_left"] = _readable(QUOTA_LEFT[0])
-    elif HOST_NOT_LIVE:
-        info["account"] = "own"
-        info["account_note"] = "Ken's built-in ElevenLabs isn't live yet, so this ran on their own ElevenLabs key (their credits)."
+    else:
+        info.setdefault("account", "own")
+        if host_route():
+            info["account_note"] = "Ran on their own ElevenLabs key (their credits): it wins over Ken's allowance while it's in Brain."
     print(json.dumps(info, ensure_ascii=False))
     return info
 
@@ -390,7 +396,7 @@ def words_to_srt(words: list[dict], max_chars: int = 32, max_secs: float = 2.5, 
 # ---------- commands ----------
 
 def cmd_check(a):
-    q = call("GET", "/quota", host_only=True) if host() else None
+    q = call("GET", "/quota") if host() else None
     if q is not None:
         left = {f: _readable(f"{v['left']} {v['unit']}") for f, v in q.get("features", {}).items()}
         return done(account="ken", left=left, resets=q.get("resets"), can_clone=q.get("features", {}).get("clone", {}).get("left", 0) > 0)
@@ -409,7 +415,7 @@ def cmd_voices(a):
 
 def cmd_estimate(a):
     secs = duration(need(a.file)) if a.file else (a.seconds or 0)
-    quota = call("GET", "/quota", host_only=True) if host() else None
+    quota = call("GET", "/quota") if host() else None
     if quota is not None:
         feature = QUOTA_FEATURE.get(a.feature, a.feature)
         q = quota.get("features", {}).get(feature, {})

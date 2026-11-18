@@ -119,7 +119,8 @@ def test_out_of_credits_is_not_called_a_wrong_key(api, tmp_path, capsys):
     api({("POST", "/v1/text-to-speech/"): lambda n: (_ for _ in ()).throw(
         urllib.error.HTTPError("u", 401, "q", {}, io.BytesIO(json.dumps(detail).encode())))})
     code, _, err = run(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
-    assert code == 1 and "out of credits" in err and "key is wrong" not in err and "exceeds your quota" in err
+    assert code == 1 and "credits are used up" in err and "key is wrong" not in err and "exceeds your quota" in err
+    assert "top up on elevenlabs.io" in err and "allowance" not in err  # no host here: no allowance to offer
 
 
 def test_clone_refuses_without_own_voice_or_consent(api, tmp_path, capsys):
@@ -421,16 +422,60 @@ def test_host_is_the_default_and_uses_the_computers_token_not_a_key(hosted, tmp_
     assert "usd" not in info and info["quota_left"] == "19489 chars"  # no prices on Ken's account
 
 
-def test_host_wins_over_their_own_key_unless_they_choose_it(hosted, monkeypatch):
-    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+def test_their_own_key_always_wins_over_the_host(hosted, monkeypatch):
     assert eleven.host() == ("https://app.example.dev/box/eleven", TOKEN)
-    monkeypatch.setenv("KEN_ELEVEN", "own")
-    assert eleven.host() is None
-    monkeypatch.delenv("KEN_ELEVEN")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    assert eleven.host() is None and eleven.host_route() == ("https://app.example.dev/box/eleven", TOKEN)
+    monkeypatch.delenv("ELEVENLABS_API_KEY")
     monkeypatch.setenv("KEN_INCLUDED_AI_URL", "http://evil.example/ai")  # never a plain-http host
     assert eleven.host() is None
     monkeypatch.setenv("KEN_ELEVEN_URL", "http://127.0.0.1:8787/box/eleven")  # a local test copy is fine
     assert eleven.host() == ("http://127.0.0.1:8787/box/eleven", TOKEN)
+
+
+def straight_to_elevenlabs(monkeypatch, answer):
+    """ElevenLabs itself answers; any call to the host fails the test."""
+    seen = []
+
+    def urlopen(req, timeout=None):
+        assert "/box/eleven" not in req.full_url, "went to the host while their own key is set"
+        seen.append({"url": req.full_url, "headers": dict(req.header_items())})
+        return answer(req)
+    monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def test_own_key_on_hosted_ken_runs_on_their_key_not_the_allowance(hosted, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    seen = straight_to_elevenlabs(monkeypatch, lambda req: Resp(b"ID3audio"))
+    code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello", "--out", str(tmp_path / "vo.mp3")], capsys)
+    assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
+    assert seen[0]["url"].startswith("https://api.elevenlabs.io/") and seen[0]["headers"]["Xi-api-key"] == KEY
+    assert "Authorization" not in seen[0]["headers"]
+    assert info["account"] == "own" and info["usd"] == 0.0004 and "allowance" in info["account_note"]
+
+
+def test_check_with_own_key_on_hosted_ken_shows_their_plan(hosted, monkeypatch, capsys):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    seen = straight_to_elevenlabs(monkeypatch, lambda req: Resp(json.dumps(
+        {"tier": "starter", "character_count": 10, "character_limit": 30000}).encode()))
+    code, info, _ = hrun(["check"], capsys)
+    assert code == 0 and info["account"] == "own" and info["credits_left"] == 29990
+    assert [c["url"].split("api.elevenlabs.io", 1)[1] for c in seen] == ["/v1/user/subscription"]
+
+
+def test_own_key_out_of_credits_says_top_up_or_remove_it_and_never_uses_kens_account(hosted, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    detail = {"detail": {"status": "quota_exceeded", "message": "This request exceeds your quota of 10000."}}
+
+    def no_credits(req):
+        raise urllib.error.HTTPError(req.full_url, 401, "q", {}, io.BytesIO(json.dumps(detail).encode()))
+    seen = straight_to_elevenlabs(monkeypatch, no_credits)
+    code, _, err = hrun(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and len(seen) == 1 and not (tmp_path / "a.mp3").exists()
+    assert "Their own ElevenLabs credits are used up" in err and "top up on elevenlabs.io" in err
+    assert "remove ELEVENLABS_API_KEY from Brain (Accounts & passwords)" in err and "Ken's included allowance" in err
+    assert "key is wrong" not in err and KEY not in err
 
 
 def test_check_on_the_host_shows_whats_left_not_money(hosted, capsys):
@@ -452,6 +497,7 @@ def test_quota_reached_is_one_clear_line(hosted, tmp_path, capsys):
     hosted({("POST", "/v1/text-to-speech/"): (402, {"code": "quota", "error": "That needs 900 chars of tts, and 10 chars are left this month."})})
     code, _, err = hrun(["tts", "--voice", "V", "--text", "x" * 900, "--out", str(tmp_path / "a.mp3")], capsys)
     assert code == 1 and "Allowance used up" in err and "10 chars are left" in err and "$" not in err
+    assert "ELEVENLABS_API_KEY" in err and "KEN_ELEVEN" not in err
 
 
 def test_eleven_down_says_dont_loop(hosted, tmp_path, capsys):
@@ -558,7 +604,6 @@ def not_live(monkeypatch, then=None):
 
 
 def test_host_not_live_and_no_key_says_so_in_one_line(hosted, monkeypatch, tmp_path, capsys):
-    eleven.HOST_NOT_LIVE.clear()
     not_live(monkeypatch)
     code, _, err = hrun(["check"], capsys)
     assert code == 1 and "isn't switched on" in err and "ELEVENLABS_API_KEY" in err and "Traceback" not in err
@@ -566,41 +611,8 @@ def test_host_not_live_and_no_key_says_so_in_one_line(hosted, monkeypatch, tmp_p
     assert code == 1 and not (tmp_path / "a.mp3").exists()  # never a web page saved as audio
 
 
-def test_host_not_live_runs_on_their_own_key(hosted, monkeypatch, tmp_path, capsys):
-    eleven.HOST_NOT_LIVE.clear()
-    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
-    seen = []
-
-    def eleven_labs(req, timeout):
-        seen.append(dict(req.header_items()))
-        return Resp(b"ID3audio")
-    calls = not_live(monkeypatch, eleven_labs)
-    try:
-        code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello", "--out", str(tmp_path / "vo.mp3")], capsys)
-    finally:
-        eleven.HOST_NOT_LIVE.clear()
-    assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
-    assert calls[0].startswith("https://app.example.dev/box/eleven/") and calls[1].startswith("https://api.elevenlabs.io/")
-    assert seen[0]["Xi-api-key"] == KEY and "Authorization" not in seen[0]
-    assert info["account"] == "own" and info["usd"] == 0.0004 and KEY not in json.dumps(info)
 
 
-def test_check_and_estimate_fall_back_to_their_plan_when_the_host_route_isnt_live(hosted, monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
-    paths = []
-
-    def eleven_labs(req, timeout):
-        paths.append(req.full_url.split("api.elevenlabs.io", 1)[1])
-        return Resp(json.dumps({"tier": "starter", "character_count": 10, "character_limit": 30000}).encode())
-    for argv in (["check"], ["estimate", "tts", "--chars", "1000"]):
-        eleven.HOST_NOT_LIVE.clear()
-        not_live(monkeypatch, eleven_labs)
-        try:
-            code, info, _ = hrun(argv, capsys)
-        finally:
-            eleven.HOST_NOT_LIVE.clear()
-        assert code == 0 and info["account"] == "own"
-    assert paths == ["/v1/user/subscription"]  # never /quota on ElevenLabs itself
 
 
 def test_host_errors_from_its_route_are_not_mistaken_for_a_missing_route(hosted, tmp_path, capsys):
@@ -610,7 +622,6 @@ def test_host_errors_from_its_route_are_not_mistaken_for_a_missing_route(hosted,
 
 
 def test_a_redirect_urllib_wont_follow_is_the_route_not_being_live(hosted, monkeypatch, capsys):
-    eleven.HOST_NOT_LIVE.clear()
 
     def urlopen(req, timeout=None):  # urllib raises a DELETE's 302 instead of following it
         raise urllib.error.HTTPError(req.full_url, 302, "Found", {"location": "/"}, io.BytesIO(b""))
@@ -642,9 +653,7 @@ def test_a_voice_description_under_20_characters_is_caught_before_the_call(api, 
     assert code == 1 and "20 characters" in err and fake.calls == []
 
 
-def test_an_upload_isnt_sent_twice_when_the_route_isnt_live(hosted, monkeypatch, tmp_path, capsys):
-    eleven.HOST_NOT_LIVE.clear()
-    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+def test_an_upload_isnt_sent_when_the_route_isnt_live(hosted, monkeypatch, tmp_path, capsys):
     sent = []
 
     def urlopen(req, timeout=None):
@@ -655,12 +664,18 @@ def test_an_upload_isnt_sent_twice_when_the_route_isnt_live(hosted, monkeypatch,
     monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
     src = tmp_path / "talk.m4a"
     src.write_bytes(b"a" * 5000)
-    try:
-        code, info, _ = hrun(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.m4a")], capsys)
-    finally:
-        eleven.HOST_NOT_LIVE.clear()
-    assert code == 0 and info["account"] == "own"
-    assert [(m, path) for m, path, _ in sent] == [("GET", "box/eleven/quota"), ("POST", "v1/audio-isolation")]
+    code, _, err = hrun(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.m4a")], capsys)
+    assert code == 1 and "isn't switched on" in err
+    assert [(m, path) for m, path, _ in sent] == [("GET", "box/eleven/quota")]  # one quick look, no upload, no other account
+
+
+def test_host_unreachable_and_no_key_is_one_plain_line(hosted, monkeypatch, tmp_path, capsys):
+    def urlopen(req, timeout=None):
+        raise urllib.error.URLError("connection refused")
+    monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
+    code, _, err = hrun(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and "Couldn't reach Ken's built-in ElevenLabs" in err and "nothing ran" in err
+    assert "not in a loop" in err and "Traceback" not in err and not (tmp_path / "a.mp3").exists()
 
 
 # ---------- over: a new voiceover under their footage (script in my style), ffmpeg only
