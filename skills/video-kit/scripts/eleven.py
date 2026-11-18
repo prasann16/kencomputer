@@ -173,12 +173,25 @@ def _explain_host(code: int, detail: str) -> str:
 
 
 def _explain(code: int, detail: str) -> str:
+    # ElevenLabs says what went wrong in detail.status, and the HTTP code alone misleads: a wrong key is a 400, and
+    # running out of credits is a 401 like a wrong key.
+    try:
+        said = json.loads(detail).get("detail")
+    except (ValueError, AttributeError):
+        said = None
+    status = str(said.get("status") or said.get("code") or "") if isinstance(said, dict) else ""
+    message = str(said.get("message") or "") if isinstance(said, dict) else ""
+    if status == "quota_exceeded":
+        return ("ElevenLabs: out of credits on their plan (" + (message or "quota exceeded") + "). Tell them in one line; "
+                "it comes back when the plan resets, or with a bigger plan. Don't retry.")
+    if status in ("invalid_api_key", "invalid_api_key_length") or (isinstance(said, dict) and said.get("type") == "authentication_error"):
+        code = 401
     hint = {401: "the key is wrong or was revoked: ask them to check ELEVENLABS_API_KEY in Brain",
             402: "out of credits or the plan doesn't include this",
             403: "the plan doesn't include this feature (voice cloning and music need a paid plan)",
             413: "the file is too big for this feature",
             429: "too many jobs at once or rate limited: wait a minute, don't retry in a loop"}.get(code, "")
-    return f"ElevenLabs said {code}" + (f" ({hint})" if hint else "") + f": {detail}"
+    return f"ElevenLabs said {code}" + (f" ({hint})" if hint else "") + f": {message or detail}"
 
 
 def download(url: str, out: Path) -> Path:

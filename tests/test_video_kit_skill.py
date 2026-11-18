@@ -103,6 +103,23 @@ def test_subtitles_are_named_once_per_language():
     assert eleven._subs(Path("v/reel.dub.mp4"), "es", "vtt") == Path("v/reel.dub.es.vtt")
 
 
+def test_a_wrong_key_is_named_even_though_elevenlabs_says_400(api, tmp_path, capsys):
+    detail = {"detail": {"type": "authentication_error", "code": "invalid_api_key", "message": "API key is invalid.",
+                         "status": "invalid_api_key"}}
+    api({("GET", "/v1/user/subscription"): lambda n: (_ for _ in ()).throw(
+        urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(json.dumps(detail).encode())))})
+    code, _, err = run(["check"], capsys)
+    assert code == 1 and "key is wrong" in err and "Brain" in err and "API key is invalid." in err and "request_id" not in err
+
+
+def test_out_of_credits_is_not_called_a_wrong_key(api, tmp_path, capsys):
+    detail = {"detail": {"status": "quota_exceeded", "message": "This request exceeds your quota of 10000."}}
+    api({("POST", "/v1/text-to-speech/"): lambda n: (_ for _ in ()).throw(
+        urllib.error.HTTPError("u", 401, "q", {}, io.BytesIO(json.dumps(detail).encode())))})
+    code, _, err = run(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and "out of credits" in err and "key is wrong" not in err and "exceeds your quota" in err
+
+
 def test_clone_refuses_without_own_voice_or_consent(api, tmp_path, capsys):
     fake = api({})
     sample = tmp_path / "me.mp3"
