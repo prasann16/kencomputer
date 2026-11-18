@@ -8,6 +8,7 @@
 // Whip pans (chapters) aren't done here; render.mjs still does everything in Chrome if a reel needs them.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { createTikTokStyleCaptions } from "@remotion/captions";
@@ -26,9 +27,11 @@ if (!work || !out) {
 const props = JSON.parse(readFileSync(join(work, "props.json"), "utf8"));
 const style = props.style ?? {};
 const total = Math.max(1, Math.round(props.durationSeconds * FPS));
+// Chrome tabs drawing at once: one per CPU unless KEN_RENDER_CONCURRENCY says otherwise (Remotion's own default, half
+// the CPUs, drew about 20% slower on a 4-CPU computer for the same memory).
 const concurrency = (() => {
   const c = process.env.KEN_RENDER_CONCURRENCY;
-  return !c ? null : /^\d+$/.test(c) ? Number(c) : c;
+  return !c ? Math.min(8, availableParallelism()) : /^\d+$/.test(c) ? Number(c) : c;
 })();
 const layers = join(work, ".layers");
 mkdirSync(join(layers, "captions"), { recursive: true });
