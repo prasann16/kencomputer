@@ -330,6 +330,29 @@ def _stamp(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
+# Phones film HDR (iPhones in HLG, many Androids in HDR10/PQ). Squeezed into an 8-bit reel as if it were ordinary video,
+# it comes out grey and washed out, so HDR is tone mapped to SDR first (their white at 203 nits, the HDR reference white,
+# lands on SDR white; brighter highlights roll off softly); every reel leaves as plain BT.709, TV range.
+HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+TONEMAP = "zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.7:desat=0,zscale=t=bt709:m=bt709:r=tv"
+SDR_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+
+
+def _to_sdr(src: Path, say=print) -> str:
+    """The filters (with a trailing comma, or none) that bring this footage to SDR BT.709 before it's framed."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
+                        "-of", "csv=p=0", str(src)], capture_output=True, text=True)
+    if r.stdout.strip().strip(",") not in HDR_TRANSFERS:
+        return ""
+    filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+    if " zscale " not in filters:
+        say("This video is HDR and this computer's ffmpeg can't convert HDR (no zscale), so its colours may look "
+            "washed out. An ffmpeg built with zimg fixes it.")
+        return ""
+    say("The video is HDR: converting it to normal colour so it doesn't look washed out.")
+    return TONEMAP + ","
+
+
 def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     if spec.strip() == "all":
         return [(0, count - 1)]
@@ -365,12 +388,12 @@ def cut(folder: Path, spec: str | None, say=print, speed: float = 1.0, zoom: boo
         raise SystemExit("Nothing left to keep.")
     # Whole frames per part, so every cut lands exactly on a frame.
     pieces = [[a, round(min(length, a + max(1, round((b - a) / speed * FPS)) / FPS * speed), 4), real] for a, b, real in pieces]
-    inputs, graph = [], []
+    inputs, graph, sdr = [], [], _to_sdr(src, say)
     for i, (a, b, _) in enumerate(pieces):
         inputs += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
         # Each part starts at zero (a seek lands a little after it), so joining them leaves no missing frames.
         # Phones tag their videos "rotate 90°"; the frames come out upright, so the tag is dropped.
-        graph.append(f"[{i}:v]setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase,"
+        graph.append(f"[{i}:v]{sdr}setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase:out_range=tv,"
                      f"crop=1080:1920,setsar=1,format=yuv420p,sidedata=delete:type=DISPLAYMATRIX[v{i}]")
         graph.append(f"[{i}:a]asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo:sample_rates=48000,atempo={speed},"
                      f"afade=t=in:d={FADE_IN},afade=t=out:st={max(0, (b - a) / speed - FADE_OUT):.3f}:d={FADE_OUT}[a{i}]")
@@ -379,7 +402,7 @@ def cut(folder: Path, spec: str | None, say=print, speed: float = 1.0, zoom: boo
     out = folder / "cut.mp4"
     say(f"Cutting {src.name} into {len(pieces)} parts…")
     r = subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(graph), "-map", "[v]",
-                        "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+                        "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", *SDR_TAGS, "-c:a", "aac", "-b:a", "192k",
                         "-movflags", "+faststart", str(out)], capture_output=True, text=True)
     if r.returncode:
         raise SystemExit(f"ffmpeg failed:\n{r.stderr[-2000:]}")
