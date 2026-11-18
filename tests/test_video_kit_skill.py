@@ -717,6 +717,7 @@ def test_over_refuses_mixed_hdr_clips_and_a_bed_with_several_clips(tmp_path, cap
     a, b, vo = tmp_path / "a.mp4", tmp_path / "b.mp4", tmp_path / "vo.mp3"
     for f in (a, b, vo):
         f.write_bytes(b"x")
+    monkeypatch.setattr(eleven.shutil, "which", lambda name: f"/usr/bin/{name}")  # input checks, no real ffmpeg needed
     monkeypatch.setattr(eleven, "duration", lambda p: 3.0)
     monkeypatch.setattr(eleven, "_hdr", lambda p: p.name == "b.mp4")
     code, _, err = run(["over", "--video", str(a), "--video", str(b), "--audio", str(vo), "--out", str(tmp_path / "o.mp4")], capsys)
@@ -782,7 +783,7 @@ def test_media_files_finds_theirs_and_leaves_out_downloads_outputs_and_copies(tm
     for name, data in files.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_bytes(data)
-    found = [str(f.relative_to(tmp_path)) for f in eleven.media_files([tmp_path / "inbox", tmp_path / "Videos", tmp_path / "outbox"])]
+    found = [f.relative_to(tmp_path).as_posix() for f in eleven.media_files([tmp_path / "inbox", tmp_path / "Videos", tmp_path / "outbox"])]
     assert found == ["inbox/voice_note.ogg", "Videos/screenrecording-2026-11-10_10-13-05.mp4"]
     # Named on its own, or "everything in there is me": a download-looking name is let in.
     assert eleven.media_files([tmp_path / "Videos/karpathy-software.mp4"]) == [tmp_path / "Videos/karpathy-software.mp4"]
@@ -854,6 +855,7 @@ def test_clone_from_with_too_little_asks_for_a_voice_note(api, tmp_path, capsys,
 
 
 def test_clone_from_never_sends_a_file_with_no_sound(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven.shutil, "which", lambda name: f"/usr/bin/{name}")  # with or without ffmpeg, nothing is sent
     monkeypatch.setattr(eleven, "duration", lambda p: 30.0)
     src = tmp_path / "VID_silent.mp4"
     src.write_bytes(b"not a video" * 10_000)
