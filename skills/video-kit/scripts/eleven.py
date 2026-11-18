@@ -140,6 +140,8 @@ def call(method: str, path: str, *, query: dict | None = None, json_body: dict |
     When the host has no ElevenLabs route yet and they have their own key, the call goes to ElevenLabs on that key
     (host_only: a path only the host has, like /quota: None instead)."""
     via = host()
+    if via and files and path != "/quota" and call("GET", "/quota", host_only=True) is None:
+        via = None  # a quick look first, so a video isn't sent to a host that can't take it and then sent again
     try:
         return _call(via, method, path, query=query, json_body=json_body, fields=fields, files=files, raw=raw,
                      timeout=timeout, seconds=seconds, headers=headers)

@@ -341,6 +341,8 @@ class FakeHost(FakeAPI):
         url = req.full_url
         assert url.startswith("https://app.example.dev/box/eleven/"), url
         path = url.split("/box/eleven", 1)[1]
+        if path == "/quota" and ("GET", "/quota") not in self.routes:  # the look before an upload: the route is live
+            return HostResp(json.dumps(QUOTA).encode())
         self.calls.append({"method": req.get_method(), "path": path, "headers": dict(req.header_items()), "data": req.data, "url": url})
         for (m, prefix), answer in self.routes.items():
             if m == req.get_method() and path.startswith(prefix):
@@ -608,3 +610,24 @@ def test_a_voice_description_under_20_characters_is_caught_before_the_call(api, 
     fake = api({})
     code, _, err = run(["design-save", "--id", "g1", "--name", "N", "--describe", "test"], capsys)
     assert code == 1 and "20 characters" in err and fake.calls == []
+
+
+def test_an_upload_isnt_sent_twice_when_the_route_isnt_live(hosted, monkeypatch, tmp_path, capsys):
+    eleven.HOST_NOT_LIVE.clear()
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    sent = []
+
+    def urlopen(req, timeout=None):
+        sent.append((req.get_method(), req.full_url.split("/", 3)[3], len(req.data or b"")))
+        if "/box/eleven" in req.full_url:
+            return Redirected("https://app.example.dev/")
+        return Resp(b"clean")
+    monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
+    src = tmp_path / "talk.m4a"
+    src.write_bytes(b"a" * 5000)
+    try:
+        code, info, _ = hrun(["isolate", "--in", str(src), "--out", str(tmp_path / "clean.m4a")], capsys)
+    finally:
+        eleven.HOST_NOT_LIVE.clear()
+    assert code == 0 and info["account"] == "own"
+    assert [(m, path) for m, path, _ in sent] == [("GET", "box/eleven/quota"), ("POST", "v1/audio-isolation")]
