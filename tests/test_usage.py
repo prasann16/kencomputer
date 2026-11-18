@@ -168,62 +168,92 @@ def test_app_names_people_know():
     assert usage.app_name("C:\\Program Files\\chrome.exe".replace("\\", "/")) == "chrome"
 
 
-# -- the disk filling up (5 GB, a small computer in the cloud)
+# -- the disk filling up (20 GB, a small computer in the cloud)
 GB = 1024 ** 3
 
 
-def test_disk_says_each_level_once():
+def test_disk_says_so_once_at_90_and_nothing_below():
     u, _ = fresh()
-    assert u.disk_check(5 * GB, int(2 * GB)) == ""          # 60% full
-    assert u.disk_check(5 * GB, int(0.9 * GB)) == "warn"    # 82%
-    assert u.disk_check(5 * GB, int(0.8 * GB)) == ""        # still over 80%: said already
+    assert not u.disk_check(20 * GB, int(4 * GB))           # 80%: the nightly review's business, not a daytime message
     assert not u.disk_full
-    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"    # 92%: stop the work
+    assert u.disk_check(20 * GB, int(1.6 * GB))             # 92%: stop the work
     assert u.disk_full
-    assert u.disk_check(5 * GB, int(0.3 * GB)) == ""
-
-
-def test_disk_hovering_at_the_line_says_nothing_new():
-    u, _ = fresh()
-    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"
-    assert u.disk_check(5 * GB, int(0.55 * GB)) == ""       # 89%: just under, still stopped
+    assert not u.disk_check(20 * GB, int(1.2 * GB))         # still over: said already
+    assert not u.disk_check(20 * GB, int(2.4 * GB))         # 88%: just under, still stopped
     assert u.disk_full
-    assert u.disk_check(5 * GB, int(0.9 * GB)) == ""        # 82%: back to the heads-up level, already said
+    assert not u.disk_check(20 * GB, int(4 * GB))           # 80%: room again
     assert not u.disk_full
-    assert u.disk_check(5 * GB, int(1.5 * GB)) == ""        # 70%: room again
-    assert u.disk_check(5 * GB, int(0.4 * GB)) == "stop"    # full again later: said again
+    assert u.disk_check(20 * GB, int(1.6 * GB))             # full again later: said again
 
 
 def test_a_big_disk_with_room_left_is_fine():
     u, _ = fresh()
-    assert u.disk_check(1000 * GB, 100 * GB) == ""          # 90% full but 100 GB left
+    assert not u.disk_check(1000 * GB, 50 * GB) and not u.disk_full    # 95% full but 50 GB left
 
 
-def test_disk_texts():
+def test_an_older_kens_heads_up_level_is_forgotten():
     u, _ = fresh()
-    stop = u.disk_text("stop", 5 * GB, int(0.4 * GB), "get more space with a bigger plan: https://kencomputer.dev/account")
-    assert stop.startswith("Your ") and "92% full" in stop and "stopped what I was doing" in stop and "/account" in stop
-    warn = u.disk_text("warn", 5 * GB, int(0.9 * GB), "free up some space on it")
-    assert warn.startswith("Heads-up: your ") and "82% full" in warn
+    u.save({"disk_level": 80})                              # the 80% warning an older Ken kept
+    assert not u.disk_check(20 * GB, int(2.4 * GB)) and not u.disk_full    # 88%: fine
+    assert u.disk_check(20 * GB, int(1.6 * GB))
 
 
-def test_watch_disk_stops_work_before_saying_so(monkeypatch):
+def watch(u, monkeypatch, free_gb, total_gb=20, ask=None):
+    """A moment of watch_disk on a fake disk: (stopped?, the briefs it asked with)."""
     import asyncio
     import shutil
     from collections import namedtuple
-    u, said = fresh()
-    order = []
-    monkeypatch.setattr(shutil, "disk_usage", lambda p: namedtuple("D", "total used free")(5 * GB, 0, int(0.4 * GB)))
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: namedtuple("D", "total used free")(total_gb * GB, 0, int(free_gb * GB)))
+    stopped, briefs = [], []
 
     async def stop():
-        order.append("stopped")
+        stopped.append(not briefs)  # True: stopped before the list job started, so it isn't stopped with the rest
 
     async def go():
-        task = asyncio.create_task(u.watch_disk(stop, "more", every=0.01))
-        await asyncio.sleep(0.05)
+        task = asyncio.create_task(u.watch_disk(stop, "get more space with a bigger plan: https://kencomputer.dev/account",
+                                                every=10, ask=ask or (lambda b: briefs.append(b) or True)))
+        await asyncio.sleep(0.02)
         task.cancel()
     asyncio.run(go())
-    assert order == ["stopped"] and len(said) == 1 and "stopped what I was doing" in said[0]
+    return stopped, briefs
+
+
+def test_below_90_nothing_is_said_asked_or_cleared(monkeypatch):
+    u, said = fresh()
+    keep = u.path.parent / "work" / "videos" / "v1_nomusic.mp4"
+    keep.parent.mkdir(parents=True)
+    keep.write_bytes(b"x" * 1000)
+    assert watch(u, monkeypatch, free_gb=3) == ([], [])     # 85%
+    assert said == [] and keep.exists()
+
+
+def test_at_90_work_stops_and_the_list_comes_with_it(monkeypatch):
+    u, said = fresh()
+    keep = u.path.parent / "inbox" / "clip.mov"
+    keep.parent.mkdir(parents=True)
+    keep.write_bytes(b"x" * 1000)
+    stopped, briefs = watch(u, monkeypatch, free_gb=1.6)    # 92%
+    assert stopped == [True] and len(briefs) == 1 and keep.exists()     # nothing cleared without a yes
+    assert "Delete nothing" in briefs[0] and "92% full" in briefs[0] and "Which should I clear?" in briefs[0]
+    assert len(said) == 1 and said[0].startswith("Your ") and "92% full" in said[0]
+    assert "stopped what I was doing" in said[0] and "list of what's safe to clear" in said[0] and "/account" in said[0]
+    assert watch(u, monkeypatch, free_gb=1.4) == ([], []) and len(said) == 1    # still over: not again
+
+
+def test_no_list_when_it_cant_start_says_so_plainly(monkeypatch):
+    u, said = fresh()
+    stopped, _ = watch(u, monkeypatch, free_gb=1.6, ask=lambda b: False)    # Ken off: no job
+    assert stopped == [True] and "Tell me what to do" in said[0]
+
+
+def test_the_list_never_offers_browser_profiles_and_labels_uploads():
+    """Browser profiles hold their sign-ins: never listed. Their uploads are listed like the rest, labeled; they decide."""
+    u, _ = fresh()
+    brief = u.clear_brief(20 * GB, int(1.6 * GB))
+    home = u.path.parent
+    assert f"Never list a browser profile or signed-in browser ({home / 'signin-browser'}" in brief
+    assert "puppeteer_dev_chrome_profile-*" in brief and "Chromium user-data" in brief
+    assert f"their uploads in {home / 'inbox'}" in brief and "clearly labeled with its size" in brief
 
 
 def test_settings_meters_and_when_a_full_plan_opens_again():
@@ -240,3 +270,15 @@ def test_settings_meters_and_when_a_full_plan_opens_again():
     assert u.resets("claude", NOW) == usage.when(NOW + 3600, NOW)
     assert [w["label"] for w in u.limits(NOW + 7200)["claude"]] == ["Weekly"]  # a window past its reset drops off
     assert u.resets("claude", NOW + 7200) == ""
+
+
+def test_shared_browser_memory_is_never_counted_past_the_computers_own(monkeypatch):
+    """A free-trial computer has 4 GB; its browser's 10 processes each reported ~1.3 GB resident (mostly shared), and
+    Ken said it was using 12.7 GB. Each process now counts its own share, and no total is ever more than the computer."""
+    ps = "\n".join([f"{os.getpid()} 1 1000"] + [f"{9000 + i} {os.getpid()} 1300000" for i in range(10)])
+    monkeypatch.setattr(usage, "_run", lambda *a: ps)
+    monkeypatch.setattr(usage, "_own_share", lambda pid, rss: rss)  # no /proc here: resident sizes only
+    monkeypatch.setattr(usage, "physical_memory", lambda: 4 * GB)
+    assert usage.ken_memory() == 4 * GB
+    monkeypatch.setattr(usage, "_own_share", lambda pid, rss: rss // 10)  # Linux: each one's real share
+    assert usage.ken_memory() < 2 * GB

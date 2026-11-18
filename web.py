@@ -133,11 +133,83 @@ VOICE_FOLLOW_UP = (
 # Hosted Ken updates itself only in a quiet spell (bot.py update_when_quiet).
 LAST_ASKED = time.monotonic()
 OPEN_PAGES: set = set()
+DOWNLOADS: set = set()  # files going out through download links right now (a big one takes many minutes)
 
 
 def quiet_seconds() -> float:
-    """How long nobody has asked this Ken anything, with no page open on it (0 while one is)."""
-    return 0.0 if OPEN_PAGES else time.monotonic() - LAST_ASKED
+    """How long nobody has asked this Ken anything, with no page open on it or file going out (0 while there is)."""
+    return 0.0 if OPEN_PAGES or DOWNLOADS else time.monotonic() - LAST_ASKED
+
+
+# Hosted Ken: a file Ken made that's too big for Telegram is linked as <site>/get/<computer>/<key>/<name> (bot.py
+# _link_for). The site passes the key to /api/telegram-downloads/<key> with no sign-in, since in Telegram's own browser
+# nobody is signed in: the key is all it has, and it gets that one file in Home's files, for a week, nothing else.
+DOWNLOAD_LINKS = "download-links.json"
+DOWNLOAD_TTL = 7 * 86400
+
+
+def _download_links(home: Path) -> dict:
+    try:
+        links = json.loads((home / DOWNLOAD_LINKS).read_text())
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {k: v for k, v in links.items() if isinstance(v, dict) and isinstance(v.get("name"), str)
+            and isinstance(v.get("ts"), (int, float)) and now - v["ts"] < DOWNLOAD_TTL} if isinstance(links, dict) else {}
+
+
+def share_download(home: Path, name: str) -> str:
+    """The key for a download link to the file `name` in Home's files: the one already made for it while it has most
+    of its week left (the same file named again keeps its link), else a new one."""
+    links = _download_links(home)
+    for key, v in links.items():
+        if v["name"] == name and time.time() - v["ts"] < DOWNLOAD_TTL / 2:
+            return key
+    key = secrets.token_hex(12)
+    links[key] = {"name": name, "ts": time.time()}
+    path = home / DOWNLOAD_LINKS
+    path.write_text(json.dumps(links))
+    path.chmod(0o600)
+    return key
+
+
+def shared_download(home: Path, key: str) -> str | None:
+    """The name of the file a download link's key is for, while the link hasn't expired."""
+    if not re.fullmatch(r"[0-9a-f]{24}", key or ""):
+        return None
+    v = _download_links(home).get(key)
+    return v["name"] if v else None
+
+
+class _Download(web.FileResponse):
+    """A file going out through a download link: while it does, Ken isn't quiet (no restart to update) and tells its
+    host it's busy, so the computer doesn't fall asleep halfway through a big one."""
+
+    async def prepare(self, request):
+        DOWNLOADS.add(self)
+        try:
+            return await super().prepare(request)
+        finally:
+            DOWNLOADS.discard(self)
+
+
+async def use_ai(engine: Engine, setup, ai: str) -> dict:
+    """The AI Ken runs on: Ken AI credits ("credits"), or their own Claude ("claude") or ChatGPT ("codex"). Nothing
+    signs out. Picked in Settings → AI, or by asking Ken (`--use`, or a reply on Telegram): a reply in progress finishes
+    on the AI it started on, and the next one opens on this one."""
+    from onboarding import included_ai_key, own_claude
+    if ai not in ("credits", "claude", "codex"):
+        raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
+    if ai == "credits" and not included_ai_key():
+        raise ValueError("Ken AI credits aren't part of this plan.")
+    if ai == "claude" and not own_claude():
+        raise ValueError("Your own Claude isn't connected. Connect it in Settings → AI first.")
+    codex = getattr(setup, "providers", {}).get("codex")
+    if ai == "codex" and not (codex and codex.status().get("connected")):
+        raise ValueError("Your own ChatGPT isn't connected. Connect it in Settings → AI first.")
+    engine.back_from_credits(force=True)  # their own pick wins over Ken's switch for now
+    await engine.use_brain(HOME, "claude" if ai == "credits" else ai)  # Ken AI credits run on Claude
+    return await setup.use_credits(ai == "credits")
 
 
 class WebApp:
@@ -263,8 +335,14 @@ class WebApp:
         await self.engine.switch(on)
         return _json({"off": self.engine.is_off()})
 
+    def _until(self, status: dict) -> dict:
+        """Ken's own switch to Ken AI credits (their plan at its limit): until when, while it lasts."""
+        if (until := self.engine.credits_until()) and isinstance(status.get("providers", {}).get("claude"), dict):
+            status["providers"]["claude"]["credits_until"] = until
+        return status
+
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {
+        return _json(self._until(self.setup.status()) if self.setup else {
             "connected": True, "backend": self.engine.backend(HOME),
             "providers": {name: {"connected": True} for name in self.engine.brains},
             "phone": "done", "voice": {"state": "ready"},
@@ -293,6 +371,8 @@ class WebApp:
                 return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
             if b.get("action") == "disconnect":
                 return _json(await self.setup.disconnect(backend=b.get("backend")))
+            if b.get("action") == "use":  # Settings → AI (or asking Ken: `--use`): "credits", "claude" or "codex"
+                return _json(self._until(await use_ai(self.engine, self.setup, str(b.get("ai", "")))))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
         except (RuntimeError, ValueError) as exc:
@@ -437,6 +517,16 @@ class WebApp:
         if not names or any(not n or "/" in n or n.startswith(".") or not p.is_file() for n, p in zip(names, paths)):
             return _json({"error": "A file didn't arrive. Try sending it again."}, 400)
         return _json({"ok": True}) if await self.phone.file_arrived(token, paths if "files" in body else paths[0]) else expired
+
+    async def telegram_download(self, request):
+        """A download link's file (share_download), as a download: exactly the one file its key is for, from Home's
+        files, never any other path. Range requests work (FileResponse), so a big file can resume."""
+        name = shared_download(self.engine.home, request.match_info["key"])
+        folder = self.engine.files_dir(HOME)
+        path = folder / name if name and "/" not in name and "\\" not in name and not name.startswith(".") else None
+        if path is None or not path.is_file() or path.resolve().parent != folder.resolve():
+            return _json({"error": "This link has expired. Ask Ken for a new one."}, 404)
+        return self._serve(path, download=True, kind=_Download)
 
     async def big_file_upload(self, request):
         """The send-it-here page's own uploads, in pieces into Home's files, only while its link is waiting: the link
@@ -937,11 +1027,11 @@ class WebApp:
             part.replace(out)
             return out
 
-    def _serve(self, path, download=False):
+    def _serve(self, path, download=False, kind=web.FileResponse):
         from urllib.parse import quote
         # Active documents must not execute under Ken's authenticated origin.
         inline = not download and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".pdf"}
-        return web.FileResponse(path, headers={
+        return kind(path, headers={
             "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(path.name)}",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "sandbox; default-src 'none'",
@@ -1264,6 +1354,7 @@ class WebApp:
         r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/apps/connected", self.app_connected)
         r.add_post("/api/credits/low", self.credits_low)
+        r.add_get("/api/telegram-downloads/{key}", self.telegram_download)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}/uploads", self.big_file_upload)

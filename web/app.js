@@ -190,7 +190,11 @@ async function openFile(path) {
       if (r.ok) return showDoc({ ...found, text: await r.text() });
     }
     if (window.kenDesktop?.openFile) await window.kenDesktop.openFile(found.path);
-    else if (!found.folder) window.open(sharedUrl(found.path), '_blank', 'noopener');
+    else if (!found.folder) {  // downloaded: opened on its own a file is served sandboxed, where the browser's player can't run
+      const a = document.createElement('a');
+      a.href = sharedUrl(found.path) + '&download'; a.download = found.path.split('/').pop();
+      document.body.appendChild(a); a.click(); a.remove();
+    }
     else notify('That’s a folder on the computer Ken runs on: ' + found.path);
   } catch (e) { notify(e.message); }
 }
@@ -531,15 +535,16 @@ function Message({ m, label }) {
     <div ref=${body}>${content}</div>${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
 }
 
-// A video or picture Ken names is shown right in its message, ready to watch.
-const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i;
+// Every file Ken names is in its message with a Download button; a video, picture or audio file also plays right there.
+// (Opened on its own, a file is served sandboxed, where the browser's own player or viewer can't run.)
+const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp|mp3|wav|m4a|aac|flac|ogg|opus|pdf|zip|docx?|xlsx?|pptx?|csv|txt|srt|key|pages|numbers)$/i;
 function mediaIn(text) {
   const found = [], names = new Set();
   const add = (p) => { const name = p.split('/').pop(); if (MEDIA_RE.test(p) && isPath(p) && !names.has(name)) { names.add(name); found.push(p); } };
   for (const [, code] of String(text || '').matchAll(/`([^`\n]+)`/g)) add(code);
   for (const [, , target] of String(text || '').matchAll(LINK_RE)) add(target.trim());
   for (const [p] of String(text || '').replace(/`[^`\n]+`/g, '').matchAll(PATH_RE)) add(p);
-  return found.slice(0, 3);
+  return found.slice(0, 6);
 }
 function Media({ path }) {
   const [gone, setGone] = useState(false);
@@ -548,8 +553,10 @@ function Media({ path }) {
   // Saving it is one tap: the browser's own video menu has no Save in Safari, and a picture opens instead of downloading.
   return html`<div class="msg-media">${/\.(mp4|mov|webm|m4v)$/i.test(name)
     ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
-    : html`<img src=${url} alt=${name} loading="lazy" onClick=${() => openFile(path)} onError=${() => setGone(true)}/>`}
-    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download</a></div>`;
+    : isAudio(name) ? html`<audio src=${url} controls preload="metadata" onError=${() => setGone(true)}></audio>`
+    : /\.(png|jpe?g|gif|webp)$/i.test(name) ? html`<img src=${url} alt=${name} loading="lazy" onError=${() => setGone(true)}/>`
+    : ''}
+    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download${isAudio(name) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i.test(name) ? '' : ' ' + name}</a></div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
@@ -1643,19 +1650,23 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
   ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
-  ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
+  ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not or when you pick them.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
     <div class="conn-list ai-uses">${(() => {
       // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
-      const inUse = own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // Ken AI credits are in use when the chat runs on Claude without their own Claude, or they picked credits here.
+      const onCredits = HOSTED && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
+      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // Hosted: one tap moves between their own account and Ken AI credits, without signing out of anything.
+      const use = (id, label) => html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'use', ai: id } }).then((r) => { onConnected(r); toast(`Ken now uses ${label}.`); }).catch((e) => setError(e.message))}>Use ${id === 'credits' ? 'Ken AI credits' : `my own ${label}`}</button>`;
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
       const rows = [['claude', 'Claude'], ['codex', 'ChatGPT']].map(([id, label]) => html`<div>${name(id, label)}<span class="ai-state">${own[id] ? `Connected${inUse === id ? ' · in use' : ''}` : 'Not connected'}</span>
-        <span class="ai-actions"><button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
+        <span class="ai-actions">${HOSTED && own[id] && inUse !== id && use(id, label)}<button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
         ${own[id] && limits && html`<${PlanLimits} windows=${limits[id] || []} label=${label}/>`}</div>`);
       const usage = meta.usage || {};
-      if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
-        <span class="ai-actions">${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
+      if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use${setup?.providers?.claude?.credits_until ? ` until ${setup.providers.claude.credits_until}` : ''}` : ''}</span>
+        <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
       return rows;
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}

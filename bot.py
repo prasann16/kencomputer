@@ -53,6 +53,35 @@ if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a f
     print(f"{_site}/send/{_inst}/{_token}" if _inst.isalnum() else f"{_site}/send/{_token}")
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--use"]:  # they asked Ken to switch AI: the same switch as Settings → AI, in the running Ken
+    import json as _json, os as _os, urllib.error as _uerr, urllib.request as _ureq
+    from pathlib import Path as _Path
+    _ai = {"chatgpt": "codex"}.get(" ".join(sys.argv[2:]).strip().lower(), " ".join(sys.argv[2:]).strip().lower())
+    _name = {"credits": "Ken AI credits", "claude": "their own Claude", "codex": "their own ChatGPT"}.get(_ai)
+    if not _name:
+        print("Use: --use credits | claude | codex (ChatGPT)")
+        raise SystemExit(2)
+    _home = _Path(_os.environ.get("KEN_HOME", str(_Path.home() / ".ken")))
+    _host = _os.environ.get("KEN_WEB_HOST", "127.0.0.1")
+    _host = "127.0.0.1" if _host in ("0.0.0.0", "::", "") else _host
+    _req = _ureq.Request(f"http://{_host}:{_os.environ.get('KEN_WEB_PORT', '7777')}/api/setup", method="POST",
+                         data=_json.dumps({"action": "use", "ai": _ai}).encode(), headers={
+                             "Content-Type": "application/json",
+                             "Authorization": "Bearer " + (_home / "web-token").read_text().strip()})
+    try:
+        with _ureq.urlopen(_req, timeout=30):
+            pass
+        print(f"Switched to {_name}. This reply finishes on the AI it started on; their next message uses {_name}.")
+        raise SystemExit(0)
+    except _uerr.HTTPError as _e:
+        try:
+            print(_json.loads(_e.read()).get("error") or "Couldn't switch.")
+        except ValueError:
+            print("Couldn't switch.")
+    except (OSError, ValueError):
+        print("Couldn't switch just now. Try once more; if it still fails, tell them plainly.")
+    raise SystemExit(1)
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -86,7 +115,7 @@ from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import CREDIT_MODELS, HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from usage import Usage
-from web import WebApp
+from web import DOWNLOADS, WebApp, share_download
 from connections import Connections
 from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
                         included_ai_model, save_env, use_included_ai, voice_installed)
@@ -325,7 +354,7 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
 
 def download_where(path: Path) -> str:
     """Where a file too big for Telegram can be had. A Ken in the cloud moves it into its files and links straight to
-    it on its site (sign-in first if needed); a Ken on its own computer says where the file is."""
+    it on its site (download_url); a Ken on its own computer says where the file is."""
     site = host_site()
     if not site:
         return f"It's on this computer at {path}"
@@ -336,7 +365,17 @@ def download_where(path: Path) -> str:
         kept = INBOX_DIR / f"{path.stem}-{n}{path.suffix}"
     INBOX_DIR.mkdir(parents=True, exist_ok=True)
     shutil.move(str(path), kept)
-    return f"Download it here: {site}/download/{urllib.parse.quote(kept.name)}"
+    return f"Download it here: {download_url(site, kept.name)}"
+
+
+def download_url(site: str, name: str) -> str:
+    """The download link for a file in Home's files. With this computer's name in it, the site hands the file over
+    without a sign-in (Telegram's own browser isn't signed in): the link's key gets that one file, for a week (web.py
+    share_download). Without one, the old link, which signs in first."""
+    inst = os.environ.get("AGENT37_INSTANCE_ID", "")
+    if not inst.isalnum():
+        return f"{site}/download/{urllib.parse.quote(name)}"
+    return f"{site}/get/{inst}/{share_download(KEN_HOME, name)}/{urllib.parse.quote(name)}"
 
 
 # A path to a file on this computer, as Ken might write it in a reply (bare, in `code`, or as a markdown link target).
@@ -360,7 +399,7 @@ def _link_for(path: Path, site: str) -> str:
             os.link(path, kept)
         except OSError:
             shutil.copy2(path, kept)
-    return f"{site}/download/{urllib.parse.quote(kept.name)}"
+    return download_url(site, kept.name)
 
 
 def no_paths(text: str) -> str:
@@ -870,6 +909,9 @@ def where_you_are(f: dict | None = None) -> str:
     if f["app"]:
         lines.append("When they ask how to connect something or how to use you on their phone, point them to the exact "
                      "place in one line.")
+    if kind in ("cloud", "server") and included_ai_key():
+        lines.append(f"When they ask to switch AI (Ken AI credits, or their own Claude or ChatGPT), run `{KEN_CMD} --use "
+                     "credits` (or `claude`, or `codex` for ChatGPT) and tell them what it prints.")
     if f["voice"]:
         lines.append("Voice notes are transcribed automatically, so expect typos and read for intent.")
     if kind == "cloud":
@@ -1037,6 +1079,29 @@ def ai_question() -> str:
 
 
 FREE_REPLY = re.compile(r"\W*(try( it| me)?\s+)?free\W*", re.I)
+# The reply a limit or credits-out message on Telegram offers (engine.explain). Answered here, not by the AI: the AI
+# that just stopped (out of credits, at its limit) couldn't answer it.
+SWITCH_REPLY = re.compile(r"\W*(?:please\s+)?(?:use|switch(?: back)? to)\s+(?:(ken(?: ai)? credits)|my(?: own)? (claude|chatgpt))\W*", re.I)
+
+
+def switch_request(text: str) -> str:
+    """ "use Ken credits" -> "credits", "use my Claude" -> "claude", "use my ChatGPT" -> "codex"; else ""."""
+    m = SWITCH_REPLY.fullmatch(text or "") if included_ai_key() else None
+    if not m:
+        return ""
+    return "credits" if m.group(1) else {"claude": "claude", "chatgpt": "codex"}[m.group(2).lower()]
+
+
+async def switch_on_phone(update: Update, text: str, ai: str) -> None:
+    from web import use_ai
+    try:
+        await use_ai(ENGINE, ACCOUNTS, ai)
+        reply = f"Done, I'm on {'Ken AI credits' if ai == 'credits' else 'your own ' + ('ChatGPT' if ai == 'codex' else 'Claude')} now."
+    except ValueError as e:
+        reply = str(e)
+    ENGINE.log_message(HOME, "you", text, via="telegram")
+    ENGINE.log_message(HOME, "ken", reply, via="telegram")
+    await update.effective_message.reply_text(reply)
 
 
 async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
@@ -1055,6 +1120,9 @@ async def handle_prompt(update: Update, prompt: str, context: str = "", said: st
         if ENGINE.backend(HOME) != "claude":
             await ENGINE.set_runtime(HOME, backend="claude")  # Ken AI credits run on Claude
         prompt, context, said, files = first_contact_prompt("chose to try Ken free, on their phone"), "", None, None
+    if said is None and (ai := switch_request(prompt)):
+        await switch_on_phone(update, prompt, ai)
+        return
     shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
@@ -1599,6 +1667,19 @@ async def stop_all_work() -> None:
         await ENGINE.stop_run(run["id"], by="Ken")
 
 
+def ask_to_clear(brief: str) -> bool:
+    """Start the background job that lists what could be cleared off a filling disk (see Usage.watch_disk). Its report
+    comes back to Ken as one question for them; Ken deletes only what they say yes to."""
+    if ENGINE.is_off() or asking_ai():
+        return False
+    try:
+        ENGINE.start_run(HOME, "What could be cleared", brief, source="Ken")
+        return True
+    except Exception as e:
+        log.warning("couldn't start the disk list: %s", e)
+        return False
+
+
 def more_space() -> str:
     """How to get a bigger disk: a Ken in the cloud's plan page on its site, else clearing some room."""
     site = os.environ.get("KEN_INCLUDED_AI_URL", "").rstrip("/").removesuffix("/ai")
@@ -1711,7 +1792,7 @@ def job_tag(job: dict) -> dict:
     """What a job's messages carry, so the app and the phone can say why Ken is talking."""
     name = str(job.get("name", "job"))
     return {"name": name, "label": JOB_LABELS.get(name, "⏰ " + name.replace("-", " ").capitalize()),
-            "time": job.get("time", ""), "at": time.time()}
+            "time": job.get("time", ""), "at": time.time(), **({"once": True} if job.get("date") else {})}
 
 
 async def run_outbound(job: dict) -> None:
@@ -1745,6 +1826,21 @@ async def run_outbound(job: dict) -> None:
         await ENGINE.run_job(HOME, prompt, job=job_tag(job), listener=deliver, preface=late_notice(job, time.localtime()))
     except Exception as e:
         log.warning("outbound job failed (%s)", e)
+
+
+async def run_agent_job(agent: str, job: dict, notice: str = "") -> None:
+    """An agent's scheduled job runs in that agent's own chat. A failed turn says so there (see send_message); one that
+    can't even start (the agent was deleted) says so in Ken's chat, so it never just doesn't happen."""
+    tag = job_tag(job)
+    try:
+        await ENGINE.send_message(
+            agent, "", log_user=False, job=tag,
+            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
+            + (f" Open your message with this line, as is: {notice}" if notice else ""))
+    except Exception as e:
+        log.warning("agent job %s failed (%s)", job.get("name", "job"), e)
+        ENGINE.log_message(HOME, "ken", ENGINE.job_missed(tag, "Something went wrong on Ken's side."),
+                           job=tag, via="background")
 
 
 CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wakes, if it's not too late
@@ -1852,8 +1948,12 @@ def refresh_default_jobs() -> None:
 OLD_NIGHTLY_TAILS = (
     "Then send 2-3 lines saying what you filed, so they know the job ran. If the day was genuinely empty, say so in one line rather than inventing substance.",
     "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\"",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, caches), list the biggest few with sizes. Never offer browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never offer their own uploads in ~/.ken/inbox. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
 )
-NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
+# They decide what goes, their uploads included; the one thing never listed is a browser profile, which holds their
+# sign-ins (clearing one signs them out of their sites).
+NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
 
 
 def migrate_jobs() -> None:
@@ -1995,12 +2095,7 @@ async def scheduler() -> None:
                     agent = job.get("agent") or job.get("project")
                     if agent:
                         # An agent's job runs in that agent's own chat.
-                        asyncio.create_task(ENGINE.send_message(
-                            str(agent), "", log_user=False,
-                            prompt=f"(Scheduled job \"{job.get('name', 'job')}\": {job.get('prompt', '')})"
-                            + (f" Open your message with this line, as is: {notice}" if (notice := late_notice(job, now)) else ""),
-                            job=job_tag(job),
-                        ))
+                        asyncio.create_task(run_agent_job(str(agent), job, late_notice(job, now)))
                     else:
                         asyncio.create_task(run_outbound(job))
         except Exception as e:
@@ -2040,7 +2135,7 @@ async def keep_awake() -> None:
     async with httpx.AsyncClient(timeout=15) as client:
         while True:
             try:
-                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active)
+                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
                 await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
@@ -2197,7 +2292,8 @@ async def notify_telegram(app) -> None:
                 ]])
                 await app.bot.send_message(ALLOWED_USER_ID, text, parse_mode=ParseMode.HTML, reply_markup=buttons,
                                            disable_notification=hush, **quoting(ev.get("origin")))
-            elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME:
+            elif (ev["type"] == "run.finished" and ev.get("status") != "stopped" and ev.get("project") != HOME
+                  and not ev.get("continued")):  # carrying on in a new run: not finished yet
                 name = ENGINE.get_agent(ev["project"])["name"]
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
@@ -2238,7 +2334,7 @@ async def notify_app(web_app=None) -> None:
                 if ev["type"] == "approval.created":
                     pid = ev["approval"]["project"]
                     note = {"kind": "approval", "title": ev["approval"]["title"]}
-                elif ev["type"] == "run.finished" and ev.get("status") != "stopped":
+                elif ev["type"] == "run.finished" and ev.get("status") != "stopped" and not ev.get("continued"):
                     note = {"kind": "run", "title": ev.get("title", ""), "status": ev.get("status")}
                 elif ev["type"] == "message" and ev.get("role") == "ken" and (ev.get("text") or "").strip():
                     note = {"kind": "message", "text": ev["text"].strip()[:300]}
@@ -3037,7 +3133,7 @@ async def run() -> None:
     # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
     ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
-                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space())),
+                  asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
                   asyncio.create_task(runtimes.update(signed_in()))]
     try:

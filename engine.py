@@ -88,6 +88,10 @@ class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
 
 
+class _Switched(Exception):
+    """A reply failed on their own plan's limit and Ken switched to Ken AI credits: the line that says so."""
+
+
 # Words from Claude Code, the SDKs and the AI services that must never reach a person as they are.
 AI_WORDS = ("api", "login", "auth", "unauthorized", "forbidden", "overloaded", "rate limit", "usage limit", "billing",
             "credit", "anthropic", "openai", "claude code", "codex", "connection", "network", "timed out", "timeout")
@@ -124,7 +128,7 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
         return f"{name} didn't answer, so I stopped waiting.", "retry"
     if has("model") and has("not supported", "not found", "does not exist", "not available"):
         return f"{name} can't use that model with your account. Pick another model at the top.", "retry"
-    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit"):
+    if status == 429 or "429" in codes or has("usage limit", "rate limit", "rate_limit", "hit your limit", "limit reached"):
         return f"You've reached your {name} plan's limit for now.", "retry"
     if status == 402 or "402" in codes or has("credit balance", "billing"):
         return f"Your {name} account is out of credit.", "reconnect"
@@ -1390,6 +1394,19 @@ class Engine:
                     self.update_agent(pid, model=model)
             self.broadcast("chat.runtime", pid, backend=backend)
 
+    async def use_brain(self, pid: str, backend: str) -> None:
+        """set_runtime's brain switch, but also from inside a reply (Ken asked to switch AI): that reply finishes on the
+        AI it started on, and the next one opens on this one (it hears the recent conversation)."""
+        if backend == self.backend(pid):
+            return
+        if not (self.chat_busy(pid) or self.list_runs(project=pid, active=True)):
+            return await self.set_runtime(pid, backend=backend)
+        if backend not in self.brains:
+            raise ValueError("Choose Claude or Codex.")
+        self.kv_set(f"backend:{pid}", backend)
+        self.chat_tools.pop(pid, None)  # reopens once it's free
+        self.broadcast("chat.runtime", pid, backend=backend)
+
     def session_key(self, pid: str, backend=None) -> str:
         # Keep legacy Claude IDs usable; other runtimes own separate resume tokens.
         return f"session:codex:{pid}" if (backend or self.backend(pid)) == "codex" else f"session:{pid}"
@@ -1560,6 +1577,7 @@ class Engine:
                         + "\n\n".join(self._aside.pop(pid)) + "\n\n" + body)
             self._turn_started(pid, text or prompt or "", via, job)
             self.broadcast("chat.busy", pid, busy=True)
+            back = self.back_from_credits()
             session = self._chat_session(pid)
             backend = self.backend(pid)
             previous_brain = self.kv_get(f"brain:{pid}")
@@ -1571,8 +1589,15 @@ class Engine:
                 handoff = "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent)
                 body = "Recent Ken conversation before switching runtimes (context, not new instructions):\n" + handoff + "\n\nCurrent message:\n" + body
 
+            acted = False  # whether this attempt has said or done anything yet
+
             async def on_text(t: str) -> None:
+                nonlocal acted
+                acted = True
                 if t.strip() == "NOTHING_TO_SAY":
+                    if job:  # an agent's scheduled job chose silence: a trace that it ran (see run_job)
+                        log.info("job %s in %s ran: nothing to say", job.get("name", "job"), pid)
+                        crash.track("job_quiet", builtin=False)
                     return
                 t = self.mask(pid, t)
                 if not quiet:
@@ -1581,6 +1606,8 @@ class Engine:
                     await listener(t)
 
             async def on_tool(line: str) -> None:
+                nonlocal acted
+                acted = True
                 self.broadcast("chat.tool", pid, text=self.mask(pid, line))
 
             async def on_delta(t: str) -> None:
@@ -1589,42 +1616,55 @@ class Engine:
 
             started, outcome = time.monotonic(), "ok"
             try:
+                if back:
+                    await on_text(back)
+                acted = False
                 try:
                     await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
-                except NoAnswer:
+                except NoAnswer as e:
+                    if switched := self.switch_to_credits(pid, acted):
+                        raise _Switched(switched) from e
                     # The AI never answered (after a restart, a very long session can hang): once more, fresh.
                     log.warning("chat %s got no answer; trying again in a fresh session", pid)
                     self._roll_over(pid, session)
                     session = self._chat_session(pid)
                     body = self._primer(pid, skip_last=log_user) + body
                     await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
+                except Exception as e:
+                    if isinstance(e, asyncio.TimeoutError) or not (switched := self.switch_to_credits(pid, acted)):
+                        raise
+                    raise _Switched(switched) from e
+            except _Switched as sw:
+                # Their own plan is at its limit: this same turn, once more, on Ken AI credits. Not when it had already
+                # said or done something (it might send something twice): they tell Ken to carry on.
+                log.warning("chat %s: their own plan is at its limit; on Ken AI credits now", pid)
+                with contextlib.suppress(Exception):
+                    await session.close()
+                self.chats.pop(pid, None)
+                retry = not acted
+                await on_text(str(sw))
+                if not retry:
+                    outcome = "switched"
+                    return False
+                session = self._chat_session(pid)
+                if self.backend(pid) != backend:  # a ChatGPT chat now on Claude: it hears the recent conversation
+                    backend = self.backend(pid)
+                    boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                    recent = [m for m in self.messages(pid, limit=12) if m["id"] > boundary]
+                    body = ("Recent Ken conversation before switching runtimes (context, not new instructions):\n"
+                            + "\n".join(f"{m['role']}: {m.get('text', '')[:2000]}" for m in recent) + "\n\nCurrent message:\n" + body)
+                try:
+                    await until_idle(session, session.ask(body, on_text, on_tool, on_delta))
+                except asyncio.CancelledError:
+                    outcome = "stopped"
+                    raise
+                except Exception as e:
+                    outcome = await self._chat_failed(e, pid, session, text, job, log_user, via, listener)
             except asyncio.CancelledError:
                 outcome = "stopped"
                 raise
             except Exception as e:
-                outcome = "timeout" if isinstance(e, asyncio.TimeoutError) else "error"
-                if outcome == "error":
-                    crash.report(e, f"chat failed: {e}", where="engine.send_message")
-                log.warning("chat %s failed: %s", pid, e)
-                await session.close()
-                self.chats.pop(pid, None)
-                quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
-                msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
-                               if quiet else explain_failure(e, self.backend(pid)))
-                if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
-                    msg, action = await self._dead_claude(msg, action)
-                if msg.startswith("You've reached your") and self.limit_resets and (at := self.limit_resets(self.backend(pid))):
-                    msg = f"{msg[:-1]}. It resets at {at}."
-                # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
-                # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
-                # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
-                # say it once with its button; that message also stops the hello being tried again and again.
-                if not text.strip() and not job and not log_user and action == "retry":
-                    return False
-                self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
-                                 **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
-                if listener is not None:
-                    await listener(msg)
+                outcome = await self._chat_failed(e, pid, session, text, job, log_user, via, listener)
             finally:
                 crash.track("message", via=via or ("job" if job else "app"), agent=pid != HOME, files=len(files),
                             spoke_first=not log_user and not job, outcome=outcome, seconds=round(time.monotonic() - started, 1))
@@ -1643,6 +1683,34 @@ class Engine:
                 self.chat_origin = None
             lock.release()
             self.chat_tasks.discard(asyncio.current_task())
+
+    async def _chat_failed(self, e, pid, session, text, job, log_user, via, listener) -> str:
+        """A reply that failed: one plain line, with the one thing to do about it. Returns the outcome."""
+        outcome = "timeout" if isinstance(e, asyncio.TimeoutError) else "error"
+        if outcome == "error":
+            crash.report(e, f"chat failed: {e}", where="engine.send_message")
+        log.warning("chat %s failed: %s", pid, e)
+        await session.close()
+        self.chats.pop(pid, None)
+        quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
+        msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
+                       if quiet else self.explain(e, pid, via))
+        if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
+            msg, action = await self._dead_claude(msg, action)
+        # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
+        # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
+        # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
+        # say it once with its button; that message also stops the hello being tried again and again.
+        if not text.strip() and not job and not log_user and action == "retry":
+            return outcome
+        if job:  # an agent's scheduled job: say which one didn't run, and what happens next
+            msg = self.job_missed(job, msg)
+        self.log_message(pid, "ken", msg, error=True, **({} if job and action == "retry" else {"action": action}),
+                         **({"job": job} if job else {}),
+                         **({"brain": "codex" if self.backend(pid) == "codex" else "claude"}), **({"via": via} if via else {}))
+        if listener is not None:
+            await listener(msg)
+        return outcome
 
     # ---- a reply cut off by a restart (the computer restarted, Ken updated, or crashed) ----
     # While a chat turn runs, a small note on disk says so; it's cleared when the turn ends. A note still there when Ken
@@ -1712,21 +1780,44 @@ class Engine:
         if self.is_off():
             return ""
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
-        session = self.brain_for(pid).session(
+        new = lambda: self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
             mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+        if back := self.back_from_credits():
+            self.log_message(pid, "ken", back)
+        session = new()
         last = ""
 
-        async def on_text(t: str) -> None:
-            nonlocal last
-            last = t
+        acted = False
 
+        async def on_text(t: str) -> None:
+            nonlocal last, acted
+            last, acted = t, True
+
+        async def on_tool(line: str) -> None:
+            nonlocal acted
+            acted = True
+
+        failed, switched = "", ""
+        ask = f"[{time.strftime('%a %d %b %H:%M')}]\n{prompt}"
         try:
-            final = await until_idle(session, session.ask(f"[{time.strftime('%a %d %b %H:%M')}]\n{prompt}", on_text))
+            try:
+                final = await until_idle(session, session.ask(ask, on_text, on_tool))
+            except Exception as e:
+                if (isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)) or not (switched := self.switch_to_credits(pid, acted)):
+                    raise
+                if acted:  # it had started: not run again by itself
+                    raise _Switched(switched) from e
+                with contextlib.suppress(Exception):  # their own plan is at its limit: once more, on Ken AI credits
+                    await session.close()
+                session = new()
+                final = await until_idle(session, session.ask(ask, on_text, on_tool))
             text = (final or last or "").strip()
+        except _Switched as sw:
+            text, failed, switched = "", str(sw), ""
         except Exception as e:
             log.warning("job %s failed: %s", (job or {}).get("name", "job"), e)
-            text = ""
+            text, failed = "", self.explain(e, pid)[0]
         finally:
             name = (job or {}).get("name")  # a job they named themselves stays "custom": names are theirs
             self.record_usage(session, pid, "job", job=name if name in ("morning-brief", "nightly-review") else "custom")
@@ -1735,12 +1826,22 @@ class Engine:
             except Exception:
                 pass
         if text == "NOTHING_TO_SAY":
-            text = ""
+            # Silent by design, but leave a trace, so it can be seen later that the job ran and chose to say nothing.
+            log.info("job %s ran: nothing to say", (job or {}).get("name", "job"))
+            crash.track("job_quiet", builtin=name in ("morning-brief", "nightly-review"))
+            return ""
+        if failed or not text:
+            # A job that didn't run must never just vanish: they'd wait for a brief that never comes. One plain line.
+            # (One that ran but said nothing may still have done things, so it isn't offered to run again as if not.)
+            text, preface = self.job_missed(job, failed) if failed else (
+                f"⏰ Your {self._job_name(job)} ran but came back with nothing this time. Ask me if you want it again."), ""
         text = self.mask(pid, text)
         if not text:
             return ""
         if preface:
             text = f"{preface}\n\n{text}"
+        if switched:
+            text = f"{switched}\n\n{text}"
         self.log_message(pid, "ken", text, **({"job": job} if job else {}))
         # The chat's own session didn't see this; it hears it with their next message.
         said = json.loads(self.kv_get(f"jobs:said:{pid}") or "[]")[-4:]
@@ -1748,6 +1849,18 @@ class Engine:
         if listener is not None:
             await listener(text)
         return text
+
+    @staticmethod
+    def _job_name(job: dict | None) -> str:
+        """How a job reads in the middle of a sentence: the label "⏰ Brand deals" is "brand deals"."""
+        what = re.sub(r"^\W+", "", (job or {}).get("label") or "") or "scheduled job"
+        return what[0].lower() + what[1:]
+
+    @classmethod
+    def job_missed(cls, job: dict | None, why: str) -> str:
+        """The plain line for a scheduled job that didn't run, and what happens next."""
+        return f"⏰ Your {cls._job_name(job)} didn't run just now. {why} " + (
+            "Ask me to run it now." if (job or {}).get("once") else "It'll try again next time, or ask me to run it now.")
 
     async def on_open(self, pid: str) -> None:
         """A chat was opened: warm up, and if it's been a while, speak first."""
@@ -2025,6 +2138,26 @@ class Engine:
         yield
 
     async def _execute(self, rid: str) -> None:
+        """Run a background job. Whatever goes wrong, it never stays "running" with nobody told: a failure before the
+        job even got going (setting up its skills or its AI session) still ends it, with one plain line."""
+        try:
+            await self._execute_run(rid)
+        except Exception as e:
+            log.warning("run %s broke before it could finish: %s", rid, e)
+            crash.report(e, f"run failed to start: {e}", where="engine._execute")
+            run = self._run_row(rid)
+            if run["status"] not in ("queued", "running"):
+                return  # it had already finished; only what came after went wrong
+            pid = run["project"]
+            reason = self.explain(e, pid)[0]
+            self._set_run(rid, status="failed", finished=time.time(), summary=f"Failed: {reason}", activity="")
+            self.emit("run.finished", project=pid, run=rid, status="failed", title=run["title"], summary=f"Failed: {reason}",
+                      origin=self.origins.pop(rid, None))
+            text = f'■ Your background job "{self._CARRIED.sub("", run["title"])}" didn\'t finish. {reason} Ask me to try again.'
+            self.log_message(pid, "ken", text, **({"via": "background"} if pid == HOME else
+                                                  {"run": rid, "run_title": run["title"], "run_status": "failed"}))
+
+    async def _execute_run(self, rid: str) -> None:
         run = self._run_row(rid)
         pid = run["project"]
         async with self._room(rid):
@@ -2046,13 +2179,16 @@ class Engine:
                         "(sending, posting, spending) you prepare and leave for Ken to ask about. Save what you make in your "
                         "working folder. End with a short report for Ken: what you did, what you chose, and the full path "
                         "of every file you made.")
-            session = self.brain_for(pid).session(
+            if back := self.back_from_credits():
+                self.log_message(pid, "ken", back)
+            new = lambda: self.brain_for(pid).session(
                 cwd=str(cwd),
                 system=lambda: self.system(pid) + note,
                 model_fn=lambda: self.model_for(pid),
                 mcp_fn=lambda: self.agent_tools(pid),
                 env_fn=lambda: self._key_values(pid),
             )
+            session = new()
             self.run_sessions[rid] = session
             last = ""
 
@@ -2068,19 +2204,34 @@ class Engine:
                 self._set_run(rid, activity=line)
                 self.emit("run.tool", project=pid, run=rid, text=line)
 
-            status, summary, began = "failed", "", time.monotonic()
+            status, summary, began, reason, out_of_time = "failed", "", time.monotonic(), "", False
             try:
-                final = await asyncio.wait_for(until_idle(session, session.ask(run["prompt"], on_text, on_tool)), RUN_LIMIT)
+                try:
+                    final = await asyncio.wait_for(until_idle(session, session.ask(run["prompt"], on_text, on_tool)), RUN_LIMIT)
+                except Exception as e:
+                    acted = bool(last) or bool(self._run_row(rid)["activity"] not in (None, "", "starting"))
+                    if (isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)) or not (switched := self.switch_to_credits(pid, acted)):
+                        raise
+                    if acted:  # it had started: not run again by itself
+                        raise _Switched(switched) from e
+                    self.log_message(pid, "ken", switched)  # their own plan is at its limit: once more, on Ken AI credits
+                    with contextlib.suppress(Exception):
+                        await session.close()
+                    session = new()
+                    self.run_sessions[rid] = session
+                    final = await asyncio.wait_for(until_idle(session, session.ask(run["prompt"], on_text, on_tool)), RUN_LIMIT)
                 status, summary = "done", self.mask(pid, (final or last or "Finished.").strip())
             except asyncio.CancelledError:
                 status, summary = "stopped", (last or "Stopped.").strip()
             except Exception as e:
                 log.warning("run %s failed: %s", rid, e)
                 if isinstance(e, NoAnswer) or not isinstance(e, asyncio.TimeoutError):
-                    summary = f"Failed: {friendly_error(e, self.backend(pid))}"
+                    reason = str(e) if isinstance(e, _Switched) else self.explain(e, pid)[0]
+                    summary = f"Failed: {reason}"
                 else:
-                    summary = ("Stopped: it hit the one-hour limit." if time.monotonic() - began >= RUN_LIMIT - 60
-                               else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
+                    out_of_time = time.monotonic() - began >= RUN_LIMIT - 60
+                    reason = "It hit the one-hour limit." if out_of_time else "Ken went quiet for 45 minutes."
+                    summary = ("Stopped: it hit the one-hour limit." if out_of_time else "Stopped: Ken went quiet for 45 minutes.") + (f" Last thing it said: {last.strip()[:1500]}" if last.strip() else "")
             finally:
                 self.run_sessions.pop(rid, None)
                 self.record_usage(session, pid, "background")
@@ -2093,16 +2244,191 @@ class Engine:
                 status = "stopped"
             self._set_run(rid, status=status, finished=row["finished"] if status == "stopped" and row["finished"] else time.time(),
                           summary=summary[:4000], activity="")
+            origin = self.origins.pop(rid, None)
+            carried = status != "stopped" and out_of_time and self._carry_on(run, last, origin)
+            # A run that carries on isn't a failure to them: screens and the phone don't show it as one.
             self.emit("run.finished", project=pid, run=rid, status=status, title=run["title"], summary=summary[:600],
-                      origin=self.origins.pop(rid, None))
+                      origin=origin, **({"continued": True} if carried else {}))
+            if carried:
+                return
+            if out_of_time and (hours := self._carried(run["title"]) + 1) > 1:
+                reason = f"It worked on it for {hours} hours and still wasn't done."
             if status != "stopped" and pid == HOME:
                 # Like a helper reporting back: Ken reads the result and tells them, wherever they are.
-                self._bg.append(asyncio.create_task(self.send_message(HOME, "", log_user=False, via="background", prompt=(
-                    f'(Your background job "{run["title"]}" {"finished" if status == "done" else "did not finish"}. Its report:\n'
-                    f"{summary[:4000]}\n\nTell them the result now in a short message, with links, and send any files "
-                    "they'd want as you normally do. Don't redo the work.)"))))
+                self._bg.append(asyncio.create_task(self._report_run(run, status, summary, reason)))
             elif status != "stopped":
                 self.log_message(pid, "ken", summary[:4000], run=rid, run_title=run["title"], run_status=status)
+
+    # A job cut off by the one-hour limit is usually just a big job (a month of posts), not a broken one: it carries on
+    # in a fresh run from what it already made, up to this many times, before Ken tells them it didn't finish.
+    CARRY_ONS = 2
+    _CARRIED = re.compile(r" \(continued(?: (\d+))?\)$")
+    _CARRY_NOTE = "\n\n(This job already ran for an hour"
+
+    def _carried(self, title: str) -> int:
+        """How many times a job has carried on already, from its title: "Posts (continued 2)" is 2."""
+        m = self._CARRIED.search(title)
+        return int(m.group(1) or 1) if m else 0
+
+    def _carry_on(self, run: dict, last: str, origin: int | None) -> bool:
+        """Start the next run of a job that hit the time limit. False when it has carried on enough already."""
+        done = self._carried(run["title"])
+        if done >= self.CARRY_ONS:
+            return False
+        base = self._CARRIED.sub("", run["title"])[:100]
+        brief = run["prompt"].split(self._CARRY_NOTE)[0]
+        cwd = self.home_cwd if run["project"] == HOME else self.workdir(self.get_agent(run["project"]))
+        prompt = (f"{brief}{self._CARRY_NOTE} and was cut off by the time limit before it finished. "
+                  + (f"The last thing it said was:\n{last.strip()[:1500]}\n\n" if last.strip() else "")
+                  + f"Carry on from where it left off. What it made so far is in your working folder ({cwd}): check what's "
+                  "already there and build on it. Don't start over.)")
+        try:
+            self.start_run(run["project"], base + (" (continued)" if not done else f" (continued {done + 1})"), prompt,
+                           source=run["source"], origin=origin)
+        except Exception as e:
+            log.warning("couldn't carry on with run %s: %s", run["id"], e)
+            return False
+        return True  # quietly: they hear only how the whole job ends
+
+    async def _report_run(self, run: dict, status: str, summary: str, reason: str) -> None:
+        """Ken tells them how a background job went, in its own words. When that turn fails or says nothing (the AI
+        is down at that moment too), a plain line still reaches them: a job never ends in silence."""
+        heard: list[str] = []
+
+        async def listener(t: str) -> None:
+            heard.append(t)
+
+        ok = False
+        try:
+            ok = await self.send_message(HOME, "", log_user=False, via="background", listener=listener, prompt=(
+                f'(Your background job "{run["title"]}" {"finished" if status == "done" else "did not finish"}. Its report:\n'
+                f"{summary[:4000]}\n\nTell them the result now in a short message, with links, and send any files "
+                "they'd want as you normally do. Don't redo the work.)"))
+        except asyncio.CancelledError:
+            raise  # Ken is shutting down: the turn is picked up again when it starts (resume_interrupted)
+        except Exception as e:
+            log.warning("reporting run %s failed: %s", run["id"], e)
+        if ok and heard:
+            return
+        title = self._CARRIED.sub("", run["title"])  # the job they know, not its third run
+        if status == "done":
+            started = self._run_row(run["id"])["started"]
+            made = self.made_since(started) if started else []
+            text = f'✓ Your background job "{title}" is done.' + (
+                "\nIt made: " + ", ".join(f"`{p}`" for p in made) if made else "") + "\nAsk me if you want the details."
+        else:
+            text = f'■ Your background job "{title}" didn\'t finish. {reason or "Something went wrong."} Ask me to try again.'
+        self.log_message(HOME, "ken", text, via="background")
+
+    # ---- their own plan at its limit: Ken AI credits until it resets ----
+    # A reply, job or background job that fails because their own Claude or ChatGPT plan is at its limit switches Ken to
+    # Ken AI credits (the same routing as picking them in Settings → AI, but not saved as their choice) and runs again
+    # once. When the plan resets, Ken goes back to their own by itself. One line each way.
+    def _for_now(self) -> dict:
+        return json.loads(self.kv_get("credits-for-now") or "{}")
+
+    def _drop_sessions(self) -> None:
+        """Open chats reopen on the AI now in use (a busy one when its reply ends)."""
+        for pid, s in list(self.chats.items()):
+            if s.busy:
+                self.chat_tools.pop(pid, None)
+            else:
+                self.chats.pop(pid)
+                self._bg.append(asyncio.create_task(s.close()))
+
+    def switch_to_credits(self, pid: str, acted: bool = False) -> str:
+        """Their own plan is at its limit (Claude's or ChatGPT's reading says until when) and the plan has Ken AI credits:
+        switch to them until it resets. Returns the line to tell them, or "" when Ken didn't switch. `acted`: the reply
+        that failed had already said or done something, so it isn't run again by itself (it might send something twice)."""
+        from onboarding import included_ai_in_use, included_ai_key, use_included_ai
+
+        backend = self.backend(pid)
+        at = self.limit_resets(backend) if self.limit_resets and backend in ("claude", "codex") else ""
+        if (not at or not included_ai_key() or os.environ.get("KEN_USE_CREDITS") == "1"
+                or (backend == "claude" and included_ai_in_use())):
+            return ""
+        state = self._for_now()
+        state.setdefault("from", backend)
+        state["until"] = at
+        if backend == "codex":  # Ken AI credits run on Claude: this chat moves to it until then
+            state["chats"] = sorted({*state.get("chats", []), pid})
+            self.kv_set(f"backend:{pid}", "claude")
+        self.kv_set("credits-for-now", json.dumps(state))
+        os.environ["KEN_CREDITS_FOR_NOW"] = "1"
+        use_included_ai()
+        self._drop_sessions()
+        self.broadcast("chat.runtime", pid, backend="claude")
+        name = "ChatGPT" if backend == "codex" else "Claude"
+        return f"Your {name} plan hit its limit, so I switched to Ken AI credits until {at}. " + (
+            "Tell me to carry on and I'll pick up where I stopped." if acted else "I'll switch back then.")
+
+    def credits_until(self) -> str:
+        """While Ken has switched to Ken AI credits by itself: when their own plan resets (Settings shows "until 22:20")."""
+        state = self._for_now()
+        if not state:
+            return ""
+        return (self.limit_resets(state["from"]) if self.limit_resets else "") or state.get("until", "")
+
+    def back_from_credits(self, force: bool = False) -> str:
+        """Before each reply or job: once their plan has reset (or they picked an AI themselves: `force`), back to their
+        own. Returns the line to tell them, or ""."""
+        from onboarding import use_included_ai
+
+        state = self._for_now()
+        if not state:
+            return ""
+        if not force and self.limit_resets and self.limit_resets(state["from"]):
+            if os.environ.get("KEN_CREDITS_FOR_NOW") != "1":  # Ken restarted meanwhile
+                os.environ["KEN_CREDITS_FOR_NOW"] = "1"
+                use_included_ai()
+            return ""
+        self.db.execute("DELETE FROM kv WHERE k='credits-for-now'")
+        os.environ.pop("KEN_CREDITS_FOR_NOW", None)
+        use_included_ai()
+        for pid in state.get("chats", []):
+            self.kv_set(f"backend:{pid}", state["from"])
+            self.broadcast("chat.runtime", pid, backend=state["from"])
+        self._drop_sessions()
+        return "" if force else f"Back on your own {'ChatGPT' if state['from'] == 'codex' else 'Claude'}."
+
+    def _own_brain(self) -> str:
+        """Their own Claude or ChatGPT that's connected ("claude", "codex"), or ""."""
+        from onboarding import own_claude
+
+        if (state := self._for_now()).get("from"):
+            return state["from"]
+        if own_claude():
+            return "claude"
+        return "codex" if self.usable_brains and "codex" in self.usable_brains() else ""
+
+    def explain(self, e: BaseException, pid: str, via: str | None = None) -> tuple[str, str]:
+        """explain_failure, plus what Ken already knows: when their own plan is at its limit right now, that's the reason
+        (Claude's usage readings say so even when the error itself only says it failed), with when it opens again.
+        `via`: on Telegram there's no Settings, so the way to switch AI is a reply (bot.py answers it, no AI needed)."""
+        from onboarding import included_ai_key
+
+        from onboarding import included_ai_in_use
+
+        msg, action = explain_failure(e, self.backend(pid))
+        on_credits = self.backend(pid) == "claude" and included_ai_in_use()
+        if action == "credits" and (own := self._own_brain()):
+            # Out of Ken AI credits with their own Claude or ChatGPT connected: the way to keep going.
+            name = "ChatGPT" if own == "codex" else "Claude"
+            if self._for_now() and self.back_from_credits():  # Ken's switch, and their own plan has reset meanwhile
+                return f"You've used your Ken AI credits, so I switched back to your own {name}.", "retry"
+            at = self.limit_resets(own) if self.limit_resets else ""
+            resets = f" (its limit resets at {at})" if at else ""
+            if via == "telegram":
+                return f"You've used your Ken AI credits. Reply 'use my {name}' to switch back to it{resets}.", action
+            return f"You've used your Ken AI credits. Switch back to your own {name} in Settings → AI{resets}.", action
+        at = self.limit_resets(self.backend(pid)) if self.limit_resets and not on_credits else ""
+        if at and action == "retry" and "can't use that model" not in msg:
+            name = "ChatGPT" if self.backend(pid) == "codex" else "Claude"
+            msg = f"You've reached your {name} plan's limit for now. It resets at {at}."
+        if "plan's limit" in msg and included_ai_key():  # their plan has Ken AI credits: a way to keep going now
+            msg += (" Reply 'use Ken credits' to keep going now." if via == "telegram"
+                    else " To keep going now, switch to Ken AI credits in Settings → AI.")
+        return msg, action
 
     async def stop_run(self, rid: str, by: str = "") -> None:
         run = self._run_row(rid)
