@@ -97,6 +97,12 @@ def test_errors_are_explained_and_never_echo_the_key(api, tmp_path, capsys):
     assert code == 1 and "401" in err and "Brain" in err
 
 
+def test_subtitles_are_named_once_per_language():
+    assert eleven._subs(Path("v/reel.hi.mp4"), "hi", "srt") == Path("v/reel.hi.srt")
+    assert eleven._subs(Path("v/reel.mp4"), "hi", "srt") == Path("v/reel.hi.srt")
+    assert eleven._subs(Path("v/reel.dub.mp4"), "es", "vtt") == Path("v/reel.dub.es.vtt")
+
+
 def test_clone_refuses_without_own_voice_or_consent(api, tmp_path, capsys):
     fake = api({})
     sample = tmp_path / "me.mp3"
@@ -212,7 +218,8 @@ def test_dub_v1_polls_then_downloads_video_and_subtitles(api, tmp_path, capsys, 
     src.write_bytes(b"v")
     code, info, _ = run(["dub", "--in", str(src), "--to", "hi", "--out", str(tmp_path / "reel.hi.mp4")], capsys)
     assert code == 0 and info["job"] == "v1:d1" and (tmp_path / "reel.hi.mp4").read_bytes() == b"mp4bytes"
-    assert "नमस्ते" in (tmp_path / "reel.hi.hi.srt").read_text() and info["usd"] == 0.1
+    assert "नमस्ते" in (tmp_path / "reel.hi.srt").read_text() and info["usd"] == 0.1
+    assert not (tmp_path / "reel.hi.hi.srt").exists()
     create = fake.calls[0]["data"]
     assert b'name="target_lang"\r\n\r\nhi' in create and b'name="watermark"\r\n\r\nfalse' in create
 
@@ -242,7 +249,7 @@ def test_dub_v2_adds_language_downloads_signed_audio_and_remuxes(api, tmp_path, 
     src.write_bytes(b"v")
     code, info, _ = run(["dub", "--in", str(src), "--to", "es", "--out", str(tmp_path / "reel.es.mp4"), "--v2"], capsys)
     assert code == 0 and info["job"] == "v2:p1:l1" and swapped == [("reel.mp4", "reel.es.dub.flac")]
-    assert (tmp_path / "reel.es.es.vtt").read_text() == "https://signed/s.vtt" and info["usd"] == 0.44
+    assert (tmp_path / "reel.es.vtt").read_text() == "https://signed/s.vtt" and info["usd"] == 0.44
     assert b"dubbing_v2" in fake.calls[0]["data"]
 
 

@@ -25,7 +25,7 @@ Meta skips (Gujarati, Malayalam, Punjabi, Odia and more), or when they want cont
    `--url` instead of `--in` dubs a YouTube or TikTok link of their own video (add `--seconds` if you know its length).
    On Ken's account only the audio goes up, and the dubbed audio comes back over their original picture.
    It waits for the dub (a 1 minute reel takes a few minutes) and writes the dubbed video plus translated
-   subtitles (`reel.hi.hi.srt`). If it says "still working", run `dub-get <job> --to hi --out ...` later.
+   subtitles (`reel.hi.srt`). If it says "still working", run `dub-get <job> --to hi --out ...` later.
 4. Check it: `transcribe_media` on the dub, read the translation for wrong names, brand names and slang, and look
    at the length. Send it with one line on what's in it and the AI label reminder.
 

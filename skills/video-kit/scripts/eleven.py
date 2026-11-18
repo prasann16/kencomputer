@@ -515,6 +515,11 @@ def dub_status(job: str) -> dict:
     return {"job": job, "state": state, "raw": r.get("status"), "error": r.get("error")}
 
 
+def _subs(out: Path, to: str, ext: str) -> Path:
+    """reel.hi.mp4 → reel.hi.srt (not reel.hi.hi.srt); reel.mp4 → reel.hi.srt."""
+    return out.with_name(out.stem.removesuffix(f".{to}") + f".{to}.{ext}")
+
+
 def dub_get(job: str, to: str, out: Path, source: Path | None, status: dict | None = None) -> dict:
     kind, *ids = job.split(":")
     got = {"out": str(out)}
@@ -524,7 +529,7 @@ def dub_get(job: str, to: str, out: Path, source: Path | None, status: dict | No
             raise Fail("The dub isn't ready yet")
         flac = download(outputs["lossless_audio"], out.with_suffix(".dub.flac"))
         if outputs.get("subtitles"):
-            got["subtitles"] = str(download(outputs["subtitles"], out.with_suffix(f".{to}.vtt")))
+            got["subtitles"] = str(download(outputs["subtitles"], _subs(out, to, "vtt")))
         if source and is_video(source) and is_video(out):
             swap_audio(source, flac, out)
             flac.unlink()
@@ -542,7 +547,7 @@ def dub_get(job: str, to: str, out: Path, source: Path | None, status: dict | No
     try:
         srt = call("GET", f"/v1/dubbing/{ids[0]}/transcripts/{to}/format/srt")
         if srt.get("srt"):
-            sub = out.with_suffix(f".{to}.srt")
+            sub = _subs(out, to, "srt")
             sub.write_text(srt["srt"])
             got["subtitles"] = str(sub)
     except Fail:
