@@ -6,22 +6,27 @@ Only the voice of the person you're chatting with. `eleven.py check` shows `can_
 included in paid plans (not the free trial; say so plainly if it's false); on their own key it needs a paid
 ElevenLabs plan (Starter and up).
 
-1. **Consent, recorded.** Ask them to send a voice note saying, in their words: "I'm <name>, this is my own voice,
-   and I agree to Ken making a copy of it for my own videos." Save it as `voice/consent.<ext>` in your workspace.
-   Listen to it with `transcribe_media`: the name and the agreement must be there, in the same voice as the
-   samples. If it doesn't sound like the same person, or they're asking for someone else's voice, stop: no clone.
+1. **Consent, in chat.** Ask once, in your own words: "this is your own voice and you're OK with me cloning it?"
+   A yes is enough. If their ask already says it plainly ("clone my voice from this video of me"), that counts:
+   don't ask again. Keep their words for step 3.
+   **One hard rule:** never clone a voice that belongs to someone else, when they say so or you can tell (a public
+   figure, a podcast guest, a clip of another person, "my friend said it's fine", "my client"), unless that person
+   is the one saying yes to you. Refuse in one friendly line and offer a stock or designed voice instead
+   ("I can only clone your own voice, but I can find or design one that sounds close"). That no is final.
 2. **Samples.** 1 to 2 minutes of them talking naturally, alone, no music, in the language they'll use most (best:
    a clean part of their videos, or a voice note read in a quiet room). Run `eleven.py isolate` on a noisy one
-   first. Save in `voice/`.
-3. Make it:
+   first. Save in `voice/`. If a sample has another voice in it, cut that part out.
+3. Make it, with their yes in their words:
 
-       <ken> --eleven clone --name "<their name>" --sample voice/s1.mp3 --consent voice/consent.ogg --own-voice
+       <ken> --eleven clone --name "<their name>" --sample voice/s1.mp3 --said "<their yes, as they wrote it>" --own-voice
 
-   `--own-voice` is you confirming steps 1 and 2. The helper refuses without the consent file.
-4. Save the returned `voice_id` in your memory (their voice note: name, voice_id, date, consent file). Test it with
-   a 10 second TTS line and send it: "this is you, sound right?"
+   `--own-voice` is you confirming steps 1 and 2. The helper adds who, when, what they said and which files to the
+   consent record (`voice/consent.json`, next to the samples) and refuses without a yes. A voice note or written
+   consent they sent works too: `--consent voice/consent.ogg` instead of `--said`.
+4. Save the returned `voice_id` in your memory (their voice note: name, voice_id, date, the consent record). Keep it
+   for their next videos: it's theirs. Test it with a 10 second TTS line and send it: "this is you, sound right?"
 
-Delete it if they ask (in their ElevenLabs account, Voices) and remove it from memory.
+Delete it if they ask (`eleven.py voice-delete <id>`) and remove it from memory.
 
 ## Voiceover from a script
 

@@ -50,10 +50,11 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
   keys), and that it works from their next message. It's their money: before anything over about $0.50, or any
   dub, tell them the estimate in one line and wait for a yes. Prices are in `reference.md`.
 - Hooks, clips and free captions don't need ElevenLabs: do those anyway.
-- **Their own voice only.** Clone only the voice of the person you're talking to, with the recorded consent line
-  in `flows/voice.md`. On Ken's account a clone is theirs alone (nobody else can use it), they keep 3 at most
-  (`eleven.py voice-delete <id>` frees one), and the free trial has none. Never a celebrity, a friend, a client or anyone "who said it's fine": ElevenLabs only lets
-  you clone your own voice. A no here is final; offer a stock or designed voice instead.
+- **Their own voice only.** Clone only the voice of the person you're talking to, after one yes in chat
+  (`flows/voice.md`), which the helper records. On Ken's account a clone is theirs alone (nobody else can use it),
+  they keep 3 at most (`eleven.py voice-delete <id>` frees one), and the free trial has none. Never a celebrity, a
+  friend, a client or anyone "who said it's fine" unless that person says yes to you themselves: refuse in one
+  friendly line and offer a stock or designed voice instead.
 - **Label synthetic media.** A dubbed, cloned or changed voice is AI generated. When they're about to post one,
   remind them in one line to switch on the platform's AI label (India's IT Rules require it since Feb 2026; Meta,
   YouTube and TikTok all have the toggle). Don't nag about cleaned audio, music or sound effects.

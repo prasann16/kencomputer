@@ -12,7 +12,7 @@ of the allowance on Ken's); errors go to stderr.
     eleven.py voices [--search calm]                     their voices (id, name, kind)
     eleven.py estimate <feature> [file] [--chars N]      what a run would cost, before spending anything
     eleven.py tts --voice ID (--text "..." | --text-file f) --out vo.mp3 [--model eleven_multilingual_v2]
-    eleven.py clone --name "Swap" --sample a.mp3 [--sample b.mp3] --consent consent.mp3 --own-voice
+    eleven.py clone --name "Swap" --sample a.mp3 [--sample b.mp3] --said "yes it's my voice" --own-voice
     eleven.py changer --voice ID --in take.mp3 --out new.mp3
     eleven.py isolate --in noisy.mp4 --out clean.mp4     a video gets its cleaned audio put back in
     eleven.py sfx --text "door slam" [--seconds 2] --out door.mp3
@@ -427,21 +427,34 @@ def cmd_tts(a):
 
 
 def cmd_clone(a):
-    # The consent rule lives here too, not only in the skill text: no consent recording, no clone.
+    # The consent rule lives here too, not only in the skill text: their yes (said in chat, or a recording), or no clone.
     if not a.own_voice:
         raise Fail("Cloning is only for the person's own voice. Pass --own-voice once they've confirmed it's theirs.")
-    consent = need(a.consent)
+    said = (a.said or "").strip()
+    consent = need(a.consent) if a.consent else None
+    if not said and not consent:
+        raise Fail("No consent yet. Ask them once in chat: \"this is your own voice and you're OK with me cloning it?\" "
+                   "and pass their answer with --said.")
     samples = [need(s) for s in a.sample]
     total = sum(duration(s) for s in samples)
     if total < 10:
         raise Fail(f"Samples add up to {total:.0f}s; ElevenLabs needs at least 10 s (1 to 2 minutes of clean talking is best).")
-    labels = json.dumps({"consent_recording": consent.name, "made_by": "ken"})
+    how = "chat" if said else "recording"
+    note = f"chat: {said}" if said else consent.name
+    note = " ".join(note.split()).encode("ascii", "backslashreplace").decode()  # a header is ASCII, one line
+    labels = json.dumps({"consent": how, "made_by": "ken"})
     r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
                                                "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
              files=[("files", s) for s in samples],
-             headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": consent.name[:200]})
+             headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": note[:200]})
+    record = Path(a.record) if a.record else samples[0].parent / "consent.json"
+    entries = json.loads(record.read_text()) if record.exists() else []
+    entries.append({"who": a.who or a.name, "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "how": how, "said": said or None,
+                    "recording": str(consent) if consent else None, "samples": [str(s) for s in samples],
+                    "voice_id": r.get("voice_id")})
+    record.write_text(json.dumps(entries, ensure_ascii=False, indent=1))
     return done(voice_id=r.get("voice_id"), requires_verification=r.get("requires_verification"), sample_seconds=round(total, 1),
-                consent=str(consent))
+                consent=how, record=str(record))
 
 
 def cmd_changer(a):
@@ -692,7 +705,10 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--speed", type=float); s.set_defaults(fn=cmd_tts)
 
     s = sub.add_parser("clone"); s.add_argument("--name", required=True); s.add_argument("--sample", action="append", required=True)
-    s.add_argument("--consent", required=True, help="their recorded consent line")
+    s.add_argument("--said", help="their yes in chat, in their words (it's their own voice and they're OK with a clone)")
+    s.add_argument("--consent", help="or a consent recording / note file")
+    s.add_argument("--who", help="who said yes (default: --name)")
+    s.add_argument("--record", help="the consent record to add to (default: consent.json next to the first sample)")
     s.add_argument("--own-voice", action="store_true", help="they confirmed every sample is their own voice")
     s.add_argument("--description"); s.add_argument("--denoise", action="store_true"); s.set_defaults(fn=cmd_clone)
 

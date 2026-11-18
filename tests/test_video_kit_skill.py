@@ -125,31 +125,56 @@ def test_clone_refuses_without_own_voice_or_consent(api, tmp_path, capsys):
     fake = api({})
     sample = tmp_path / "me.mp3"
     sample.write_bytes(b"a")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--own-voice"], capsys)
+    assert code == 1 and "Ask them once in chat" in err and "--said" in err
     code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--consent", str(tmp_path / "consent.mp3"), "--own-voice"], capsys)
     assert code == 1 and "No file" in err
-    (tmp_path / "consent.mp3").write_bytes(b"c")
-    code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--consent", str(tmp_path / "consent.mp3")], capsys)
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(sample), "--said", "yes it's me"], capsys)
     assert code == 1 and "own voice" in err
-    assert fake.calls == []
+    assert fake.calls == [] and not (tmp_path / "consent.json").exists()
 
 
-def test_clone_uploads_every_sample_and_labels_the_consent(api, tmp_path, capsys):
+def test_clone_with_a_chat_yes_records_who_when_and_which_files(api, tmp_path, capsys):
     fake = api({("POST", "/v1/voices/add"): {"voice_id": "v123", "requires_verification": False}})
-    a, b, c = (tmp_path / n for n in ("a.mp3", "b.mp3", "consent.mp3"))
-    for f in (a, b, c):
-        f.write_bytes(b"x")
-    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--sample", str(b), "--consent", str(c), "--own-voice"], capsys)
-    assert code == 0 and info["voice_id"] == "v123"
+    a, b = tmp_path / "a.mp3", tmp_path / "b.mp3"
+    a.write_bytes(b"x"); b.write_bytes(b"x")
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--sample", str(b), "--said", "yes thats my voice go ahead",
+                         "--own-voice"], capsys)
+    assert code == 0 and info["voice_id"] == "v123" and info["consent"] == "chat"
     data = fake.calls[0]["data"]
-    assert data.count(b'name="files"') == 2 and b"consent.mp3" in data and b'name="consent' not in data
+    assert data.count(b'name="files"') == 2 and b'"consent": "chat"' in data
+    rec = json.loads((tmp_path / "consent.json").read_text())
+    assert rec[0]["who"] == "Me" and rec[0]["how"] == "chat" and rec[0]["said"] == "yes thats my voice go ahead"
+    assert rec[0]["samples"] == [str(a), str(b)] and rec[0]["voice_id"] == "v123" and rec[0]["when"].startswith("20")
+    run(["clone", "--name", "Me 2", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert len(json.loads((tmp_path / "consent.json").read_text())) == 2  # added to, never overwritten
+
+
+def test_clone_still_takes_a_consent_recording(api, tmp_path, capsys):
+    fake = api({("POST", "/v1/voices/add"): {"voice_id": "v1"}})
+    a, c = tmp_path / "a.mp3", tmp_path / "consent.ogg"
+    a.write_bytes(b"x"); c.write_bytes(b"x")
+    rec = tmp_path / "voice" / "record.json"
+    rec.parent.mkdir()
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--consent", str(c), "--own-voice", "--record", str(rec)], capsys)
+    assert code == 0 and info["consent"] == "recording" and b"consent.ogg" not in fake.calls[0]["data"]
+    assert json.loads(rec.read_text())[0]["recording"] == str(c)
+
+
+def test_clone_failure_writes_no_consent_record(api, tmp_path, capsys):
+    api({("POST", "/v1/voices/add"): 400})
+    a = tmp_path / "a.mp3"
+    a.write_bytes(b"x")
+    code, _, _ = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert code == 1 and not (tmp_path / "consent.json").exists()
 
 
 def test_clone_needs_ten_seconds_of_samples(api, tmp_path, capsys, monkeypatch):
     api({})
     monkeypatch.setattr(eleven, "duration", lambda p: 4.0)
-    a, c = tmp_path / "a.mp3", tmp_path / "c.mp3"
-    a.write_bytes(b"x"); c.write_bytes(b"x")
-    code, _, err = run(["clone", "--name", "Me", "--sample", str(a), "--consent", str(c), "--own-voice"], capsys)
+    a = tmp_path / "a.mp3"
+    a.write_bytes(b"x")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
     assert code == 1 and "10 s" in err
 
 
@@ -469,11 +494,15 @@ def test_audio_only_with_real_ffmpeg(tmp_path):
 
 def test_host_clone_sends_consent(hosted, tmp_path, capsys):
     fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, "1 voices")})
-    a, c = tmp_path / "a.mp3", tmp_path / "consent.mp3"
-    a.write_bytes(b"x"); c.write_bytes(b"c")
-    code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--consent", str(c), "--own-voice"], capsys)
+    a = tmp_path / "a.mp3"
+    a.write_bytes(b"x")
+    code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "yes, my own voice", "--own-voice"], capsys)
     h = fake.calls[0]["headers"]
-    assert code == 0 and info["voice_id"] == "v9" and h["X-ken-consent"] == "own-voice" and h["X-ken-consent-note"] == "consent.mp3"
+    assert code == 0 and info["voice_id"] == "v9" and h["X-ken-consent"] == "own-voice"
+    assert h["X-ken-consent-note"] == "chat: yes, my own voice"
+    code, _, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "हाँ, मेरी आवाज़\nok", "--own-voice"], capsys)
+    note = fake.calls[-1]["headers"]["X-ken-consent-note"]
+    assert code == 0 and note.isascii() and "\n" not in note  # a header can't carry Hindi or a new line as is
 
 
 def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(hosted, tmp_path, capsys, monkeypatch):

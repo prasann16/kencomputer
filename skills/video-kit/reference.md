@@ -26,7 +26,7 @@ Plans (monthly): Free $0 (10k credits, no cloning, dubs watermarked, no commerci
 commercial use), Creator $22 (121k, professional clone), Pro $99 (600k).
 
 Consent: ElevenLabs' use policy (https://elevenlabs.io/use-policy) forbids cloning a living person without
-explicit, informed consent, and anyone under 18. Ken goes further: their own voice only, consent recorded.
+explicit, informed consent, and anyone under 18. Ken goes further: their own voice only, their yes in chat recorded (who, when, which files).
 
 Not covered here on purpose: the official ElevenLabs MCP server (github.com/elevenlabs/elevenlabs-mcp) has the same
 voice tools but no dubbing, keeps files only under one base folder, and its README says the local server is no
