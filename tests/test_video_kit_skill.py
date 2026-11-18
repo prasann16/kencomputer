@@ -53,6 +53,7 @@ def api(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
     monkeypatch.setattr(eleven, "duration", lambda p: 12.0)
+    monkeypatch.setattr(eleven, "audio_only", lambda src: (src, False))  # the fake videos here have no real sound
 
     def install(routes):
         fake = FakeAPI(routes)
@@ -452,7 +453,7 @@ def test_host_uploads_send_their_length_and_a_video_goes_up_as_audio(hosted, tmp
     assert not sent_audio.parent.exists()  # the temporary audio is gone
 
 
-def test_audio_only_with_real_ffmpeg(hosted, tmp_path):
+def test_audio_only_with_real_ffmpeg(tmp_path):
     try:
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1", "-f", "lavfi",
                         "-i", "sine=f=220:d=1", "-shortest", str(tmp_path / "v.mp4")], check=True)
@@ -584,3 +585,12 @@ def test_a_redirect_urllib_wont_follow_is_the_route_not_being_live(hosted, monke
     monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
     code, _, err = hrun(["voice-delete", "v9"], capsys)
     assert code == 1 and "isn't switched on" in err and "(302)" not in err
+
+
+def test_a_file_ffmpeg_cant_read_is_one_line_and_leaves_nothing_behind(tmp_path, capsys):
+    if not eleven.shutil.which("ffmpeg"):
+        pytest.skip("no ffmpeg")
+    (tmp_path / "notes.mp4").write_text("not a video")
+    with pytest.raises(eleven.Fail) as e:
+        eleven.audio_only(tmp_path / "notes.mp4")
+    assert "notes.mp4" in e.value.msg and capsys.readouterr().err == ""

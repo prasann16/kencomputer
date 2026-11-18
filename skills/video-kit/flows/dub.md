@@ -23,7 +23,7 @@ Meta skips (Gujarati, Malayalam, Punjabi, Odia and more), or when they want cont
    `--to` and `--from` are language codes (`hi`, `ta`, `te`, `bn`, `mr`, `gu`, `ml`, `pa`, `es`, `pt`, `fr`, `de`,
    `ja`, `ar`...). Leave `--from` out to detect it. `--speakers 1` when it's just them talking (faster, cleaner).
    `--url` instead of `--in` dubs a YouTube or TikTok link of their own video (add `--seconds` if you know its length).
-   On Ken's account only the audio goes up, and the dubbed audio comes back over their original picture.
+   Only the audio goes up, and the dubbed audio comes back over their original picture (untouched, HDR too).
    It waits for the dub (a 1 minute reel takes a few minutes) and writes the dubbed video plus translated
    subtitles (`reel.hi.srt`). If it says "still working", run `dub-get <job> --to hi --out ...` later.
 4. Check it: `transcribe_media` on the dub, read the translation for wrong names, brand names and slang, and look

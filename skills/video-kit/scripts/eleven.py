@@ -281,16 +281,18 @@ def swap_audio(video: Path, audio: Path, out: Path) -> Path:
 
 
 def audio_only(src: Path) -> tuple[Path, bool]:
-    """On hosted Ken, a video goes up as its audio only (far smaller; the picture never leaves). Returns the file to
-    send and whether it's a temporary copy to delete."""
-    if not host() or not is_video(src) or not shutil.which("ffmpeg"):
+    """A video goes up as its audio only: far smaller and faster (a long video doesn't fill memory), the picture never
+    leaves, and the result goes back over the original picture untouched (HDR and all). Returns the file to send and
+    whether it's a temporary copy to delete."""
+    if not is_video(src) or not shutil.which("ffmpeg"):
         return src, False
     tmp = Path(tempfile.mkdtemp(prefix="ken-eleven-")) / (src.stem + ".audio.mp3")
     try:
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2", "-ar", "44100", "-c:a", "libmp3lame",
-                        "-b:a", "192k", str(tmp)], check=True)
+                        "-b:a", "192k", str(tmp)], check=True, capture_output=True)
     except (OSError, subprocess.CalledProcessError):
-        raise Fail(f"Couldn't take the audio out of {src.name} (does it have sound?)")
+        _drop(tmp, True)
+        raise Fail(f"Couldn't take the sound out of {src.name}: is it a video ffmpeg can read, with sound?")
     return tmp, True
 
 
@@ -547,7 +549,7 @@ def dub_start(a) -> str:
         need(str(src))
     if not src and not a.url:
         raise Fail("Give --in a file or --url a link")
-    # On hosted Ken a video goes up as its audio, and the dubbed audio goes back over the original picture (":a").
+    # A video goes up as its audio, and the dubbed audio goes back over the original picture (":a").
     send, tmp = audio_only(src) if src else (None, False)
     try:
         return _dub_start(a, send, send != src)
