@@ -286,7 +286,7 @@ def stage_file(path: str, tool: str, app: str = "") -> dict:
             raise McpError("the host refused") from None
     with file.open("rb") as f:  # straight to Composio's storage, not through the host
         put = urllib.request.Request(staged["upload_url"], data=f, method="PUT",
-                                     headers={**(staged.get("upload_headers") or {}), "Content-Length": str(size)})
+                                     headers={**(staged.get("upload_headers") or {}), "Content-Length": str(size), "User-Agent": "Ken"})
         with urllib.request.urlopen(put, timeout=600) as r:
             r.read()
     return staged["file"]

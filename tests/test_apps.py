@@ -304,6 +304,7 @@ def test_a_file_goes_to_composio_through_the_host_and_ken_gets_the_tool_argument
     # The file itself goes straight to Composio's storage, never through the host, with no token of ours.
     assert put["url"] == staged["upload_url"] and put["method"] == "PUT" and put["body"] == b"not really a video"
     assert put["headers"]["content-type"] == "video/mp4" and "authorization" not in put["headers"]
+    assert put["headers"]["user-agent"] == "Ken"  # Cloudflare in front of storage may refuse Python's own
     out = capsys.readouterr().out
     assert json.loads(out.splitlines()[0]) == staged["file"]
     assert "as the file argument of YOUTUBE_UPLOAD_VIDEO" in out
