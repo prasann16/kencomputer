@@ -77,6 +77,10 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--apps-file"]:  # hosted Ken: a file here, ready for an apps tool that takes one (apps.py)
+    import apps
+    raise SystemExit(apps.file_main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -229,6 +233,13 @@ HOSTED_APPS_PROMPT = (
     "exactly what you'll do and wait for a yes. Each app action counts toward their plan's monthly app actions, so "
     f"don't loop over hundreds of items without asking. `{KEN_CMD} --apps` lists each app's accounts by name with "
     "the id to pass as `account`. " + MULTI_ACCOUNT
+)
+
+
+# Ken's own Composio: a file on this computer goes to an apps tool through the host first (apps.py stage_file).
+APPS_FILES_PROMPT = (
+    f"For a post, upload or email with a picture, video or attachment, run `{KEN_CMD} --apps-file <path> <TOOL_SLUG>` "
+    "and pass what it prints as that tool's file argument."
 )
 
 
@@ -949,6 +960,8 @@ def build_system() -> str:
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
+        if apps.files_ready():
+            system += " " + APPS_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
