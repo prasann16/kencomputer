@@ -190,7 +190,11 @@ async function openFile(path) {
       if (r.ok) return showDoc({ ...found, text: await r.text() });
     }
     if (window.kenDesktop?.openFile) await window.kenDesktop.openFile(found.path);
-    else if (!found.folder) window.open(sharedUrl(found.path), '_blank', 'noopener');
+    else if (!found.folder) {  // downloaded: opened on its own a file is served sandboxed, where the browser's player can't run
+      const a = document.createElement('a');
+      a.href = sharedUrl(found.path) + '&download'; a.download = found.path.split('/').pop();
+      document.body.appendChild(a); a.click(); a.remove();
+    }
     else notify('That’s a folder on the computer Ken runs on: ' + found.path);
   } catch (e) { notify(e.message); }
 }
@@ -531,15 +535,16 @@ function Message({ m, label }) {
     <div ref=${body}>${content}</div>${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
 }
 
-// A video or picture Ken names is shown right in its message, ready to watch.
-const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i;
+// Every file Ken names is in its message with a Download button; a video, picture or audio file also plays right there.
+// (Opened on its own, a file is served sandboxed, where the browser's own player or viewer can't run.)
+const MEDIA_RE = /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp|mp3|wav|m4a|aac|flac|ogg|opus|pdf|zip|docx?|xlsx?|pptx?|csv|txt|srt|key|pages|numbers)$/i;
 function mediaIn(text) {
   const found = [], names = new Set();
   const add = (p) => { const name = p.split('/').pop(); if (MEDIA_RE.test(p) && isPath(p) && !names.has(name)) { names.add(name); found.push(p); } };
   for (const [, code] of String(text || '').matchAll(/`([^`\n]+)`/g)) add(code);
   for (const [, , target] of String(text || '').matchAll(LINK_RE)) add(target.trim());
   for (const [p] of String(text || '').replace(/`[^`\n]+`/g, '').matchAll(PATH_RE)) add(p);
-  return found.slice(0, 3);
+  return found.slice(0, 6);
 }
 function Media({ path }) {
   const [gone, setGone] = useState(false);
@@ -548,8 +553,10 @@ function Media({ path }) {
   // Saving it is one tap: the browser's own video menu has no Save in Safari, and a picture opens instead of downloading.
   return html`<div class="msg-media">${/\.(mp4|mov|webm|m4v)$/i.test(name)
     ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
-    : html`<img src=${url} alt=${name} loading="lazy" onClick=${() => openFile(path)} onError=${() => setGone(true)}/>`}
-    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download</a></div>`;
+    : isAudio(name) ? html`<audio src=${url} controls preload="metadata" onError=${() => setGone(true)}></audio>`
+    : /\.(png|jpe?g|gif|webp)$/i.test(name) ? html`<img src=${url} alt=${name} loading="lazy" onError=${() => setGone(true)}/>`
+    : ''}
+    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download${isAudio(name) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i.test(name) ? '' : ' ' + name}</a></div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
