@@ -1665,7 +1665,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
         <span class="ai-actions">${HOSTED && own[id] && inUse !== id && use(id, label)}<button class="text-action" onClick=${() => setReconnect(id)}>${own[id] ? 'Reconnect' : `Connect ${label}`}</button>${HOSTED && own[id] && html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'disconnect', backend: id } }).then((r) => { onConnected(r); toast(`${label} disconnected.`); }).catch((e) => setError(e.message))}>Disconnect</button>`}</span>
         ${own[id] && limits && html`<${PlanLimits} windows=${limits[id] || []} label=${label}/>`}</div>`);
       const usage = meta.usage || {};
-      if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use` : ''}</span>
+      if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use${setup?.providers?.claude?.credits_until ? ` until ${setup.providers.claude.credits_until}` : ''}` : ''}</span>
         <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
       return rows;
     })()}</div>

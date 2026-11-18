@@ -1394,6 +1394,19 @@ class Engine:
                     self.update_agent(pid, model=model)
             self.broadcast("chat.runtime", pid, backend=backend)
 
+    async def use_brain(self, pid: str, backend: str) -> None:
+        """set_runtime's brain switch, but also from inside a reply (Ken asked to switch AI): that reply finishes on the
+        AI it started on, and the next one opens on this one (it hears the recent conversation)."""
+        if backend == self.backend(pid):
+            return
+        if not (self.chat_busy(pid) or self.list_runs(project=pid, active=True)):
+            return await self.set_runtime(pid, backend=backend)
+        if backend not in self.brains:
+            raise ValueError("Choose Claude or Codex.")
+        self.kv_set(f"backend:{pid}", backend)
+        self.chat_tools.pop(pid, None)  # reopens once it's free
+        self.broadcast("chat.runtime", pid, backend=backend)
+
     def session_key(self, pid: str, backend=None) -> str:
         # Keep legacy Claude IDs usable; other runtimes own separate resume tokens.
         return f"session:codex:{pid}" if (backend or self.backend(pid)) == "codex" else f"session:{pid}"
@@ -1681,7 +1694,7 @@ class Engine:
         self.chats.pop(pid, None)
         quiet = isinstance(e, asyncio.TimeoutError) and not isinstance(e, NoAnswer)
         msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
-                       if quiet else self.explain(e, pid))
+                       if quiet else self.explain(e, pid, via))
         if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
             msg, action = await self._dead_claude(msg, action)
         # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
@@ -2336,6 +2349,7 @@ class Engine:
             return ""
         state = self._for_now()
         state.setdefault("from", backend)
+        state["until"] = at
         if backend == "codex":  # Ken AI credits run on Claude: this chat moves to it until then
             state["chats"] = sorted({*state.get("chats", []), pid})
             self.kv_set(f"backend:{pid}", "claude")
@@ -2347,6 +2361,13 @@ class Engine:
         name = "ChatGPT" if backend == "codex" else "Claude"
         return f"Your {name} plan hit its limit, so I switched to Ken AI credits until {at}. " + (
             "Tell me to carry on and I'll pick up where I stopped." if acted else "I'll switch back then.")
+
+    def credits_until(self) -> str:
+        """While Ken has switched to Ken AI credits by itself: when their own plan resets (Settings shows "until 22:20")."""
+        state = self._for_now()
+        if not state:
+            return ""
+        return (self.limit_resets(state["from"]) if self.limit_resets else "") or state.get("until", "")
 
     def back_from_credits(self, force: bool = False) -> str:
         """Before each reply or job: once their plan has reset (or they picked an AI themselves: `force`), back to their
@@ -2380,9 +2401,10 @@ class Engine:
             return "claude"
         return "codex" if self.usable_brains and "codex" in self.usable_brains() else ""
 
-    def explain(self, e: BaseException, pid: str) -> tuple[str, str]:
+    def explain(self, e: BaseException, pid: str, via: str | None = None) -> tuple[str, str]:
         """explain_failure, plus what Ken already knows: when their own plan is at its limit right now, that's the reason
-        (Claude's usage readings say so even when the error itself only says it failed), with when it opens again."""
+        (Claude's usage readings say so even when the error itself only says it failed), with when it opens again.
+        `via`: on Telegram there's no Settings, so the way to switch AI is a reply (bot.py answers it, no AI needed)."""
         from onboarding import included_ai_key
 
         from onboarding import included_ai_in_use
@@ -2395,14 +2417,17 @@ class Engine:
             if self._for_now() and self.back_from_credits():  # Ken's switch, and their own plan has reset meanwhile
                 return f"You've used your Ken AI credits, so I switched back to your own {name}.", "retry"
             at = self.limit_resets(own) if self.limit_resets else ""
-            return (f"You've used your Ken AI credits. Switch back to your own {name} in Settings → AI"
-                    + (f" (its limit resets at {at})." if at else ".")), action
+            resets = f" (its limit resets at {at})" if at else ""
+            if via == "telegram":
+                return f"You've used your Ken AI credits. Reply 'use my {name}' to switch back to it{resets}.", action
+            return f"You've used your Ken AI credits. Switch back to your own {name} in Settings → AI{resets}.", action
         at = self.limit_resets(self.backend(pid)) if self.limit_resets and not on_credits else ""
         if at and action == "retry" and "can't use that model" not in msg:
             name = "ChatGPT" if self.backend(pid) == "codex" else "Claude"
             msg = f"You've reached your {name} plan's limit for now. It resets at {at}."
         if "plan's limit" in msg and included_ai_key():  # their plan has Ken AI credits: a way to keep going now
-            msg += " To keep going now, switch to Ken AI credits in Settings → AI."
+            msg += (" Reply 'use Ken credits' to keep going now." if via == "telegram"
+                    else " To keep going now, switch to Ken AI credits in Settings → AI.")
         return msg, action
 
     async def stop_run(self, rid: str, by: str = "") -> None:

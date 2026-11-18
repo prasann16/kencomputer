@@ -140,6 +140,25 @@ def quiet_seconds() -> float:
     return 0.0 if OPEN_PAGES else time.monotonic() - LAST_ASKED
 
 
+async def use_ai(engine: Engine, setup, ai: str) -> dict:
+    """The AI Ken runs on: Ken AI credits ("credits"), or their own Claude ("claude") or ChatGPT ("codex"). Nothing
+    signs out. Picked in Settings → AI, or by asking Ken (`--use`, or a reply on Telegram): a reply in progress finishes
+    on the AI it started on, and the next one opens on this one."""
+    from onboarding import included_ai_key, own_claude
+    if ai not in ("credits", "claude", "codex"):
+        raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
+    if ai == "credits" and not included_ai_key():
+        raise ValueError("Ken AI credits aren't part of this plan.")
+    if ai == "claude" and not own_claude():
+        raise ValueError("Your own Claude isn't connected. Connect it in Settings → AI first.")
+    codex = getattr(setup, "providers", {}).get("codex")
+    if ai == "codex" and not (codex and codex.status().get("connected")):
+        raise ValueError("Your own ChatGPT isn't connected. Connect it in Settings → AI first.")
+    engine.back_from_credits(force=True)  # their own pick wins over Ken's switch for now
+    await engine.use_brain(HOME, "claude" if ai == "credits" else ai)  # Ken AI credits run on Claude
+    return await setup.use_credits(ai == "credits")
+
+
 class WebApp:
     def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
         self.engine = engine
@@ -263,8 +282,14 @@ class WebApp:
         await self.engine.switch(on)
         return _json({"off": self.engine.is_off()})
 
+    def _until(self, status: dict) -> dict:
+        """Ken's own switch to Ken AI credits (their plan at its limit): until when, while it lasts."""
+        if (until := self.engine.credits_until()) and isinstance(status.get("providers", {}).get("claude"), dict):
+            status["providers"]["claude"]["credits_until"] = until
+        return status
+
     async def setup_status(self, request):
-        return _json(self.setup.status() if self.setup else {
+        return _json(self._until(self.setup.status()) if self.setup else {
             "connected": True, "backend": self.engine.backend(HOME),
             "providers": {name: {"connected": True} for name in self.engine.brains},
             "phone": "done", "voice": {"state": "ready"},
@@ -293,18 +318,8 @@ class WebApp:
                 return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
             if b.get("action") == "disconnect":
                 return _json(await self.setup.disconnect(backend=b.get("backend")))
-            if b.get("action") == "use":  # Settings → AI: "credits", or their own "claude" / "codex"; nothing signs out
-                ai = str(b.get("ai", ""))
-                from onboarding import included_ai_key
-                if ai not in ("credits", "claude", "codex"):
-                    raise ValueError("Choose Claude, ChatGPT or Ken AI credits.")
-                if ai == "credits" and not included_ai_key():
-                    raise ValueError("Ken AI credits aren't part of this plan.")
-                backend = "claude" if ai == "credits" else ai  # Ken AI credits run on Claude
-                self.engine.back_from_credits(force=True)  # their own pick wins over Ken's switch for now
-                if backend != self.engine.backend(HOME):
-                    await self.engine.set_runtime(HOME, backend=backend)
-                return _json(await self.setup.use_credits(ai == "credits"))
+            if b.get("action") == "use":  # Settings → AI (or asking Ken: `--use`): "credits", "claude" or "codex"
+                return _json(self._until(await use_ai(self.engine, self.setup, str(b.get("ai", "")))))
             if b.get("code"):
                 return _json(await self.setup.submit(str(b["code"]), backend=b.get("backend")))
         except (RuntimeError, ValueError) as exc:
