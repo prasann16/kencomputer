@@ -434,7 +434,8 @@ def test_a_download_link_names_the_computer_and_a_key_for_that_one_file(monkeypa
     said = bot.download_where(out)
     m = re.fullmatch(r"Download it here: https://ken\.example/get/abc123xyz0/([0-9a-f]{24})/episode%204\.mp3", said)
     assert m and web.shared_download(tmp_path, m.group(1)) == "episode 4.mp3"
-    assert oct((tmp_path / web.DOWNLOAD_LINKS).stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":
+        assert oct((tmp_path / web.DOWNLOAD_LINKS).stat().st_mode & 0o777) == "0o600"
     # The same file named again keeps its link; another file gets its own key.
     assert bot.download_url("https://ken.example", "episode 4.mp3") == said.split(": ", 1)[1]
     assert web.share_download(tmp_path, "other.mp3") != m.group(1)
@@ -466,7 +467,7 @@ async def test_a_download_link_hands_over_exactly_its_file_as_a_download(engine,
     assert r.status == 200 and await r.read() == body
     assert r.headers["Content-Disposition"] == "attachment; filename*=UTF-8''episode%204.mp3"
     assert r.headers["X-Content-Type-Options"] == "nosniff"
-    assert not web.DOWNLOADS  # done going out
+    assert not web.DOWNLOADS  # done going out (and while it was: test_a_download_going_out_keeps_ken_busy)
     # A big file can be fetched in parts, and resumed.
     part = await client.get(f"/api/telegram-downloads/{key}", headers={"Range": "bytes=1000-1999"})
     assert part.status == 206 and await part.read() == body[1000:2000]
@@ -493,10 +494,26 @@ async def test_a_download_link_never_reaches_past_homes_files(engine, aiohttp_cl
     (engine.home / "secret.env").write_text("TOKEN=1")
     engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
     (engine.files_dir(HOME) / ".hidden").write_text("x")
-    (engine.files_dir(HOME) / "out").symlink_to(engine.home / "secret.env")
+    if sys.platform != "win32":  # making a link there needs extra rights
+        (engine.files_dir(HOME) / "out").symlink_to(engine.home / "secret.env")
     (engine.home / web.DOWNLOAD_LINKS).write_text(json.dumps({
         k * 24: {"name": n, "ts": web.time.time()} for k, n in
         (("a", "../secret.env"), ("b", "..\\secret.env"), ("c", ".hidden"), ("d", "out"), ("e", ""), ("f", "nope.mp4"))}))
     for k in "abcdef":
         r = await client.get(f"/api/telegram-downloads/{k * 24}")
         assert r.status == 404, k
+
+
+async def test_a_download_going_out_keeps_ken_busy(monkeypatch, tmp_path):
+    """A big file takes many minutes: while it goes out, Ken isn't quiet (no update restart) and tells its host it's
+    busy (bot.py keep_awake), so the computer doesn't fall asleep halfway."""
+    import web
+    seen = []
+
+    async def sending(self, request):
+        seen.append((bool(web.DOWNLOADS), web.quiet_seconds()))
+
+    monkeypatch.setattr(web.web.FileResponse, "prepare", sending)
+    (tmp_path / "a.mp3").write_bytes(b"x")
+    await web._Download(tmp_path / "a.mp3").prepare(None)
+    assert seen == [(True, 0.0)] and not web.DOWNLOADS
