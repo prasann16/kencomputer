@@ -2,6 +2,7 @@
 file instead, and Ken carries on with what was asked, answering in Telegram. The same for the shared bot and own bots
 (both reach Ken as pushed updates)."""
 import asyncio
+import json
 import os
 import re
 import sys
@@ -417,3 +418,85 @@ async def test_ken_makes_a_link_itself_when_it_needs_a_file_at_full_quality(monk
     off = subprocess.run([sys.executable, str(Path(bot.__file__)), "--upload-link"], env={**env, "KEN_KEEPALIVE_URL": ""},
                          capture_output=True, text=True, timeout=60)
     assert off.returncode == 1 and "ask them where the file is" in off.stdout
+
+
+# ------------------------------------------------- a file Ken made, too big for Telegram: a sign-in-free download link
+
+def test_a_download_link_names_the_computer_and_a_key_for_that_one_file(monkeypatch, tmp_path):
+    import bot
+    import web
+    monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    monkeypatch.setattr(bot, "INBOX_DIR", tmp_path / "inbox")
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://ken.example/box/abc/keepalive")
+    monkeypatch.setenv("AGENT37_INSTANCE_ID", "abc123xyz0")
+    out = tmp_path / "episode 4.mp3"
+    out.write_bytes(b"x" * 100)
+    said = bot.download_where(out)
+    m = re.fullmatch(r"Download it here: https://ken\.example/get/abc123xyz0/([0-9a-f]{24})/episode%204\.mp3", said)
+    assert m and web.shared_download(tmp_path, m.group(1)) == "episode 4.mp3"
+    assert oct((tmp_path / web.DOWNLOAD_LINKS).stat().st_mode & 0o777) == "0o600"
+    # The same file named again keeps its link; another file gets its own key.
+    assert bot.download_url("https://ken.example", "episode 4.mp3") == said.split(": ", 1)[1]
+    assert web.share_download(tmp_path, "other.mp3") != m.group(1)
+    # A computer without a usable name: the old link (sign in first).
+    monkeypatch.setenv("AGENT37_INSTANCE_ID", "../x")
+    assert bot.download_url("https://ken.example", "a b.mp4") == "https://ken.example/download/a%20b.mp4"
+
+
+def test_a_download_key_expires_after_a_week(monkeypatch, tmp_path):
+    import web
+    key = web.share_download(tmp_path, "reel.mp4")
+    assert web.shared_download(tmp_path, key) == "reel.mp4"
+    assert web.shared_download(tmp_path, "0" * 24) is None and web.shared_download(tmp_path, "../x") is None
+    later = web.time.time() + web.DOWNLOAD_TTL + 1
+    monkeypatch.setattr(web.time, "time", lambda: later)
+    assert web.shared_download(tmp_path, key) is None
+    assert web.share_download(tmp_path, "reel.mp4") != key  # a new link, the old one gone
+
+
+async def test_a_download_link_hands_over_exactly_its_file_as_a_download(engine, aiohttp_client):
+    import web
+    app, client = await signed_in(engine, aiohttp_client)
+    files = engine.files_dir(HOME)
+    files.mkdir(parents=True, exist_ok=True)
+    body = bytes(range(256)) * 4096  # 1 MB
+    (files / "episode 4.mp3").write_bytes(body)
+    key = web.share_download(engine.home, "episode 4.mp3")
+    r = await client.get(f"/api/telegram-downloads/{key}")
+    assert r.status == 200 and await r.read() == body
+    assert r.headers["Content-Disposition"] == "attachment; filename*=UTF-8''episode%204.mp3"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert not web.DOWNLOADS  # done going out
+    # A big file can be fetched in parts, and resumed.
+    part = await client.get(f"/api/telegram-downloads/{key}", headers={"Range": "bytes=1000-1999"})
+    assert part.status == 206 and await part.read() == body[1000:2000]
+    assert part.headers["Content-Range"] == f"bytes 1000-1999/{len(body)}"
+    assert (await client.head(f"/api/telegram-downloads/{key}")).status == 200
+    # Wrong, malformed or expired keys, and a file that's gone: the same plain answer.
+    gone = "This link has expired. Ask Ken for a new one."
+    for bad in ("0" * 24, "abc", "..%2F..%2Fsecret"):
+        r = await client.get(f"/api/telegram-downloads/{bad}")
+        assert r.status == 404 and (await r.json())["error"] == gone
+    links = json.loads((engine.home / web.DOWNLOAD_LINKS).read_text())
+    links[key]["ts"] -= web.DOWNLOAD_TTL + 1
+    (engine.home / web.DOWNLOAD_LINKS).write_text(json.dumps(links))
+    assert (await client.get(f"/api/telegram-downloads/{key}")).status == 404
+    # The site needs Ken's own token for it (the key alone, without the site, opens nothing).
+    key = web.share_download(engine.home, "episode 4.mp3")
+    client.session.cookie_jar.clear()
+    assert (await client.get(f"/api/telegram-downloads/{key}")).status == 401
+
+
+async def test_a_download_link_never_reaches_past_homes_files(engine, aiohttp_client, tmp_path):
+    import web
+    app, client = await signed_in(engine, aiohttp_client)
+    (engine.home / "secret.env").write_text("TOKEN=1")
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    (engine.files_dir(HOME) / ".hidden").write_text("x")
+    (engine.files_dir(HOME) / "out").symlink_to(engine.home / "secret.env")
+    (engine.home / web.DOWNLOAD_LINKS).write_text(json.dumps({
+        k * 24: {"name": n, "ts": web.time.time()} for k, n in
+        (("a", "../secret.env"), ("b", "..\\secret.env"), ("c", ".hidden"), ("d", "out"), ("e", ""), ("f", "nope.mp4"))}))
+    for k in "abcdef":
+        r = await client.get(f"/api/telegram-downloads/{k * 24}")
+        assert r.status == 404, k

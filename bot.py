@@ -77,7 +77,7 @@ from brains import ClaudeBrain
 from codex_brain import CodexBrain
 from engine import CREDIT_MODELS, HOME, OTHER_SKILLS, Engine, first_contact_prompt, prepare_skills
 from usage import Usage
-from web import WebApp
+from web import DOWNLOADS, WebApp, share_download
 from connections import Connections
 from onboarding import (Onboarding, CodexOnboarding, BrainOnboarding, drop_env, included_ai_in_use, included_ai_key,
                         included_ai_model, save_env, use_included_ai, voice_installed)
@@ -316,7 +316,7 @@ async def send_video(bot, chat_id: int, path: Path, quiet: bool = False) -> bool
 
 def download_where(path: Path) -> str:
     """Where a file too big for Telegram can be had. A Ken in the cloud moves it into its files and links straight to
-    it on its site (sign-in first if needed); a Ken on its own computer says where the file is."""
+    it on its site (download_url); a Ken on its own computer says where the file is."""
     site = host_site()
     if not site:
         return f"It's on this computer at {path}"
@@ -327,7 +327,17 @@ def download_where(path: Path) -> str:
         kept = INBOX_DIR / f"{path.stem}-{n}{path.suffix}"
     INBOX_DIR.mkdir(parents=True, exist_ok=True)
     shutil.move(str(path), kept)
-    return f"Download it here: {site}/download/{urllib.parse.quote(kept.name)}"
+    return f"Download it here: {download_url(site, kept.name)}"
+
+
+def download_url(site: str, name: str) -> str:
+    """The download link for a file in Home's files. With this computer's name in it, the site hands the file over
+    without a sign-in (Telegram's own browser isn't signed in): the link's key gets that one file, for a week (web.py
+    share_download). Without one, the old link, which signs in first."""
+    inst = os.environ.get("AGENT37_INSTANCE_ID", "")
+    if not inst.isalnum():
+        return f"{site}/download/{urllib.parse.quote(name)}"
+    return f"{site}/get/{inst}/{share_download(KEN_HOME, name)}/{urllib.parse.quote(name)}"
 
 
 # A path to a file on this computer, as Ken might write it in a reply (bare, in `code`, or as a markdown link target).
@@ -351,7 +361,7 @@ def _link_for(path: Path, site: str) -> str:
             os.link(path, kept)
         except OSError:
             shutil.copy2(path, kept)
-    return f"{site}/download/{urllib.parse.quote(kept.name)}"
+    return download_url(site, kept.name)
 
 
 def no_paths(text: str) -> str:
@@ -2058,7 +2068,7 @@ async def keep_awake() -> None:
     async with httpx.AsyncClient(timeout=15) as client:
         while True:
             try:
-                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active)
+                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
                 await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
