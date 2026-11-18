@@ -13,12 +13,32 @@ ElevenLabs plan (Starter and up).
    figure, a podcast guest, a clip of another person, "my friend said it's fine", "my client"), unless that person
    is the one saying yes to you. Refuse in one friendly line and offer a stock or designed voice instead
    ("I can only clone your own voice, but I can find or design one that sounds close"). That no is final.
-2. **Samples.** 1 to 2 minutes of them talking naturally, alone, no music, in the language they'll use most (best:
-   a clean part of their videos, or a voice note read in a quiet room). Run `eleven.py isolate` on a noisy one
-   first. Save in `voice/`. If a sample has another voice in it, cut that part out.
+2. **Samples: from what they already have.** Don't ask them to record anything first. Find their voice in what
+   exists: the video or audio they sent with the ask, files they sent before, their workspace, their own media
+   folders:
+
+       <ken> --eleven clone-from [file or folder ...] --out-dir voice/
+
+   With no files named it looks in what they sent Ken, Ken's workspace, then Videos, Movies, Music, Desktop,
+   Downloads. In a folder it only takes files named like their own recordings (screen recordings, voice notes,
+   phone camera names like VID_/IMG_/PXL_, date-stamped files); a file named like a download (`karpathy-talk.mp4`)
+   is someone else's, unless you name that file on its own or they say everything in the folder is them
+   (`--any-name`). It transcribes up to 5 files (the first 10 minutes of each) with speaker labels, keeps only the
+   main speaker's runs of talking (other voices, music, laughter and pauses over 0.7 s are cut out), skips
+   conversations where no voice clearly leads, joins 1 to 3 minutes into `voice/sample.mp3`, and cleans it with
+   voice isolation when the background is loud. `voice/clone-from.json` lists every file looked at, every segment
+   used and why the rest were skipped. Another file only joins the first if it's a solo recording, so two people
+   never end up in one voice.
+   - Its JSON `used` names the file(s): say it in the same reply as the test line, one line ("made it from your
+     Aug 21 screen recording, 1:40 of you talking"). If a used file has `"others": true` (other voices were cut
+     out), or you have any doubt it's them, name the file and ask "that's you talking?" before step 3.
+   - `"short": true` (30 to 60 s found) still clones, but say a 1 minute voice note would sound better.
+   - It fails when there's under 30 s of them alone: ask for a 1 minute voice note, just them talking normally in a
+     quiet room, then `clone-from <the note>`.
+   - On their own key, transcribing costs about $0.20 an hour of audio and cleaning $0.12 a minute: small, just go.
 3. Make it, with their yes in their words:
 
-       <ken> --eleven clone --name "<their name>" --sample voice/s1.mp3 --said "<their yes, as they wrote it>" --own-voice
+       <ken> --eleven clone --name "<their name>" --sample voice/sample.mp3 --said "<their yes, as they wrote it>" --own-voice
 
    `--own-voice` is you confirming steps 1 and 2. The helper adds who, when, what they said and which files to the
    consent record (`voice/consent.json`, next to the samples) and refuses without a yes. A voice note or written

@@ -13,6 +13,7 @@ of the allowance on Ken's); errors go to stderr.
     eleven.py estimate <feature> [file] [--chars N]      what a run would cost, before spending anything
     eleven.py tts --voice ID (--text "..." | --text-file f) --out vo.mp3 [--model eleven_multilingual_v2]
     eleven.py clone --name "Swap" --sample a.mp3 [--sample b.mp3] --said "yes it's my voice" --own-voice
+    eleven.py clone-from [file or folder ...] --out-dir voice/   their talking alone, found in what they already have
     eleven.py changer --voice ID --in take.mp3 --out new.mp3
     eleven.py isolate --in noisy.mp4 --out clean.mp4     a video gets its cleaned audio put back in
     eleven.py sfx --text "door slam" [--seconds 2] --out door.mp3
@@ -30,8 +31,10 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +44,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from array import array
 from pathlib import Path
 
 API = os.environ.get("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io")
@@ -463,6 +467,245 @@ def cmd_clone(a):
                 consent=how, record=str(record))
 
 
+# ---------- clone from what they already have: find their talking in existing videos and audio ----------
+
+AUDIO_EXT = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".amr", ".weba"}
+# Ken's own outputs and anything synthetic or mixed: a dub, a voiceover, music, a finished reel. Never a sample.
+NOT_A_SAMPLE = ("dub", "tts", "voiceover", "vo.", "music", "sfx", "clone", "changer", "design", "preview", "reel",
+                "sample", "consent", ".clean.", ".isolated.")
+# Names cameras, phones and recorders give their own recordings (a downloaded video is named by its title).
+RECORDING = re.compile(r"(screen ?record|recording|voice ?note|voice ?memo|^ptt|^aud[-_]|^vid[-_]|^img_|^pxl_|^mvi_|^dsc"
+                       r"|^gx\d|^gopr|^\d{8}[-_ ]\d{6}|^\d{4}-\d{2}-\d{2}[ _t]\d{2}[-.:]\d{2}|whatsapp (audio|ptt|video)|^audio[-_ ]"
+                       r"|^voice[-_ ]?(note|memo|message|record|\d)|^rec[-_ ]?\d|^new recording|^memo)", re.I)
+SCAN_SECONDS = 600     # only the first 10 minutes of a long file are listened to
+MIN_PIECE = 3.0        # a run of their talking shorter than this isn't worth a join
+MAX_GAP = 0.7          # a longer pause ends a run (the silence isn't kept)
+SOLO_SHARE = 0.9       # one voice is at least this much of the talking: a solo recording
+MAIN_SHARE = 0.6       # below this it's a conversation, and nobody can tell which voice is theirs
+
+
+def ken_home() -> Path:
+    return Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
+
+
+def default_places() -> list[Path]:
+    """Where their own recordings usually are: what they sent Ken, Ken's workspace, then this computer's own media folders."""
+    home, me = ken_home(), Path.home()
+    places = [home / "inbox", home / "work"]
+    agents = home / "agents"
+    if agents.is_dir():
+        places += sorted(a / "files" for a in agents.iterdir() if (a / "files").is_dir())
+    places += [me / n for n in ("Videos", "Movies", "Music", "Desktop", "Downloads", "Documents/Sound recordings")]
+    return [p for p in places if p.is_dir()]
+
+
+def origin(path: Path) -> str:
+    """'sent' (they gave it to Ken), 'recording' (named like their phone's or computer's own recording) or 'other'."""
+    parts = {p.lower() for p in path.parts}
+    if "inbox" in parts or ".uploads" in parts or ("agents" in parts and "files" in parts):
+        return "sent"
+    return "recording" if RECORDING.search(path.name) else "other"
+
+
+def media_files(inputs: list[Path], any_name: bool = False, limit: int = 400) -> list[Path]:
+    """Every video and audio file in the inputs (folders searched all the way down, hidden folders skipped), Ken's own
+    outputs and anything synthetic left out, same file twice counted once. Theirs first, then newest first.
+    In a folder, a file named like a download ("karpathy-software.mp4") is someone else's until they say otherwise:
+    only a file named on its own, or any_name (they said everything in that folder is them), lets one in."""
+    seen, found = set(), []
+    for root in inputs:
+        walk = [root] if root.is_file() else sorted(root.rglob("*"))
+        for f in walk:
+            if len(found) >= limit:
+                break
+            rel = f.relative_to(root).parts if f != root else (f.name,)
+            if not f.is_file() or any(p.startswith(".") and p != ".uploads" for p in rel[:-1]):
+                continue
+            ext, low = f.suffix.lower(), f.name.lower()
+            if ext not in VIDEO_EXT | AUDIO_EXT or (f != root and any(w in low for w in NOT_A_SAMPLE)):
+                continue
+            if "outbox" in {p.lower() for p in f.parts} or (f != root and not any_name and origin(f) == "other"):
+                continue
+            size = f.stat().st_size
+            if size < 50_000 or size in seen:  # under 50 KB is a few seconds at most; same size: a copy
+                continue
+            seen.add(size)
+            found.append(f)
+    rank = {"sent": 0, "recording": 1, "other": 2}
+    return sorted(found, key=lambda f: (rank[origin(f)], -f.stat().st_mtime))
+
+
+def talking(words: list[dict]) -> tuple[list[tuple[float, float, str]], dict]:
+    """The main speaker's runs of talking from Scribe's words (diarized, audio events tagged): a run ends at a pause over
+    MAX_GAP, another voice, or a sound (music, laughter, applause); runs under MIN_PIECE are dropped. Each run gets a
+    breath of room at both ends, never into someone else's word. Returns the runs and who talked how much."""
+    said = [w for w in words if w.get("type", "word") in ("word", "audio_event") and w.get("end") is not None]
+    talk: dict[str, float] = {}
+    for w in said:
+        if w.get("type", "word") == "word":
+            sp = w.get("speaker_id") or "speaker_0"
+            talk[sp] = talk.get(sp, 0) + max(0.0, w["end"] - w["start"])
+    if not talk:
+        return [], {"speakers": 0, "main_share": 0.0}
+    main = max(talk, key=talk.get)
+    share = talk[main] / sum(talk.values())
+    mine = lambda w: w.get("type", "word") == "word" and (w.get("speaker_id") or "speaker_0") == main and w["text"].strip()
+    groups, cur = [], []
+    for i, w in enumerate(said):
+        if mine(w) and cur and w["start"] - said[cur[-1]]["end"] <= MAX_GAP:
+            cur.append(i)
+            continue
+        if cur:
+            groups.append(cur)
+        cur = [i] if mine(w) else []
+    if cur:
+        groups.append(cur)
+    runs = []
+    for g in groups:
+        first, last = said[g[0]], said[g[-1]]
+        if last["end"] - first["start"] < MIN_PIECE:
+            continue
+        before = said[g[0] - 1]["end"] if g[0] > 0 else 0.0
+        after = said[g[-1] + 1]["start"] if g[-1] + 1 < len(said) else last["end"] + 1
+        start, end = max(first["start"] - 0.12, before), min(last["end"] + 0.15, after)
+        runs.append((round(start, 3), round(end, 3), " ".join(said[i]["text"].strip() for i in g)))
+    return runs, {"speakers": len(talk), "main_share": round(share, 2)}
+
+
+def _pcm(src: Path, seconds: float) -> array:
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-t", str(seconds), "-vn", "-ac", "1", "-ar", "16000",
+                          "-f", "s16le", "-"], capture_output=True, check=True).stdout
+    a = array("h")
+    a.frombytes(raw[: len(raw) // 2 * 2])
+    if sys.byteorder == "big":
+        a.byteswap()
+    return a
+
+
+def noise_gap(src: Path, runs: list[tuple[float, float, str]], seconds: float) -> float | None:
+    """How far their voice is above the background, in dB: loud talking frames against the quietest stretches.
+    Under about 25 dB the background (a fan, traffic, a room) is audible in a clone, so the sample gets cleaned."""
+    try:
+        a = _pcm(src, seconds)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    hop = 320  # 20 ms
+    db = []
+    for i in range(0, len(a) - hop, hop):
+        chunk = a[i:i + hop]
+        rms = math.sqrt(sum(x * x for x in chunk) / hop) / 32768
+        db.append(20 * math.log10(rms + 1e-5))
+    if len(db) < 50:
+        return None
+    inside = sorted(d for i, d in enumerate(db) if any(s <= i * 0.02 < e for s, e, _ in runs))
+    if not inside:
+        return None
+    voice = inside[int(len(inside) * 0.75)]  # a loud syllable, not a peak
+    room = sorted(d for d in db if d > -90) or [-90.0]  # digital silence (a muted stretch) isn't the room
+    floor = room[int(len(room) * 0.05)]  # the room between words
+    return round(voice - floor, 1)
+
+
+def join_pieces(pieces: list[tuple[Path, float, float]], out: Path) -> Path:
+    """The pieces, cut from the original files (full quality), each faded in and out over 15 ms so a join never
+    clicks, with a short breath between them, as one mono mp3."""
+    files = list(dict.fromkeys(p for p, _, _ in pieces))
+    args, chains = ["ffmpeg", "-v", "error", "-y"], []
+    for f in files:
+        args += ["-i", str(f)]
+    for n, (f, s, e) in enumerate(pieces):
+        d = e - s
+        chains.append(f"[{files.index(f)}:a:0]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:"
+                      f"channel_layouts=mono,afade=t=in:d=0.015,afade=t=out:st={max(d - 0.015, 0):.3f}:d=0.015,apad=pad_dur=0.25[p{n}]")
+    graph = ";".join(chains) + ";" + "".join(f"[p{n}]" for n in range(len(pieces))) + f"concat=n={len(pieces)}:v=0:a=1[out]"
+    args += ["-filter_complex", graph, "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", str(out)]
+    try:
+        subprocess.run(args, check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise Fail(f"Couldn't join the pieces into one sample: {(getattr(e, 'stderr', b'') or b'').decode()[-200:]}")
+    return out
+
+
+def cmd_clone_from(a):
+    """Find 1 to 3 minutes of them talking alone in what they already have, and make it one clean sample for `clone`."""
+    if not shutil.which("ffmpeg"):
+        raise Fail("ffmpeg isn't installed, so existing videos can't be searched for their voice")
+    inputs = [Path(p).expanduser() for p in a.inputs] or default_places()
+    for p in inputs:
+        if not p.exists():
+            raise Fail(f"No file or folder at {p}")
+    out_dir = Path(a.out_dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target, most = max(30.0, a.target), max(a.target, a.most)
+    files = media_files(inputs, a.any_name)
+    pieces, used, looked, heard, cost_secs = [], [], [], 0, 0.0
+    for f in files:
+        if len(looked) >= a.max_files or sum(e - s for _, s, e in pieces) >= target:
+            break
+        try:
+            secs = duration(f)
+        except Fail:
+            continue
+        if secs < 10:
+            continue
+        scan = min(secs, SCAN_SECONDS)
+        tmp = Path(tempfile.mkdtemp(prefix="ken-eleven-")) / (f.stem + ".scan.mp3")
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(f), "-t", str(scan), "-vn", "-ac", "1", "-ar", "22050",
+                            "-c:a", "libmp3lame", "-b:a", "64k", str(tmp)], check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            _drop(tmp, True)
+            continue  # no sound track, or not a file ffmpeg can read
+        try:
+            r = call("POST", "/v1/speech-to-text", fields={"model_id": "scribe_v2", "timestamps_granularity": "word",
+                                                            "diarize": "true", "tag_audio_events": "true"},
+                     files=[("file", tmp)], timeout=300, seconds=scan)  # 10 minutes of audio: a hung call ends
+        finally:
+            _drop(tmp, True)
+        cost_secs += scan
+        runs, who = talking(r.get("words", []))
+        mine = sum(e - s for s, e, _ in runs)
+        note = {"file": str(f), "origin": origin(f), "seconds_looked": round(scan, 1), **who, "talking": round(mine, 1)}
+        looked.append(note)
+        # A conversation: nobody can tell which voice is theirs. After the first file, only solo recordings join it, so
+        # two files never put two different people into one voice.
+        if mine < MIN_PIECE or who["main_share"] < MAIN_SHARE or (pieces and who["main_share"] < SOLO_SHARE):
+            note["skipped"] = "conversation" if who["main_share"] < MAIN_SHARE or pieces else "too little talking"
+            continue
+        gap = noise_gap(f, runs, scan)
+        take, have = [], sum(e - s for _, s, e in pieces)
+        for s, e, text in runs:
+            if have >= most:
+                break
+            e = min(e, s + most - have)
+            take.append((s, e, text))
+            have += e - s
+        pieces += [(f, s, e) for s, e, _ in take]
+        note.update(used_seconds=round(sum(e - s for s, e, _ in take), 1), noise_gap_db=gap,
+                    others=who["speakers"] > 1, segments=[[s, e, t[:80]] for s, e, t in take])
+        used.append(note)
+    total = sum(e - s for _, s, e in pieces)
+    record = out_dir / "clone-from.json"
+    if total < 30:
+        record.write_text(json.dumps({"looked": looked, "seconds_found": round(total, 1)}, ensure_ascii=False, indent=1))
+        raise Fail(f"Found only {total:.0f} s of them talking alone in {len(looked)} file(s) (of {len(files)} searched); "
+                   "a clone needs a minute. Ask them for a 1 minute voice note: just them, talking normally, a quiet room.")
+    raw = join_pieces(pieces, out_dir / "sample.raw.mp3")
+    noisy = a.clean == "always" or (a.clean == "auto" and any((u.get("noise_gap_db") or 99) < 25 for u in used))
+    sample = out_dir / "sample.mp3"
+    if noisy:
+        sample.write_bytes(call("POST", "/v1/audio-isolation", files=[("audio", raw)], raw=True, seconds=duration(raw)))
+    else:
+        shutil.copyfile(raw, sample)
+    record.write_text(json.dumps({"sample": str(sample), "seconds": round(total, 1), "cleaned": noisy, "used": used,
+                                  "looked": looked}, ensure_ascii=False, indent=1))
+    usd = cost("captions", seconds=cost_secs) + (cost("isolate", seconds=duration(raw)) if noisy else 0)
+    return done(sample=str(sample), seconds=round(total, 1), cleaned=noisy, record=str(record),
+                used=[{"file": u["file"], "seconds": u["used_seconds"], "origin": u["origin"], "others": u["others"]}
+                      for u in used],
+                short=total < 60, usd=round(usd, 4))
+
+
 def cmd_changer(a):
     src = need(a.inp)
     if duration(src) > 300:
@@ -771,6 +1014,14 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--record", help="the consent record to add to (default: consent.json next to the first sample)")
     s.add_argument("--own-voice", action="store_true", help="they confirmed every sample is their own voice")
     s.add_argument("--description"); s.add_argument("--denoise", action="store_true"); s.set_defaults(fn=cmd_clone)
+
+    s = sub.add_parser("clone-from", help="find 1 to 3 minutes of them talking alone in existing videos/audio, as one sample")
+    s.add_argument("inputs", nargs="*", help="files or folders (default: what they sent Ken, Ken's workspace, Videos, Music...)")
+    s.add_argument("--out-dir", default="voice"); s.add_argument("--target", type=float, default=120, help="seconds to aim for")
+    s.add_argument("--most", type=float, default=180, help="seconds at most"); s.add_argument("--max-files", type=int, default=5)
+    s.add_argument("--clean", choices=("auto", "always", "never"), default="auto", help="voice isolation on the sample")
+    s.add_argument("--any-name", action="store_true", help="every file in the folders is them (not just ones named like a recording)")
+    s.set_defaults(fn=cmd_clone_from)
 
     s = sub.add_parser("changer"); s.add_argument("--voice", required=True); s.add_argument("--in", dest="inp", required=True)
     s.add_argument("--out", required=True); s.add_argument("--model", default="eleven_multilingual_sts_v2")

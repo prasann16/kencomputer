@@ -56,6 +56,9 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
   they keep 3 at most (`eleven.py voice-delete <id>` frees one), and the free trial has none. Never a celebrity, a
   friend, a client or anyone "who said it's fine" unless that person says yes to you themselves: refuse in one
   friendly line and offer a stock or designed voice instead.
+- **Clone from what they have.** A clone never needs a new recording first: `eleven.py clone-from` finds a minute
+  or more of them talking alone in their existing videos and audio. Only when there isn't enough, ask for a
+  1 minute voice note.
 - **Label synthetic media.** A dubbed, cloned or changed voice is AI generated. When they're about to post one,
   remind them in one line to switch on the platform's AI label (India's IT Rules require it since Feb 2026; Meta,
   YouTube and TikTok all have the toggle). Don't nag about cleaned audio, music or sound effects.

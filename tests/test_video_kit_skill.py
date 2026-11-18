@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -730,3 +731,117 @@ def test_a_key_without_the_clone_permission_says_its_a_setting_not_the_plan(api,
     code, _, err = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
     assert code == 1 and "create_instant_voice_clone" in err and "not their plan" in err and "paid plan" not in err
     assert not (tmp_path / "consent.json").exists()
+
+
+# ---------- clone-from: their talking, found in what they already have ----------
+
+REAL_DURATION = eleven.duration
+
+
+def w(text, start, end, speaker="speaker_0", kind="word"):
+    return {"text": text, "start": start, "end": end, "speaker_id": speaker, "type": kind}
+
+
+def test_talking_keeps_only_the_main_voice_and_breaks_at_others_sounds_and_pauses():
+    words = [w("hi", 0.5, 0.8), w(" ", 0.8, 0.9, kind="spacing"), w("there", 0.9, 1.2), w("so", 1.3, 4.0), w("yes", 4.1, 4.5),
+             w("mm", 4.6, 6.0, "speaker_1"),         # another voice ends a run
+             w("ok", 6.2, 7.0),                       # under 3 s alone: dropped
+             w("(music)", 7.0, 9.0, kind="audio_event"),
+             w("then", 9.1, 13.0), w("later", 14.0, 17.5)]  # a 1 s pause splits these two
+    runs, who = eleven.talking(words)
+    assert [(r[0], r[1]) for r in runs] == [(0.38, 4.6), (9.0, 13.15), (13.88, 17.65)]
+    assert runs[0][2] == "hi there so yes" and who == {"speakers": 2, "main_share": 0.89}
+
+
+def test_talking_with_nobody_talking():
+    assert eleven.talking([w("(music)", 0, 5, kind="audio_event")]) == ([], {"speakers": 0, "main_share": 0.0})
+
+
+def test_media_files_finds_theirs_and_leaves_out_downloads_outputs_and_copies(tmp_path, monkeypatch):
+    big = b"x" * 60_000
+    files = {"inbox/voice_note.ogg": big + b"1", "Videos/screenrecording-2026-11-10_10-13-05.mp4": big + b"22",
+             "Videos/karpathy-software.mp4": big + b"333", "Videos/reel.mp4": big + b"4444",
+             "Videos/talk.hi.dub.mp4": big + b"5", "Videos/.cache/VID_1.mp4": big + b"6", "outbox/VID_2.mp4": big + b"7",
+             "Videos/VID_20261101_101010.mp4": big + b"1",  # same size as the voice note: a copy
+             "Videos/IMG_1.jpg": big, "Videos/AUD-tiny.mp3": b"x"}
+    for name, data in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(data)
+    found = [str(f.relative_to(tmp_path)) for f in eleven.media_files([tmp_path / "inbox", tmp_path / "Videos", tmp_path / "outbox"])]
+    assert found == ["inbox/voice_note.ogg", "Videos/screenrecording-2026-11-10_10-13-05.mp4"]
+    # Named on its own, or "everything in there is me": a download-looking name is let in.
+    assert eleven.media_files([tmp_path / "Videos/karpathy-software.mp4"]) == [tmp_path / "Videos/karpathy-software.mp4"]
+    assert tmp_path / "Videos/karpathy-software.mp4" in eleven.media_files([tmp_path / "Videos"], any_name=True)
+
+
+def _tone(path, secs, freq=220):
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=f={freq}:d={secs}", "-ac", "1", str(path)],
+                       check=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no ffmpeg")
+
+
+def _scribe(*answers):
+    """One Scribe answer per file sent, in order."""
+    left = list(answers)
+    return lambda n: {"words": left.pop(0)}
+
+
+def solo(start, end, speaker="speaker_0"):
+    return [w(f"w{i}", t, t + 0.9, speaker) for i, t in enumerate(range(int(start), int(end)))]
+
+
+def test_clone_from_builds_one_sample_from_their_solo_talking(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "duration", REAL_DURATION)
+    monkeypatch.setattr(eleven, "noise_gap", lambda *a: 40.0)  # a quiet room: no cleaning
+    a, b, c = tmp_path / "voice_note_1.mp3", tmp_path / "AUD-2.mp3", tmp_path / "AUD-3.mp3"
+    _tone(a, 50); _tone(b, 30, 330); _tone(c, 60, 440)
+    for f, t in ((a, 3e9), (b, 2e9), (c, 1e9)):
+        os.utime(f, (t, t))  # newest first: a, b, c
+    fake = api({("POST", "/v1/speech-to-text"): _scribe(
+        solo(0, 45),                                   # a: 45 s of them alone
+        solo(0, 15) + solo(15, 30, "speaker_1"),       # b: a conversation after the first file: skipped
+        solo(0, 55))})                                 # c: solo again: joins
+    code, info, _ = run(["clone-from", str(tmp_path), "--out-dir", str(tmp_path / "voice"), "--target", "90"], capsys)
+    assert code == 0 and not info["cleaned"] and not info["short"]
+    assert [Path(u["file"]).name for u in info["used"]] == ["voice_note_1.mp3", "AUD-3.mp3"]
+    assert 90 <= info["seconds"] <= 101 and 85 < REAL_DURATION(Path(info["sample"])) < 130
+    sent = [c for c in fake.calls if c["path"].startswith("/v1/speech-to-text")]
+    assert len(sent) == 3 and all(b'name="diarize"\r\n\r\ntrue' in c["data"] and b'tag_audio_events"\r\n\r\ntrue' in c["data"] for c in sent)
+    record = json.loads(Path(info["record"]).read_text())
+    assert record["used"][0]["segments"][0][:2] == [0.0, 45.05]  # one run: first word to last, plus a breath
+    assert [l.get("skipped") for l in record["looked"]] == [None, "conversation", None]
+
+
+def test_clone_from_cleans_a_noisy_sample(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "duration", REAL_DURATION)
+    monkeypatch.setattr(eleven, "noise_gap", lambda *a: 15.0)  # a fan under the voice
+    src = tmp_path / "voice_note.mp3"
+    _tone(src, 70)
+    clean = (tmp_path / "clean.mp3")
+    _tone(clean, 60, 500)
+    fake = api({("POST", "/v1/speech-to-text"): {"words": solo(0, 65)},
+                ("POST", "/v1/audio-isolation"): clean.read_bytes()})
+    code, info, _ = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice")], capsys)
+    assert code == 0 and info["cleaned"] and any(c["path"] == "/v1/audio-isolation" for c in fake.calls)
+    assert Path(info["sample"]).read_bytes() == clean.read_bytes() and (tmp_path / "voice" / "sample.raw.mp3").exists()
+
+
+def test_clone_from_with_too_little_asks_for_a_voice_note(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "duration", REAL_DURATION)
+    src = tmp_path / "VID_1.mp4"
+    _tone(src, 20)
+    api({("POST", "/v1/speech-to-text"): {"words": solo(0, 8) + solo(8, 18, "speaker_1")}})
+    code, _, err = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice")], capsys)
+    assert code == 1 and "1 minute voice note" in err
+    assert json.loads((tmp_path / "voice" / "clone-from.json").read_text())["looked"][0]["skipped"] == "conversation"
+
+
+def test_clone_from_never_sends_a_file_with_no_sound(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "duration", lambda p: 30.0)
+    src = tmp_path / "VID_silent.mp4"
+    src.write_bytes(b"not a video" * 10_000)
+    fake = api({})
+    code, _, err = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice")], capsys)
+    assert code == 1 and "voice note" in err and fake.calls == []

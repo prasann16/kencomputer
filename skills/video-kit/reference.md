@@ -14,6 +14,7 @@ Sources: https://elevenlabs.io/pricing/api , https://elevenlabs.io/pricing , htt
 | Dubbing v2 | `dub --v2` | `POST /v1/dubbing/project` | $2.20/min per language | same; signed output links last 1 hour |
 | Text to speech | `tts` | `POST /v1/text-to-speech/{voice}` | $0.08 / 1k chars ($0.04 Flash) | 10k chars a call (v3: 5k, Flash: 40k) |
 | Instant voice clone | `clone` | `POST /v1/voices/add` | included in Starter+ | ≥10 s total, 1–2 min best; slots: Starter 10, Creator 30 |
+| Clone sample from existing media | `clone-from` | speech to text (diarized) + isolator when noisy | ~$0.03 for 5 files + up to $0.36 cleaning | up to 5 files, first 10 min each; 30 s to 3 min out |
 | Voice changer | `changer` | `POST /v1/voice-changer/{voice}` | $0.12/min | 5 min a file |
 | Voice isolator | `isolate` | `POST /v1/audio-isolation` | $0.12/min | 500 MB, 1 hour |
 | Sound effects | `sfx` | `POST /v1/sound-generation` | $0.12/min | 0.5–30 s |
