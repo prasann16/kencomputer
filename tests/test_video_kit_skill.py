@@ -660,3 +660,59 @@ def test_an_upload_isnt_sent_twice_when_the_route_isnt_live(hosted, monkeypatch,
         eleven.HOST_NOT_LIVE.clear()
     assert code == 0 and info["account"] == "own"
     assert [(m, path) for m, path, _ in sent] == [("GET", "box/eleven/quota"), ("POST", "v1/audio-isolation")]
+
+
+# ---------- over: a new voiceover under their footage (script in my style), ffmpeg only
+
+def _media(tmp_path, name, args):
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", *args, str(tmp_path / name)], check=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no ffmpeg")
+    return tmp_path / name
+
+
+def _probe(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name",
+                          "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+
+def test_over_loops_one_clip_under_a_longer_voiceover_without_re_encoding(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    clip = _media(tmp_path, "broll.mp4", ["-f", "lavfi", "-i", "color=c=red:s=64x64:d=2", "-f", "lavfi", "-i", "sine=f=300:d=2",
+                                          "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    vo = _media(tmp_path, "vo.mp3", ["-f", "lavfi", "-i", "sine=f=500:d=5"])
+    code, info, _ = run(["over", "--video", str(clip), "--audio", str(vo), "--out", str(tmp_path / "source.mp4")], capsys)
+    p = _probe(tmp_path / "source.mp4")
+    assert code == 0 and info["seconds"] == 5.0 and 4.9 < float(p["format"]["duration"]) < 5.3
+    assert sorted(s["codec_type"] for s in p["streams"]) == ["audio", "video"]
+
+
+def test_over_joins_several_clips_and_keeps_the_voice_length(tmp_path, capsys):
+    a = _media(tmp_path, "a.mp4", ["-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    b = _media(tmp_path, "b.mp4", ["-f", "lavfi", "-i", "color=c=blue:s=128x72:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    vo = _media(tmp_path, "vo.mp3", ["-f", "lavfi", "-i", "sine=f=500:d=3"])
+    code, _, _ = run(["over", "--video", str(a), "--video", str(b), "--audio", str(vo), "--out", str(tmp_path / "s.mp4")], capsys)
+    assert code == 0 and 2.9 < float(_probe(tmp_path / "s.mp4")["format"]["duration"]) < 3.2
+
+
+def test_over_refuses_mixed_hdr_clips_and_a_bed_with_several_clips(tmp_path, capsys, monkeypatch):
+    a, b, vo = tmp_path / "a.mp4", tmp_path / "b.mp4", tmp_path / "vo.mp3"
+    for f in (a, b, vo):
+        f.write_bytes(b"x")
+    monkeypatch.setattr(eleven, "duration", lambda p: 3.0)
+    monkeypatch.setattr(eleven, "_hdr", lambda p: p.name == "b.mp4")
+    code, _, err = run(["over", "--video", str(a), "--video", str(b), "--audio", str(vo), "--out", str(tmp_path / "o.mp4")], capsys)
+    assert code == 1 and "HDR" in err
+    monkeypatch.setattr(eleven, "_hdr", lambda p: False)
+    code, _, err = run(["over", "--video", str(a), "--video", str(b), "--audio", str(vo), "--out", str(tmp_path / "o.mp4"),
+                        "--bed", "0.1"], capsys)
+    assert code == 1 and "--bed" in err
+
+
+def test_every_flow_in_the_skill_table_exists():
+    kit = SCRIPT.parent.parent
+    import re
+    flows = set(re.findall(r"`(flows/[a-z-]+\.md)`", (kit / "SKILL.md").read_text()))
+    assert "flows/script-in-my-style.md" in flows and all((kit / f).exists() for f in flows)

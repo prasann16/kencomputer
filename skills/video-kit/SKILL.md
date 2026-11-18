@@ -1,6 +1,6 @@
 ---
 name: video-kit
-description: Voice, audio and language tools for their videos, using ElevenLabs (Ken's own account on hosted Ken, their key elsewhere) plus ffmpeg. Dub a video into another language in the same voice, clone their own voice, voiceovers from a script, fix a wrong word without reshooting, change a voice, clean noisy audio, sound effects, background music, a new designed voice, captions/subtitles (SRT) in any language including Hinglish, find and write hooks, and cut a long video into short clips. Use when they ask to dub, translate, clone my voice, voiceover, read this in my voice, fix a word, clean/denoise the audio, remove background noise, add a sound effect, make music, add captions or subtitles, find hooks, or clip a podcast. For a full edited reel with graphics, the video skill does the edit and this kit adds the voice and sound.
+description: Voice, audio and language tools for their videos, using ElevenLabs (Ken's own account on hosted Ken, their key elsewhere) plus ffmpeg. Dub a video into another language in the same voice, clone their own voice, write a new script in their own style and voice it (other languages too), voiceovers from a script, fix a wrong word without reshooting, change a voice, clean noisy audio, sound effects, background music, a new designed voice, captions/subtitles (SRT) in any language including Hinglish, find and write hooks, and cut a long video into short clips. Use when they ask to dub, translate, clone my voice, a script in my style, voiceover, read this in my voice, fix a word, clean/denoise the audio, remove background noise, add a sound effect, make music, add captions or subtitles, find hooks, or clip a podcast. For a full edited reel with graphics, the video skill does the edit and this kit adds the voice and sound.
 ---
 
 # Video kit
@@ -22,6 +22,7 @@ Read only the file the ask needs.
 | They say something like | Flow |
 |---|---|
 | "dub this in Hindi", "make a Tamil version", "translate my reel", "same video in Spanish" | `flows/dub.md` |
+| "write me a script in my style", "a new video like my usual ones", "say this in my voice in Hindi and Spanish" | `flows/script-in-my-style.md` |
 | "clone my voice", "read this in my voice", "voiceover for this", "I said the wrong price, fix it", "make it sound like a different voice", "make me a narrator voice" | `flows/voice.md` |
 | "clean the audio", "remove the fan noise", "add a whoosh", "background music", "a sound for the transition" | `flows/sound.md` |
 | "add captions", "subtitles", "SRT", "Hinglish captions", "captions in Hindi" | `flows/captions.md` |

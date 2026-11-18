@@ -23,6 +23,7 @@ of the allowance on Ken's); errors go to stderr.
     eleven.py dub --in reel.mp4 --to hi [--from en] --out reel.hi.mp4 [--v2] [--speakers 1]
     eleven.py dub-start / dub-status ID / dub-get ID --to hi --out f    the same, in steps (a long video)
     eleven.py voice-delete ID                            delete a voice they made (frees a slot)
+    eleven.py over --video broll.mp4 [--video b2.mp4] --audio vo.mp3 --out source.mp4 [--bed 0.1]   voiceover under footage
 """
 from __future__ import annotations
 
@@ -685,6 +686,60 @@ def cmd_dub_get(a):
     return done(**dub_get(a.job, a.to, Path(a.out), Path(a.source) if a.source else None))
 
 
+def _hdr(path: Path) -> bool:
+    try:
+        tr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
+                             "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return False
+    return tr in ("smpte2084", "arib-std-b67")
+
+
+def cmd_over(a):
+    """A new voiceover under their footage: the picture runs (and loops, clip after clip) for as long as the voice
+    does, their old sound goes (or stays quietly under with --bed). The result is a normal talking video, so the
+    video skill's cut, captions and render take it like any other."""
+    if not shutil.which("ffmpeg"):
+        raise Fail("ffmpeg isn't installed, so the voiceover can't go under the footage")
+    clips, audio, out = [need(v) for v in a.video], need(a.audio), Path(a.out)
+    secs = duration(audio)
+    if len(clips) > 1 and any(_hdr(c) for c in clips):
+        raise Fail("Some of these clips are HDR (phone footage). Put the voiceover under one clip at a time, "
+                   "or cut them into one video first with the video skill, so the colours stay right.")
+    if a.bed and len(clips) > 1:
+        raise Fail("--bed keeps one clip's own sound under the voice; with several clips, leave it out.")
+    ff = ["ffmpeg", "-v", "error", "-y"]
+    if len(clips) == 1:  # one clip: the picture copied untouched (HDR too), looped if the voice is longer
+        ff += ["-stream_loop", "-1", "-ss", str(a.start or 0), "-i", str(clips[0])]
+        vmap, vcodec = "0:v:0", ["-c:v", "copy"]
+    else:  # several: each fitted to the first one's frame, one after another, round again if the voice is longer
+        w, h = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                               "-of", "csv=p=0", str(clips[0])], capture_output=True, text=True).stdout.strip().split(",")[:2]
+        order, total = [], 0.0
+        while total < secs:
+            for c in clips:
+                order.append(c); total += duration(c)
+        for c in order:
+            ff += ["-i", str(c)]
+        fit = "".join(f"[{i}:v:0]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30,setsar=1,format=yuv420p[v{i}];"
+                      for i in range(len(order)))
+        fit += "".join(f"[v{i}]" for i in range(len(order))) + f"concat=n={len(order)}:v=1:a=0[v]"
+        ff += ["-filter_complex", fit]
+        vmap, vcodec = "[v]", ["-c:v", "libx264", "-crf", "18", "-preset", "veryfast"]
+    n = ff.count("-i")  # the voiceover's input number
+    ff += ["-i", str(audio)]
+    amap = f"{n}:a:0"
+    if a.bed:
+        ff += ["-filter_complex", f"[0:a:0]volume={a.bed}[b];[{n}:a:0][b]amix=inputs=2:duration=first:normalize=0[a]"]
+        amap = "[a]"
+    ff += ["-map", vmap, "-map", amap, *vcodec, "-c:a", "aac", "-b:a", "192k", "-t", f"{secs:.3f}", str(out)]
+    try:
+        subprocess.run(ff, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise Fail(f"Couldn't put the voiceover under the footage: {e.stderr.decode(errors='replace').strip().splitlines()[-1:]}")
+    return done(out=str(out), seconds=round(secs, 1), clips=len(clips))
+
+
 def cmd_voice_delete(a):
     call("DELETE", f"/v1/voices/{a.id}")
     return done(deleted=a.id)
@@ -749,6 +804,11 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dub-get"); s.add_argument("job"); s.add_argument("--to", required=True); s.add_argument("--out", required=True)
     s.add_argument("--source", help="the original video (v2 dubs, and v1 dubs made on Ken's account)"); s.set_defaults(fn=cmd_dub_get)
     s = sub.add_parser("voice-delete"); s.add_argument("id"); s.set_defaults(fn=cmd_voice_delete)
+    s = sub.add_parser("over", help="a voiceover under their footage (no ElevenLabs call)")
+    s.add_argument("--video", action="append", required=True); s.add_argument("--audio", required=True)
+    s.add_argument("--out", required=True); s.add_argument("--start", type=float, help="seconds into a single clip")
+    s.add_argument("--bed", type=float, help="keep the footage's own sound under the voice at this volume (0.1 = quiet)")
+    s.set_defaults(fn=cmd_over)
     return p
 
 
