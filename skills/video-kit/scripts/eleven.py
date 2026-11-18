@@ -349,6 +349,7 @@ def _ts(t: float) -> str:
 def words_to_srt(words: list[dict], max_chars: int = 32, max_secs: float = 2.5, speakers: bool = False) -> str:
     """Short caption lines for reels: a cue ends at a sentence end, a long pause, max_chars or max_secs."""
     cues, cur = [], []
+    speakers = speakers and len({w.get("speaker_id") for w in words if w.get("type", "word") == "word"}) > 1
 
     def flush():
         if cur:
@@ -520,8 +521,15 @@ def cmd_captions(a):
     return done(out=str(out), words=str(words_json), language=r.get("language_code"), usd=cost("captions", seconds=secs))
 
 
+def _described(text: str) -> str:
+    if len(text.strip()) < 20:
+        raise Fail("Describe the voice in at least 20 characters (who, age, accent, pace, mood), like "
+                   "\"warm, calm Indian woman in her 30s, slow documentary narrator\".")
+    return text
+
+
 def cmd_design(a):
-    body = {"voice_description": a.describe, "model_id": a.model}
+    body = {"voice_description": _described(a.describe), "model_id": a.model}
     body.update({"text": a.text} if a.text else {"auto_generate_text": True})
     r = call("POST", "/v1/text-to-voice/design", json_body=body)
     d = Path(a.out_dir)
@@ -535,7 +543,7 @@ def cmd_design(a):
 
 
 def cmd_design_save(a):
-    r = call("POST", "/v1/text-to-voice", json_body={"voice_name": a.name, "voice_description": a.describe,
+    r = call("POST", "/v1/text-to-voice", json_body={"voice_name": a.name, "voice_description": _described(a.describe),
                                                     "generated_voice_id": a.id})
     return done(voice_id=r.get("voice_id"), name=r.get("name"))
 

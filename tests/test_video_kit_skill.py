@@ -282,7 +282,7 @@ def test_design_saves_previews(api, tmp_path, capsys):
     api({("POST", "/v1/text-to-voice/design"): {"text": "hi", "previews": [
         {"audio_base_64": base64.b64encode(b"p1").decode(), "generated_voice_id": "g1"},
         {"audio_base_64": base64.b64encode(b"p2").decode(), "generated_voice_id": "g2"}]}})
-    code, info, _ = run(["design", "--describe", "calm narrator", "--out-dir", str(tmp_path / "pv")], capsys)
+    code, info, _ = run(["design", "--describe", "calm narrator, slow and warm", "--out-dir", str(tmp_path / "pv")], capsys)
     assert code == 0 and [p["generated_voice_id"] for p in info["previews"]] == ["g1", "g2"]
     assert (tmp_path / "pv" / "preview-2.mp3").read_bytes() == b"p2"
 
@@ -594,3 +594,17 @@ def test_a_file_ffmpeg_cant_read_is_one_line_and_leaves_nothing_behind(tmp_path,
     with pytest.raises(eleven.Fail) as e:
         eleven.audio_only(tmp_path / "notes.mp4")
     assert "notes.mp4" in e.value.msg and capsys.readouterr().err == ""
+
+
+def test_one_speaker_gets_no_speaker_labels_two_do():
+    one = [dict(w, speaker_id="speaker_0") for w in WORDS]
+    assert "[speaker_0]" not in eleven.words_to_srt(one, speakers=True)
+    two = one[:3] + [dict(w, speaker_id="speaker_1") for w in one[3:]]
+    srt = eleven.words_to_srt(two, speakers=True)
+    assert "[speaker_0] Hello everyone." in srt and "[speaker_1] This is Ken" in srt
+
+
+def test_a_voice_description_under_20_characters_is_caught_before_the_call(api, tmp_path, capsys):
+    fake = api({})
+    code, _, err = run(["design-save", "--id", "g1", "--name", "N", "--describe", "test"], capsys)
+    assert code == 1 and "20 characters" in err and fake.calls == []
