@@ -6,7 +6,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, join, normalize } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 
 export const FPS = 30;
 export const W = 1080, H = 1920;
@@ -25,7 +25,10 @@ export const codeHash = (src = "src") => hash(contents(codeFiles(src)));
 // src/graphics holds the graphics (Ken's own among them); everything else, and layout.tsx (the captions use it), is
 // what every layer runs.
 const graphicsDir = (src) => join(src, "graphics");
-const isGraphic = (src, f) => f.startsWith(graphicsDir(src) + "/") && !f.endsWith("/layout.tsx");
+const isGraphic = (src, f) => {
+  const rel = relative(graphicsDir(src), f).split(sep).join("/"); // the same on Windows
+  return !rel.startsWith("..") && !isAbsolute(rel) && rel !== "layout.tsx";
+};
 export const baseHash = (src = "src") => hash(contents(codeFiles(src).filter((f) => !isGraphic(src, f))));
 
 const IMPORT = /(?:import|export)[^"']*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*["'](\.{1,2}\/[^"']+)["']/g;
@@ -165,8 +168,9 @@ const ENCODE = ["-c:v", "libx264", "-crf", "19", "-maxrate", "5500k", "-bufsize"
 // Each piece of frames [a, b): its caption looks (runs of {name, frames}, "blank" for none), the graphics clips on it
 // ({clip, at}: at is where the clip starts, in frames from the piece's start), its motion, and its name.
 // `looks` is per frame null or {key}; `clips` are {a, b, key, file}.
-export function planPieces({ work, props, graphics, looks, clips, total, footageHash, dir, piece = PIECE }) {
-  const edges = pieceEdges(total, props, piece);
+// Footage that isn't 30 frames a second from zero (a video Ken made another way) is done in one piece, as before.
+export function planPieces({ work, props, graphics, looks, clips, total, footageHash, dir, piece = PIECE, steady = true }) {
+  const edges = steady ? pieceEdges(total, props, piece) : [0, total];
   const pieces = [];
   for (let i = 0; i + 1 < edges.length; i++) {
     const a = edges[i], b = edges[i + 1];
@@ -191,6 +195,13 @@ const seek = (frame) => (frame > 0 ? ["-ss", ((frame - 0.5) / FPS).toFixed(6)] :
 
 // Encodes pieces, a few at a time (ffmpeg's filters mostly use one core each): the footage with its motion, the
 // graphics, the captions and the grain, in the piece's own time. Past the end of the footage its last frame holds.
+// Whether a piece can start anywhere in this footage: a frame every 1/30 s from zero, as a cut makes it.
+export function steadyFootage(video) {
+  const info = probeJson(video, "stream=codec_type,r_frame_rate,avg_frame_rate,start_time,nb_frames,duration").streams.find((x) => x.codec_type === "video");
+  return info?.r_frame_rate === `${FPS}/1` && info.avg_frame_rate === `${FPS}/1` && Math.abs(Number(info.start_time) || 0) < 0.5 / FPS &&
+    Math.abs(Number(info.nb_frames) - Number(info.duration) * FPS) < 1.5;
+}
+
 export async function encodePieces(pieces, { video, captionFile, vignette, grain, jobs }) {
   const info = probeJson(video, "stream=codec_type,nb_frames,duration").streams.find((x) => x.codec_type === "video");
   const videoFrames = Math.max(1, Number(info?.nb_frames) || Math.round(Number(info?.duration) * FPS));

@@ -146,3 +146,16 @@ console.log(JSON.stringify({ edges: pieces.map((p) => p.a), psnr, times, streams
     audio = next(s for s in out["streams"] if s["codec_type"] == "audio")
     assert int(video["nb_frames"]) == 140 and abs(float(audio["duration"]) - 140 / 30) < 0.05
     assert out["changed"] == [out["edges"][-1]]
+
+
+@needs_node
+@needs_ffmpeg
+def test_footage_not_made_by_the_cut_is_done_in_one_piece(tmp_path):
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=108x192:r=30:d=1", "-pix_fmt", "yuv420p", str(tmp_path / "thirty.mp4"))
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=108x192:r=25:d=1", "-pix_fmt", "yuv420p", str(tmp_path / "phone.mp4"))
+    out = node(tmp_path, """
+const plan = (steady) => P.planPieces({ work: ".", props: { video: "x.mp4" }, graphics: [], looks: Array(400).fill(null), clips: [],
+  total: 400, footageHash: () => "h", dir: ".", steady }).map((p) => p.a);
+console.log(JSON.stringify({ thirty: P.steadyFootage("thirty.mp4"), phone: P.steadyFootage("phone.mp4"), one: plan(false), many: plan(true) }));""")
+    assert out["thirty"] and not out["phone"]
+    assert out["one"] == [0] and len(out["many"]) > 1
