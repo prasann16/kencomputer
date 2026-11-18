@@ -74,16 +74,17 @@ const firstOf = new Map();
 for (const l of looks) if (l && !firstOf.has(l.key)) firstOf.set(l.key, l.frame);
 const capFile = (key) => join(layers, "captions", `${key}.png`);
 
-// ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook).
+// ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook). Only graphics
+// that overlap share a clip, so changing one redraws only it. One that starts after the reel ends isn't drawn.
 const hookSeconds = props.hookSeconds ?? props.titleSeconds ?? 2.8;
 const hook = props.hook ?? props.title;
 const spans = graphics.map((g) => [Math.round(g.start * FPS), Math.round(g.start * FPS) + Math.max(1, Math.round((g.end - g.start) * FPS))]);
 if (hook) spans.push([0, Math.round(hookSeconds * FPS)]);
 spans.sort((x, y) => x[0] - y[0]);
 const stretches = [];
-for (const [a, b] of spans) {
+for (const [a, b] of spans.filter(([a]) => a < total)) {
   const last = stretches[stretches.length - 1];
-  if (last && a <= last[1] + FPS / 2) last[1] = Math.max(last[1], b);
+  if (last && a < last[1]) last[1] = Math.max(last[1], b);
   else stretches.push([a, b]);
 }
 const clips = stretches.map(([a, b]) => {
