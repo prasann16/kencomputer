@@ -242,11 +242,16 @@ def _explain(code: int, detail: str) -> str:
     if status == "quota_exceeded":
         return ("ElevenLabs: out of credits on their plan (" + (message or "quota exceeded") + "). Tell them in one line; "
                 "it comes back when the plan resets, or with a bigger plan. Don't retry.")
+    if status in ("missing_permissions", "missing_group_permissions"):
+        perms = ", ".join((said.get("data") or {}).get(status) or []) or "this feature"
+        return (f"ElevenLabs: their key isn't allowed to do this ({perms}). It's a setting, not their plan: in ElevenLabs, "
+                "Developers → API keys, edit the key and turn on that permission (or, in a team workspace, ask its admin "
+                "for it). Tell them in one line; don't retry.")
     if status in ("invalid_api_key", "invalid_api_key_length") or (isinstance(said, dict) and said.get("type") == "authentication_error"):
         code = 401
     hint = {401: "the key is wrong or was revoked: ask them to check ELEVENLABS_API_KEY in Brain",
             402: "out of credits or the plan doesn't include this",
-            403: "the plan doesn't include this feature (voice cloning and music need a paid plan)",
+            403: "the plan or the key's permissions don't include this (voice cloning and music need a paid plan)",
             413: "the file is too big for this feature",
             429: "too many jobs at once or rate limited: wait a minute, don't retry in a loop"}.get(code, "")
     return f"ElevenLabs said {code}" + (f" ({hint})" if hint else "") + f": {message or detail}"

@@ -716,3 +716,17 @@ def test_every_flow_in_the_skill_table_exists():
     import re
     flows = set(re.findall(r"`(flows/[a-z-]+\.md)`", (kit / "SKILL.md").read_text()))
     assert "flows/script-in-my-style.md" in flows and all((kit / f).exists() for f in flows)
+
+
+def test_a_key_without_the_clone_permission_says_its_a_setting_not_the_plan(api, tmp_path, capsys):
+    body = {"detail": {"type": "authorization_error", "code": "forbidden", "status": "missing_group_permissions",
+                       "message": "This action is not allowed. You do not have the required permissions: create_instant_voice_clone.",
+                       "data": {"missing_group_permissions": ["create_instant_voice_clone"]}}}
+    fake = api({})
+    fake.routes[("POST", "/v1/voices/add")] = lambda n: (_ for _ in ()).throw(
+        urllib.error.HTTPError("u", 403, "err", {}, io.BytesIO(json.dumps(body).encode())))
+    a = tmp_path / "a.mp3"
+    a.write_bytes(b"x")
+    code, _, err = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert code == 1 and "create_instant_voice_clone" in err and "not their plan" in err and "paid plan" not in err
+    assert not (tmp_path / "consent.json").exists()
