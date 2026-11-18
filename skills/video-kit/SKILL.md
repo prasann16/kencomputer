@@ -37,6 +37,8 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 - **Whose account.** Run `eleven.py check` once per chat before the first ElevenLabs call. `"account": "ken"`
   means hosted Ken: it runs on Ken's own ElevenLabs account, included in their plan, with a monthly allowance per
   feature (`left`). They need no ElevenLabs account and no key: never ask for one. Anything else is their own key.
+  If Ken's route isn't live on this computer yet, the helper uses their own `ELEVENLABS_API_KEY` when they added
+  one (its JSON then says `"account": "own"`: their money, the own-key rules below), or says so in one line.
 - **On Ken's account, no money talk.** Never mention dollars, prices, credits or plans. The only number they hear
   is what's left, when it matters: before a dub or anything long, `eleven.py estimate <feature> <file>` and say it
   in one line ("that uses 3 of your 9 dub minutes this month"), then go; a small thing just runs. When `fits` is

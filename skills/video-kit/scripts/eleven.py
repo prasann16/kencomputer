@@ -4,8 +4,9 @@
 Two ways in. On hosted Ken (the computer has a host: KEN_INCLUDED_AI_URL/TOKEN, or KEN_ELEVEN_URL/TOKEN) every call
 goes through the host's /box/eleven, which uses Ken's own ElevenLabs account with a monthly allowance per person: no
 key here, nothing for them to pay. Anywhere else, their own key from ELEVENLABS_API_KEY (never printed).
-KEN_ELEVEN=own uses their own key even on hosted Ken. Every command prints one JSON line on success (the files it
-wrote, the job id, and the estimated cost on their key or what's left of the allowance on Ken's); errors go to stderr.
+KEN_ELEVEN=own uses their own key even on hosted Ken, and so does a host without /box/eleven yet. Every command
+prints one JSON line on success (the files it wrote, the job id, and the estimated cost on their key or what's left
+of the allowance on Ken's); errors go to stderr.
 
     eleven.py check                                      what's left (Ken's allowance, or their plan's credits)
     eleven.py voices [--search calm]                     their voices (id, name, kind)
@@ -78,8 +79,9 @@ def key() -> str:
 
 
 def host() -> tuple[str, str] | None:
-    """Hosted Ken's /box/eleven and this computer's token for it, or None (no host, or KEN_ELEVEN=own)."""
-    if os.environ.get("KEN_ELEVEN", "").strip().lower() == "own":
+    """Hosted Ken's /box/eleven and this computer's token for it, or None (no host, KEN_ELEVEN=own, or the route
+    isn't live and they have their own key)."""
+    if os.environ.get("KEN_ELEVEN", "").strip().lower() == "own" or HOST_NOT_LIVE:
         return None
     url = os.environ.get("KEN_ELEVEN_URL", "").strip().rstrip("/")
     if not url:
@@ -92,6 +94,14 @@ def host() -> tuple[str, str] | None:
 
 
 QUOTA_LEFT: list[str] = []  # what the host said is left after the last call ("540 seconds")
+HOST_NOT_LIVE: list[bool] = []  # set when the host has no /box/eleven yet and their own key took over
+NOT_LIVE = ("Ken's built-in ElevenLabs isn't switched on for this computer yet, so nothing ran. If they have their own "
+            "ElevenLabs key, ask them to add it in the Brain tab, under Accounts & passwords, named ELEVENLABS_API_KEY: "
+            "it runs on that from their next message.")
+
+
+class _NotLive(Exception):
+    """The host answered, but not as /box/eleven (a redirect to the homepage, a page, a 404): the route isn't live."""
 
 
 def _redact(text: str) -> str:
@@ -124,10 +134,26 @@ def multipart(fields: dict, files: list[tuple[str, Path]]) -> tuple[bytes, str]:
 
 def call(method: str, path: str, *, query: dict | None = None, json_body: dict | None = None,
          fields: dict | None = None, files: list | None = None, raw: bool = False, timeout: int = 600,
-         seconds: float | None = None, headers: dict | None = None):
+         seconds: float | None = None, headers: dict | None = None, host_only: bool = False):
     """One API call (through the host, or straight to ElevenLabs with their key). Returns parsed JSON, or bytes when
-    raw=True. Errors become a readable Fail. seconds: how long the uploaded media is (the host counts it)."""
+    raw=True. Errors become a readable Fail. seconds: how long the uploaded media is (the host counts it).
+    When the host has no ElevenLabs route yet and they have their own key, the call goes to ElevenLabs on that key
+    (host_only: a path only the host has, like /quota: None instead)."""
     via = host()
+    try:
+        return _call(via, method, path, query=query, json_body=json_body, fields=fields, files=files, raw=raw,
+                     timeout=timeout, seconds=seconds, headers=headers)
+    except _NotLive as e:
+        if not os.environ.get("ELEVENLABS_API_KEY", "").strip():
+            raise Fail(str(e) or NOT_LIVE)
+        HOST_NOT_LIVE[:] = [True]
+        if host_only:
+            return None
+        return _call(None, method, path, query=query, json_body=json_body, fields=fields, files=files, raw=raw,
+                     timeout=timeout, seconds=seconds, headers=headers)
+
+
+def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, seconds, headers):
     url = (via[0] if via else API) + path + ("?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None}) if query else "")
     # A named client: Cloudflare in front of the host refuses Python's default "Python-urllib".
     sent = {"User-Agent": "Ken"} if via else {"xi-api-key": key(), "User-Agent": "ken-video-kit/1"}
@@ -147,15 +173,41 @@ def call(method: str, path: str, *, query: dict | None = None, json_body: dict |
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read()
-            left = getattr(r, "headers", None) and r.headers.get("x-ken-quota-left")
+            answered = getattr(r, "headers", None) or {}
+            moved = r.geturl() if hasattr(r, "geturl") else url
+            left = answered.get("x-ken-quota-left")
             if left:
                 QUOTA_LEFT[:] = [left]
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:600]
+        if via and _host_page(e.code, detail):
+            raise _NotLive()
         raise Fail(_explain_host(e.code, detail) if via else _explain(e.code, _redact(detail)))
     except urllib.error.URLError as e:
-        raise Fail(f"Couldn't reach {'Ken' if via else 'ElevenLabs'}: {e.reason}")
-    return body if raw else json.loads(body or b"{}")
+        if via:
+            raise _NotLive(f"Couldn't reach Ken: {e.reason}")
+        raise Fail(f"Couldn't reach ElevenLabs: {e.reason}")
+    # A redirect (the host sends unknown paths to its homepage) or a web page instead of the answer: not the route.
+    if via and (moved.split("?")[0] != url.split("?")[0] or "text/html" in (answered.get("content-type") or "")):
+        raise _NotLive()
+    if raw:
+        return body
+    try:
+        return json.loads(body or b"{}")
+    except ValueError:
+        if via:
+            raise _NotLive()
+        raise Fail(f"ElevenLabs sent something that isn't an answer ({len(body)} bytes); try once more later, not in a loop.")
+
+
+def _host_page(code: int, detail: str) -> bool:
+    """An error from the host that isn't from its ElevenLabs route (which always answers {"error", "code"})."""
+    if code not in (404, 405, 501):
+        return False
+    try:
+        return "code" not in json.loads(detail)
+    except (ValueError, TypeError):
+        return True
 
 
 def _explain_host(code: int, detail: str) -> str:
@@ -260,6 +312,9 @@ def done(**info) -> dict:
         info.pop("usd", None)
         if QUOTA_LEFT:
             info["quota_left"] = _readable(QUOTA_LEFT[0])
+    elif HOST_NOT_LIVE:
+        info["account"] = "own"
+        info["account_note"] = "Ken's built-in ElevenLabs isn't live yet, so this ran on their own ElevenLabs key (their credits)."
     print(json.dumps(info, ensure_ascii=False))
     return info
 
@@ -317,8 +372,8 @@ def words_to_srt(words: list[dict], max_chars: int = 32, max_secs: float = 2.5, 
 # ---------- commands ----------
 
 def cmd_check(a):
-    if host():
-        q = call("GET", "/quota")
+    q = call("GET", "/quota", host_only=True) if host() else None
+    if q is not None:
         left = {f: _readable(f"{v['left']} {v['unit']}") for f, v in q.get("features", {}).items()}
         return done(account="ken", left=left, resets=q.get("resets"), can_clone=q.get("features", {}).get("clone", {}).get("left", 0) > 0)
     s = call("GET", "/v1/user/subscription")
@@ -336,9 +391,10 @@ def cmd_voices(a):
 
 def cmd_estimate(a):
     secs = duration(need(a.file)) if a.file else (a.seconds or 0)
-    if host():
+    quota = call("GET", "/quota", host_only=True) if host() else None
+    if quota is not None:
         feature = QUOTA_FEATURE.get(a.feature, a.feature)
-        q = call("GET", "/quota").get("features", {}).get(feature, {})
+        q = quota.get("features", {}).get(feature, {})
         unit = q.get("unit", "seconds")
         needs = {"chars": a.chars or 0, "seconds": round(secs), "voices": 1, "runs": 1}.get(unit, 0)
         return done(feature=a.feature, needs=_readable(f"{needs} {unit}"), left=_readable(f"{q.get('left', 0)} {unit}"),

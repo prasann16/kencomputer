@@ -497,3 +497,80 @@ def test_voice_delete(hosted, capsys):
     fake = hosted({("DELETE", "/v1/voices/v9"): {"status": "ok"}})
     code, info, _ = hrun(["voice-delete", "v9"], capsys)
     assert code == 0 and info == {"deleted": "v9"} and fake.calls[0]["method"] == "DELETE"
+
+
+class Redirected(HostResp):
+    """What the host answers before /box/eleven is deployed: a redirect to its homepage, followed by urllib."""
+
+    def __init__(self, url):
+        super().__init__(b"<!doctype html><title>Ken</title>")
+        self.headers = {"content-type": "text/html; charset=utf-8"}
+        self._url = url
+
+    def geturl(self):
+        return self._url
+
+
+def not_live(monkeypatch, then=None):
+    """The host redirects every /box/eleven call to its homepage; ElevenLabs itself answers `then`."""
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        if "/box/eleven" in req.full_url:
+            return Redirected("https://app.example.dev/")
+        return then(req, timeout) if then else Resp(b"{}")
+    monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+def test_host_not_live_and_no_key_says_so_in_one_line(hosted, monkeypatch, tmp_path, capsys):
+    eleven.HOST_NOT_LIVE.clear()
+    not_live(monkeypatch)
+    code, _, err = hrun(["check"], capsys)
+    assert code == 1 and "isn't switched on" in err and "ELEVENLABS_API_KEY" in err and "Traceback" not in err
+    code, _, err = hrun(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
+    assert code == 1 and not (tmp_path / "a.mp3").exists()  # never a web page saved as audio
+
+
+def test_host_not_live_runs_on_their_own_key(hosted, monkeypatch, tmp_path, capsys):
+    eleven.HOST_NOT_LIVE.clear()
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    seen = []
+
+    def eleven_labs(req, timeout):
+        seen.append(dict(req.header_items()))
+        return Resp(b"ID3audio")
+    calls = not_live(monkeypatch, eleven_labs)
+    try:
+        code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello", "--out", str(tmp_path / "vo.mp3")], capsys)
+    finally:
+        eleven.HOST_NOT_LIVE.clear()
+    assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
+    assert calls[0].startswith("https://app.example.dev/box/eleven/") and calls[1].startswith("https://api.elevenlabs.io/")
+    assert seen[0]["Xi-api-key"] == KEY and "Authorization" not in seen[0]
+    assert info["account"] == "own" and info["usd"] == 0.0004 and KEY not in json.dumps(info)
+
+
+def test_check_and_estimate_fall_back_to_their_plan_when_the_host_route_isnt_live(hosted, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
+    paths = []
+
+    def eleven_labs(req, timeout):
+        paths.append(req.full_url.split("api.elevenlabs.io", 1)[1])
+        return Resp(json.dumps({"tier": "starter", "character_count": 10, "character_limit": 30000}).encode())
+    for argv in (["check"], ["estimate", "tts", "--chars", "1000"]):
+        eleven.HOST_NOT_LIVE.clear()
+        not_live(monkeypatch, eleven_labs)
+        try:
+            code, info, _ = hrun(argv, capsys)
+        finally:
+            eleven.HOST_NOT_LIVE.clear()
+        assert code == 0 and info["account"] == "own"
+    assert paths == ["/v1/user/subscription"]  # never /quota on ElevenLabs itself
+
+
+def test_host_errors_from_its_route_are_not_mistaken_for_a_missing_route(hosted, tmp_path, capsys):
+    hosted({("POST", "/v1/music"): (404, {"code": "not_allowed", "error": "The video kit can't do that."})})
+    code, _, err = hrun(["music", "--prompt", "x", "--out", str(tmp_path / "m.mp3")], capsys)
+    assert code == 1 and "can't do that" in err and "isn't switched on" not in err
