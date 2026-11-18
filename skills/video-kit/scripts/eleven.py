@@ -201,7 +201,10 @@ def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, s
 
 
 def _host_page(code: int, detail: str) -> bool:
-    """An error from the host that isn't from its ElevenLabs route (which always answers {"error", "code"})."""
+    """An error from the host that isn't from its ElevenLabs route (which always answers {"error", "code"}). A redirect
+    urllib won't follow (a DELETE) is one too."""
+    if 300 <= code < 400:
+        return True
     if code not in (404, 405, 501):
         return False
     try:

@@ -574,3 +574,13 @@ def test_host_errors_from_its_route_are_not_mistaken_for_a_missing_route(hosted,
     hosted({("POST", "/v1/music"): (404, {"code": "not_allowed", "error": "The video kit can't do that."})})
     code, _, err = hrun(["music", "--prompt", "x", "--out", str(tmp_path / "m.mp3")], capsys)
     assert code == 1 and "can't do that" in err and "isn't switched on" not in err
+
+
+def test_a_redirect_urllib_wont_follow_is_the_route_not_being_live(hosted, monkeypatch, capsys):
+    eleven.HOST_NOT_LIVE.clear()
+
+    def urlopen(req, timeout=None):  # urllib raises a DELETE's 302 instead of following it
+        raise urllib.error.HTTPError(req.full_url, 302, "Found", {"location": "/"}, io.BytesIO(b""))
+    monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
+    code, _, err = hrun(["voice-delete", "v9"], capsys)
+    assert code == 1 and "isn't switched on" in err and "(302)" not in err
