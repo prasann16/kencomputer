@@ -270,3 +270,15 @@ def test_settings_meters_and_when_a_full_plan_opens_again():
     assert u.resets("claude", NOW) == usage.when(NOW + 3600, NOW)
     assert [w["label"] for w in u.limits(NOW + 7200)["claude"]] == ["Weekly"]  # a window past its reset drops off
     assert u.resets("claude", NOW + 7200) == ""
+
+
+def test_shared_browser_memory_is_never_counted_past_the_computers_own(monkeypatch):
+    """A free-trial computer has 4 GB; its browser's 10 processes each reported ~1.3 GB resident (mostly shared), and
+    Ken said it was using 12.7 GB. Each process now counts its own share, and no total is ever more than the computer."""
+    ps = "\n".join([f"{os.getpid()} 1 1000"] + [f"{9000 + i} {os.getpid()} 1300000" for i in range(10)])
+    monkeypatch.setattr(usage, "_run", lambda *a: ps)
+    monkeypatch.setattr(usage, "_own_share", lambda pid, rss: rss)  # no /proc here: resident sizes only
+    monkeypatch.setattr(usage, "physical_memory", lambda: 4 * GB)
+    assert usage.ken_memory() == 4 * GB
+    monkeypatch.setattr(usage, "_own_share", lambda pid, rss: rss // 10)  # Linux: each one's real share
+    assert usage.ken_memory() < 2 * GB
