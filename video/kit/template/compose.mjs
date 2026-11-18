@@ -28,7 +28,7 @@ const style = props.style ?? {};
 const total = Math.max(1, Math.round(props.durationSeconds * FPS));
 const concurrency = (() => {
   const c = process.env.KEN_RENDER_CONCURRENCY;
-  return c && /^\d+$/.test(c) ? Number(c) : c ?? null;
+  return !c ? null : /^\d+$/.test(c) ? Number(c) : c;
 })();
 const layers = join(work, ".layers");
 mkdirSync(join(layers, "captions"), { recursive: true });
