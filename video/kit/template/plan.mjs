@@ -6,7 +6,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 
 export const FPS = 30;
 export const W = 1080, H = 1920;
@@ -88,12 +88,17 @@ export function pieceEdges(total, props, piece = PIECE) {
 
 // The footage under frames [a, b): the source ranges the cut kept there (so cutting again with the same words, or a
 // different ending, gives the same name), or the video file itself when it isn't the cut's (Ken made it by hand).
+export const readCutlist = (work) => {
+  try {
+    return JSON.parse(readFileSync(join(work, "cutlist.json"), "utf8"));
+  } catch {
+    return null;
+  }
+};
+
 export function footage(work, props, a, b, fileHash) {
   const path = join(work, props.video);
-  let cutlist = null;
-  try {
-    cutlist = JSON.parse(readFileSync(join(work, "cutlist.json"), "utf8"));
-  } catch {}
+  const cutlist = readCutlist(work);
   const st = existsSync(path) ? statSync(path) : null;
   const ours = cutlist?.pieces && cutlist.source && cutlist.video && cutlist.video.name === props.video && st &&
     cutlist.video.size === st.size && Math.abs(cutlist.video.mtime - st.mtimeMs / 1000) < 0.01;
@@ -195,11 +200,20 @@ const seek = (frame) => (frame > 0 ? ["-ss", ((frame - 0.5) / FPS).toFixed(6)] :
 
 // Encodes pieces, a few at a time (ffmpeg's filters mostly use one core each): the footage with its motion, the
 // graphics, the captions and the grain, in the piece's own time. Past the end of the footage its last frame holds.
-// Whether a piece can start anywhere in this footage: a frame every 1/30 s from zero, as a cut makes it.
-export function steadyFootage(video) {
+// Whether a piece can start anywhere in this footage: a frame every 1/30 s from zero. The cut always makes it so; a
+// video made another way is checked.
+const rate = (r) => {
+  const [n, d] = String(r ?? "").split("/").map(Number);
+  return d ? n / d : n;
+};
+export function steadyFootage(video, cutlist = null) {
+  if (cutlist?.video?.name === basename(video) && existsSync(video)) {
+    const st = statSync(video);
+    if (cutlist.video.size === st.size && Math.abs(cutlist.video.mtime - st.mtimeMs / 1000) < 0.01) return true;
+  }
   const info = probeJson(video, "stream=codec_type,r_frame_rate,avg_frame_rate,start_time,nb_frames,duration").streams.find((x) => x.codec_type === "video");
-  return info?.r_frame_rate === `${FPS}/1` && info.avg_frame_rate === `${FPS}/1` && Math.abs(Number(info.start_time) || 0) < 0.5 / FPS &&
-    Math.abs(Number(info.nb_frames) - Number(info.duration) * FPS) < 1.5;
+  return !!info && Math.abs(rate(info.r_frame_rate) - FPS) < 0.01 && Math.abs(rate(info.avg_frame_rate) - FPS) < 0.05 &&
+    Math.abs(Number(info.start_time) || 0) < 0.5 / FPS && Math.abs(Number(info.nb_frames) - Number(info.duration) * FPS) < 1.5;
 }
 
 export async function encodePieces(pieces, { video, captionFile, vignette, grain, jobs }) {

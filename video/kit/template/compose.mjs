@@ -14,7 +14,7 @@ import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
 import { cachedBundle, oneAtATime, placements } from "./lib.mjs";
-import { baseHash, captionKey, encodePieces, FPS, graphicsHash, H, hash, joinPieces, planPieces, probeJson, steadyFootage, W } from "./plan.mjs";
+import { baseHash, captionKey, encodePieces, FPS, graphicsHash, H, hash, joinPieces, planPieces, probeJson, readCutlist, steadyFootage, W } from "./plan.mjs";
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -146,7 +146,7 @@ const videoPath = join(work, props.video);
 let fileHash;
 const footageHash = () => (fileHash ??= hash(readFileSync(videoPath)));
 const pieceDir = join(layers, "pieces");
-const pieces = planPieces({ work, props, graphics, looks, clips, total, footageHash, dir: pieceDir, steady: steadyFootage(videoPath) });
+const pieces = planPieces({ work, props, graphics, looks, clips, total, footageHash, dir: pieceDir, steady: steadyFootage(videoPath, readCutlist(work)) });
 const pieceTodo = pieces.filter((p) => !existsSync(p.file));
 
 console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips (${clips.reduce((n, c) => n + c.b - c.a, 0)} frames), ${clipTodo.length} to draw; picture: ${pieces.length} pieces, ${pieceTodo.length} to encode (${pieceTodo.reduce((n, p) => n + p.b - p.a, 0)} of ${total} frames)`);
