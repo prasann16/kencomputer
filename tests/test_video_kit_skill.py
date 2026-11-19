@@ -418,6 +418,7 @@ def test_host_is_the_default_and_uses_the_computers_token_not_a_key(hosted, tmp_
     assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
     sent = fake.calls[0]["headers"]
     assert sent["Authorization"] == f"Bearer {TOKEN}" and "Xi-api-key" not in sent and sent["User-agent"] == "Ken"
+    assert sent["X-ken-label"] == "1%20line"
     # Ken's account: what it used of their Ken AI credits (the host's charge), not ElevenLabs' price
     assert "usd" not in info and info["credits_used"] == "under $0.01" and info["credits_left"] == "$3.42"
 
@@ -581,6 +582,7 @@ def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(host
     assert code == 0 and info["job"] == "v1:d1:a" and swapped == [("reel.mp4", b"dubbed-mp3")]
     assert (tmp_path / "reel.hi.mp4").read_bytes() == b"muxed" and info["credits_used"] == "$0.11"
     assert fake.calls[0]["headers"]["X-ken-seconds"] == "12.00" and b'name="name"\r\n\r\nreel\r\n' in fake.calls[0]["data"]
+    assert fake.calls[0]["headers"]["X-ken-label"] == "reel%20%28Hindi%29"  # their credits list: "Dub · reel (Hindi)"
 
 
 def test_voice_delete_only_once_they_confirmed(hosted, capsys):

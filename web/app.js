@@ -1711,6 +1711,19 @@ function WaitingForKen() {
   return html`<p class="connect-error" role="alert">Ken's computer isn't answering yet.</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button>`;
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
+// What used their Ken AI credits this month, by day (the site's /account/credits.json): "Today · Dub · reel · $0.55".
+function CreditsUsed() {
+  const [used, setUsed] = useState(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => { fetch('/account/credits.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setUsed).catch(() => {}); }, []);
+  if (!used?.days?.length) return '';
+  const rows = used.days.flatMap((d) => d.entries.map((e) => ({ day: d.label, ...e })));
+  const shown = all ? rows : rows.slice(0, 6);
+  return html`<div class="credits-used"><div class="credits-used-top"><span>Used this month</span><span>${used.total}</span></div>
+    ${shown.map((e) => html`<div class="credits-used-row"><span><i>${e.day}</i> · ${e.label}</span><span>${e.usd}</span></div>`)}
+    ${rows.length > shown.length && html`<button class="text-action" onClick=${() => setAll(true)}>Show all ${rows.length}</button>`}</div>`;
+}
+
 function PlanUsage({ usage, accountUrl }) {
   // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
   // Hosted Ken: Plan & billing is its own small page on the site (plans, added credits, card and invoices), one tap back.
@@ -1719,6 +1732,7 @@ function PlanUsage({ usage, accountUrl }) {
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
+    ${HOSTED && html`<${CreditsUsed}/>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add Ken AI credits</a>`}
     ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;

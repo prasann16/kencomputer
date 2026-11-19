@@ -31,6 +31,10 @@ if sys.argv[1:2] == ["--eleven"]:  # the video-kit skill's ElevenLabs helper, ru
     runpy.run_path(str(_script), run_name="__main__")
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--credits"]:  # hosted Ken: what used their Ken AI credits this month (they asked)
+    import ken_credits
+    raise SystemExit(ken_credits.main())
+
 if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a file at full quality (the too_big page)
     import json as _json, os as _os, secrets as _secrets, time as _time
     from pathlib import Path as _Path
@@ -934,7 +938,8 @@ def where_you_are(f: dict | None = None) -> str:
                      "place in one line.")
     if kind in ("cloud", "server") and included_ai_key():
         lines.append(f"When they ask to switch AI (Ken AI credits, or their own Claude or ChatGPT), run `{KEN_CMD} --use "
-                     "credits` (or `claude`, or `codex` for ChatGPT) and tell them what it prints.")
+                     "credits` (or `claude`, or `codex` for ChatGPT) and tell them what it prints. When they ask what "
+                     f"used their Ken AI credits, run `{KEN_CMD} --credits` and sum it up in a few lines.")
     if f["voice"]:
         lines.append("Voice notes are transcribed automatically, so expect typos and read for intent.")
     if kind == "cloud":
