@@ -383,3 +383,30 @@ def test_the_file_line_is_in_kens_instructions_only_where_files_work(own_apps, m
     assert "--apps-file <path> <TOOL_SLUG>" in bot.build_system()
     monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.com/mcp/composio")
     assert "--apps-file" not in bot.build_system()
+
+
+async def test_settings_asks_the_host_where_the_apps_are_right_after_a_move(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
+    """They tapped Upgrade in Settings → Apps: Ken asks its host at once (the browser never says where), no restart."""
+    seen = []
+
+    def urlopen(req, timeout):
+        seen.append((req.full_url, req.headers["Authorization"]))
+        return io.BytesIO(json.dumps({"apps_via": "ken", "apps_mcp": {"url": f"{SITE}/box/apps-mcp", "token": "checkin-tok"}}).encode())
+
+    monkeypatch.setattr(apps.urllib.request, "urlopen", urlopen)
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.example/mcp")
+    monkeypatch.setenv("KEN_APPS_MCP_TOKEN", "a37-tok")
+    monkeypatch.delenv("KEN_APPS", raising=False)
+    app, client = await signed_in(engine, aiohttp_client)
+    r = await client.post("/api/apps/refresh", json={"url": "https://evil.example/mcp"})
+    assert r.status == 200 and await r.json() == {"ok": True, "apps": True}
+    assert seen == [(f"{SITE}/box/apps-server", "Bearer checkin-tok")]
+    assert os.environ["KEN_APPS_MCP_URL"] == f"{SITE}/box/apps-mcp" and os.environ["KEN_APPS_MCP_TOKEN"] == "checkin-tok"
+
+    def down(req, timeout):
+        raise OSError("down")
+
+    monkeypatch.setattr(apps.urllib.request, "urlopen", down)
+    assert (await client.post("/api/apps/refresh")).status == 502
+    monkeypatch.delenv("KEN_KEEPALIVE_URL")
+    assert (await client.post("/api/apps/refresh")).status == 404

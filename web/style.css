@@ -454,6 +454,8 @@ ol.conn-steps li { margin: 2px 0; }
 .apps-row .conn-on { font-size: var(--text-sm); font-weight: 400; }
 /* Apps they had before Ken moved to its own Composio, to connect again (the site's reconnect list), above the rest. */
 .apps-reconnect { margin-bottom: var(--s4); }
+.apps-upgrade { margin-bottom: var(--s4); padding: var(--s2) 14px var(--s3); border-radius: var(--r-card); background: var(--well); }
+.apps-upgrade-actions { display: flex; align-items: center; gap: var(--s3); }
 .apps-reconnect small { font-size: var(--text-sm); font-weight: 400; color: var(--muted); }
 /* Telegram (hosted): a code to scan from a computer; a button on the phone. */
 .phone-tabs { margin: 0 0 var(--s4); }

@@ -2168,9 +2168,13 @@ async def keep_awake() -> None:
                 busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
-                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
-                                             "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {})},
-                                  headers={"Authorization": f"Bearer {token}"})
+                r = await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
+                                                 "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {})},
+                                      headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    import apps
+                    if apps.use_apps_server(r.json()):
+                        log.info("apps server moved: %s", os.environ.get("KEN_APPS_MCP_URL", ""))
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)
             await asyncio.sleep(60)
