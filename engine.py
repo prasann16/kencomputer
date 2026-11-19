@@ -239,12 +239,48 @@ def _unlink(p: Path) -> None:
         os.rmdir(p)
 
 
+# Ken's own skills that the host switches on per person (kencomputer.dev: VIDEO_KIT_ROLLOUT, TREG_ROLLOUT). Off, Ken
+# doesn't have them at all: not linked, so it can't see, use or mention them. The host says which are on in every
+# check-in answer ("kits"), kept in <home>/kits-on.json (save_kits). The video kit also runs on their own ElevenLabs
+# key when they've added one (their account, their choice).
+HOST_KITS = ("video-kit", "live-data")
+
+
+def kits_on(home: Path) -> dict:
+    try:
+        d = json.loads((home / "kits-on.json").read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def kit_on(home: Path, name: str) -> bool:
+    if kits_on(home).get(name) is True:
+        return True
+    return name == "video-kit" and bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
+
+
+def save_kits(home: Path, kits) -> bool:
+    """The host's word on which kits are on, from a check-in answer. True when it changed (the skills are gathered
+    again). An answer without it (an older host) changes nothing."""
+    if not isinstance(kits, dict):
+        return False
+    now = {k: kits.get(k) is True for k in HOST_KITS}
+    if kits_on(home) == now:
+        return False
+    try:
+        (home / "kits-on.json").write_text(json.dumps(now))
+    except OSError:
+        return False
+    return True
+
+
 def gather_skills(home: Path, others: dict[str, list[Path]]) -> Path:
     """<home>/.skills-in-use: a link to each skill the brains should see. Ken's own skills, then the
     ones from the person's other AI apps that aren't switched off. A name Ken already has stays Ken's."""
     use = home / ".skills-in-use"
     use.mkdir(parents=True, exist_ok=True)
-    want = {f.name: f for f in _skill_folders(home / "skills")}
+    want = {f.name: f for f in _skill_folders(home / "skills") if f.name not in HOST_KITS or kit_on(home, f.name)}
     off = skills_off(home)
     for sid, _, f in other_skills(others):
         if sid not in off and f.name not in want:
