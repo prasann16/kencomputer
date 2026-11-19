@@ -388,6 +388,13 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .plan-usage .low .meter-top span:last-child { color: var(--danger); }
 .plan-usage > .text-action { align-self: flex-start; margin-top: var(--s4); }
 .plan-added { margin: var(--s2) 0 0; font-size: var(--text-md); color: var(--muted); }
+.credits-used { display: flex; flex-direction: column; gap: 4px; margin-top: var(--s4); font-size: var(--text-md); }
+.credits-used-top, .credits-used-row { display: flex; justify-content: space-between; gap: var(--s3); }
+.credits-used-top { margin-bottom: 2px; font-weight: 600; }
+.credits-used-row { color: var(--muted); }
+.credits-used-row i { font-style: normal; color: var(--ink); }
+.credits-used-row span:last-child { flex: none; }
+.credits-used .text-action { align-self: flex-start; margin-top: 2px; }
 .plan-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
 .plan-actions .text-action { min-height: var(--control-sm); padding: 0 14px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1.5px var(--ink); font-size: var(--text-ui); font-weight: 500; text-decoration: none; }
 /* Tools: a grey card each (Browser, Email, Calendar…), its icon, what it does, Connect. */

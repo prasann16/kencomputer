@@ -105,6 +105,7 @@ def host_route() -> tuple[str, str] | None:
     return (url, token) if token and (url.startswith("https://") or local) else None
 
 
+LABEL: list[str] = []  # what this run is for, as their Ken AI credits list names it ("track club reel (Portuguese)")
 CREDITS: dict = {}  # on Ken's account: what the calls so far used of their Ken AI credits ("used", dollars) and what's left
 MARGIN = 1.1  # what Ken AI credits charge over ElevenLabs' price, unless the host says otherwise (/quota "margin")
 CLONE_MOST = 120  # seconds of picked speech a clone sample keeps (and voice isolation cleans) at most
@@ -171,6 +172,8 @@ def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, s
         sent["Authorization"] = f"Bearer {via[1]}"
         if seconds is not None:
             sent["X-Ken-Seconds"] = f"{max(seconds, 0.1):.2f}"
+        if LABEL:
+            sent["X-Ken-Label"] = urllib.parse.quote(LABEL[0][:80])
         sent.update(headers or {})
     data = None
     if json_body is not None:
@@ -1131,8 +1134,40 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+LANGUAGES = {"hi": "Hindi", "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "mr": "Marathi", "gu": "Gujarati",
+             "ml": "Malayalam", "pa": "Punjabi", "kn": "Kannada", "en": "English", "es": "Spanish", "pt": "Portuguese",
+             "fr": "French", "de": "German", "it": "Italian", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+             "ar": "Arabic", "ru": "Russian", "id": "Indonesian", "tr": "Turkish", "nl": "Dutch", "pl": "Polish"}
+
+
+def label_for(a) -> str:
+    """How a run reads in their Ken AI credits list, after the feature the host names ("Dub · " + this)."""
+    name = lambda p: Path(p).stem.replace("_", " ").replace("-", " ").strip() if p else ""
+    cmd = a.cmd
+    if cmd in ("dub", "dub-start"):
+        what = name(a.inp) or "a link"
+        return f"{what} ({LANGUAGES.get(a.to, a.to)})"
+    if cmd == "tts":
+        text = a.text if a.text is not None else (Path(a.text_file).read_text() if a.text_file and Path(a.text_file).is_file() else "")
+        n = len([l for l in text.splitlines() if l.strip()]) or 1
+        return f"{n} line{'s' if n != 1 else ''}"
+    if cmd in ("captions", "isolate", "changer"):
+        return name(a.inp)
+    if cmd == "clone-from":
+        return "finding their voice sample"
+    for field in ("text", "prompt", "describe", "name"):
+        v = getattr(a, field, None)
+        if isinstance(v, str) and v.strip():
+            return " ".join(v.split())[:40]
+    return ""
+
+
 def main(argv=None) -> int:
     a = parser().parse_args(argv)
+    try:
+        LABEL[:] = [x for x in [label_for(a)] if x]
+    except (OSError, AttributeError, UnicodeDecodeError):
+        LABEL.clear()  # a name is a nicety: never why a run fails
     try:
         a.fn(a)
         return 0
