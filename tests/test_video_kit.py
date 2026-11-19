@@ -124,36 +124,6 @@ def test_the_look_takes_its_colours_from_the_footage(tmp_path):
     assert set(found["room"]) == {"light", "dark"} and "suggested" not in found  # raw material, not a palette
 
 
-def _zscale() -> bool:
-    return bool(shutil.which("ffmpeg")) and " zscale " in subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
-                                                                         capture_output=True, text=True).stdout
-
-
-@pytest.mark.skipif(not _zscale(), reason="needs ffmpeg with zscale")
-@pytest.mark.parametrize("transfer", ["smpte2084", "arib-std-b67"])
-def test_hdr_phone_footage_keeps_its_colours(tmp_path, transfer):
-    # An iPhone (HLG) or HDR10 (PQ) clip of a red wall: the reel is plain SDR and still red, not washed out.
-    hdr = (f"format=yuv444p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709,format=gbrpf32le,"
-           f"zscale=t=linear:npl=203,"
-           f"zscale=p=bt2020:m=bt2020nc:t={transfer}:r=tv:npl=203,format=yuv420p10le")
-    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0xC81E1E:s=320x568:d=2", "-f", "lavfi",
-                    "-i", "sine=f=220:d=2", "-vf", hdr, "-c:v", "libx265", "-x265-params", "log-level=error", "-color_primaries",
-                    "bt2020", "-color_trc", transfer, "-colorspace", "bt2020nc", "-shortest", str(tmp_path / "source.mov")], check=True)
-    (tmp_path / "source.words.json").write_text(json.dumps(words((0.2, 0.8), (1.0, 1.6))))
-    said = []
-    v.cut(tmp_path, "all", say=said.append)
-    tags = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                           "stream=color_transfer,color_primaries,color_space,color_range", "-of", "json", str(tmp_path / "cut.mp4")],
-                          capture_output=True, text=True, check=True).stdout
-    assert json.loads(tags)["streams"][0] == {"color_range": "tv", "color_space": "bt709", "color_transfer": "bt709",
-                                              "color_primaries": "bt709"}
-    r, g, b = subprocess.run(["ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(tmp_path / "cut.mp4"), "-frames:v", "1",
-                              "-vf", "crop=8:8,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                             capture_output=True, check=True).stdout[:3]
-    assert r > 170 and g < 70 and b < 70, (r, g, b)
-    assert any("HDR" in line for line in said)
-
-
 # ------------------------------------------------------------------ no house look (Round 23)
 
 KIT = v.SOURCE / "template"

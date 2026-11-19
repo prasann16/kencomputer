@@ -26,6 +26,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+import video
+
 NODE_VERSION = "22.20.0"
 NODE_SHA256 = {  # from https://nodejs.org/dist/v22.20.0/SHASUMS256.txt
     "darwin-arm64": "cc04a76a09f79290194c0646f48fec40354d88969bec467789a5d55dd097f949",
@@ -334,29 +336,6 @@ def _stamp(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
-# Phones film HDR (iPhones in HLG, many Androids in HDR10/PQ). Squeezed into an 8-bit reel as if it were ordinary video,
-# it comes out grey and washed out, so HDR is tone mapped to SDR first (their white at 203 nits, the HDR reference white,
-# lands on SDR white; brighter highlights roll off softly); every reel leaves as plain BT.709, TV range.
-HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
-TONEMAP = "zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.7:desat=0,zscale=t=bt709:m=bt709:r=tv"
-SDR_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
-
-
-def _to_sdr(src: Path, say=print) -> str:
-    """The filters (with a trailing comma, or none) that bring this footage to SDR BT.709 before it's framed."""
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
-                        "-of", "csv=p=0", str(src)], capture_output=True, text=True)
-    if r.stdout.strip().strip(",") not in HDR_TRANSFERS:
-        return ""
-    filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
-    if " zscale " not in filters:
-        say("This video is HDR and this computer's ffmpeg can't convert HDR (no zscale), so its colours may look "
-            "washed out. An ffmpeg built with zimg fixes it.")
-        return ""
-    say("The video is HDR: converting it to normal colour so it doesn't look washed out.")
-    return TONEMAP + ","
-
-
 def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     if spec.strip() == "all":
         return [(0, count - 1)]
@@ -372,7 +351,7 @@ def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     return keep
 
 
-CUT_VERSION = 2  # bump when the picture of a part changes, so no part from an older cut is reused
+CUT_VERSION = 3  # bump when the picture of a part changes, so no part from an older cut is reused
 
 
 def _identity(path: Path) -> dict:
@@ -398,10 +377,17 @@ def _cut_video(folder: Path, src: Path, pieces: list[list], speed: float, say=pr
     files = [store / (hashlib.sha256(json.dumps([CUT_VERSION, source, a, b, speed]).encode()).hexdigest()[:24] + ".mp4")
              for a, b, _ in pieces]
     todo = [(a, b, f) for (a, b, _), f in zip(pieces, files) if not f.exists()]
-    sdr = ""
+    # HDR phone footage is tone-mapped to normal colours in each part, after the crop so it's done at 1080x1920
+    # rather than 4K; normal footage gets exactly the command it always did.
+    colour, tags = "format=yuv420p", []
     if todo:
         say(f"Cutting {src.name}: {len(todo)} of {len(pieces)} parts to encode…")
-        sdr = _to_sdr(src, say)
+        stream = video.video_stream(src)
+        if video.is_hdr(stream):
+            # The scale below leaves the picture TV range, whatever the source was.
+            colour, tags = video.sdr_filter({**stream, "color_range": "tv"}), video.BT709
+            say(f"{src.name} was filmed in HDR; converting it to normal colours"
+                f"{'' if video.has_zscale() else ' (approximately: this ffmpeg has no zscale)'}.")
 
     def encode(job):
         a, b, f = job
@@ -410,9 +396,9 @@ def _cut_video(folder: Path, src: Path, pieces: list[list], speed: float, say=pr
         # Each part starts at zero (a seek lands a little after it) and is exactly its frames, so joining them leaves
         # no missing frames. Phones tag their videos "rotate 90°"; the frames come out upright, so the tag is dropped.
         r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src), "-an", "-vf",
-                            f"{sdr}setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase:out_range=tv,"
-                            f"crop=1080:1920,setsar=1,format=yuv420p,sidedata=delete:type=DISPLAYMATRIX,tpad=stop_mode=clone:stop={n}",
-                            "-frames:v", str(n), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(2 * FPS), *SDR_TAGS, str(tmp)],
+                            f"setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase:out_range=tv,"
+                            f"crop=1080:1920,setsar=1,{colour},sidedata=delete:type=DISPLAYMATRIX,tpad=stop_mode=clone:stop={n}",
+                            "-frames:v", str(n), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(2 * FPS), *tags, str(tmp)],
                            capture_output=True, text=True)
         if r.returncode:
             tmp.unlink(missing_ok=True)
@@ -517,10 +503,34 @@ def _node(home: Path, folder: Path, args: list[str]) -> int:
     return subprocess.run([str(node) if node.exists() else "node", *args], cwd=folder, env=_env(home)).returncode
 
 
+def _sdr_clips(folder: Path, props: dict, say=print) -> None:
+    """Clips a graphic shows (props.graphics[].props.src) come from the same phone as the source, so an HDR one is
+    converted to normal colours in place, once (afterwards it's normal and left alone). They're Ken's copies in
+    the reel's folder, never the original."""
+    for g in props.get("graphics") or []:
+        src = (g.get("props") or {}).get("src")
+        path = folder / src if isinstance(src, str) else None
+        if not path or path.suffix.lower() not in (".mov", ".mp4", ".m4v", ".mkv") or not path.is_file():
+            continue
+        stream = video.video_stream(path)
+        if not video.is_hdr(stream):
+            continue
+        say(f"{src} was filmed in HDR; converting it to normal colours.")
+        tmp = path.with_name(f".sdr-{path.name}")
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-vf", video.sdr_filter(stream), "-c:v", "libx264",
+                            "-preset", "veryfast", "-crf", "18", *video.BT709, "-c:a", "aac", str(tmp)], capture_output=True, text=True)
+        if r.returncode:
+            tmp.unlink(missing_ok=True)
+            raise SystemExit(f"ffmpeg failed converting {src}:\n{r.stderr[-2000:]}")
+        tmp.replace(path)
+
+
 def render(home: Path, folder: Path, say=print, plan: bool = False) -> Path:
     """reel.mp4, ready to post. The fast way checks its own result; if that fails, or the reel has whip pans
     (chapters), which only the slow way does, Chrome draws the whole reel instead: slower, always right."""
     props = _props(folder)
+    if not plan:
+        _sdr_clips(folder, props, say)
     _project(home, folder, say)
     out = folder / "reel.mp4"
     extra = ["--plan"] if plan else []
@@ -555,8 +565,10 @@ def colors(folder: Path, say=print) -> dict:
         raise SystemExit(f"Copy the video into {folder} as source.<ext> first.")
     length = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(found[0])],
                                   capture_output=True, text=True, check=True).stdout.strip() or 0)
-    # About 16 frames across the video, small: colour, not detail.
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(found[0]), "-vf", f"fps={16 / max(length, 1):.4f},scale=48:84",
+    # About 16 frames across the video, small: colour, not detail. HDR footage is read as it'll look in the reel.
+    stream = video.video_stream(found[0])
+    sdr = f",{video.sdr_filter(stream)}" if video.is_hdr(stream) else ""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(found[0]), "-vf", f"fps={16 / max(length, 1):.4f},scale=48:84{sdr}",
                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
     px = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(np.float32) / 255
     mx, mn = px.max(1), px.min(1)
@@ -597,7 +609,7 @@ def colors(folder: Path, say=print) -> dict:
 
 def stills(home: Path, folder: Path, times: list[str], say=print) -> None:
     """A few frames of the reel without rendering it, side by side in checks/sheet.jpg."""
-    _props(folder)
+    _sdr_clips(folder, _props(folder), say)
     _project(home, folder, say)
     if not times or _node(home, folder, ["stills.mjs", str(folder), *times]):
         raise SystemExit("Usage: --video-stills <folder> <seconds...>")
