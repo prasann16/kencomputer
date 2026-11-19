@@ -410,3 +410,27 @@ async def test_settings_asks_the_host_where_the_apps_are_right_after_a_move(engi
     assert (await client.post("/api/apps/refresh")).status == 502
     monkeypatch.delenv("KEN_KEEPALIVE_URL")
     assert (await client.post("/api/apps/refresh")).status == 404
+
+
+def test_instagram_youtube_linkedin_and_calendar_accounts_get_their_own_names(monkeypatch):
+    # What each app's profile call answers (trimmed from real answers), and the name Settings shows.
+    answers = {
+        "INSTAGRAM_GET_USER_INFO": {"name": "Sam | Founder", "username": "sam.makes"},
+        "YOUTUBE_LIST_CHANNELS": {"items": [{"snippet": {"title": "Sam R", "customUrl": "@sammakes"}}]},
+        "LINKEDIN_GET_MY_INFO": {"firstName": {"localized": {"en_US": "Sam"}}, "localizedFirstName": "Sam", "localizedLastName": "Rivera"},
+        "GOOGLECALENDAR_GET_CURRENT_USER": {"email": "sam@example.com", "display_name": "sam@example.com"},
+    }
+    calls = []
+
+    def fake(tool, args):
+        item = args["tools"][0]
+        calls.append(item)
+        return {"data": {"results": [{"response": {"successful": True, "data": answers[item["tool_slug"]]}}]}}
+
+    monkeypatch.setattr(apps, "mcp_call", fake)
+    assert apps.profile_name("instagram", "ig_1") == "sam.makes"
+    assert apps.profile_name("youtube", "yt_1") == "@sammakes"
+    assert apps.profile_name("linkedin", "li_1") == "Sam Rivera"
+    assert apps.profile_name("googlecalendar", "gc_1") == "sam@example.com"
+    assert calls[1]["arguments"] == {"mine": True, "part": "snippet"}  # YouTube lists only their own channel
+    assert apps.profile_name("spotify", "sp_1") is None  # no profile call known: numbered as before
