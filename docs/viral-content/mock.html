@@ -1,0 +1,79 @@
+<!doctype html>
+<!-- Wireframe for the viral-content flow in Ken's app. Colours from web/theme.css. Not wired to anything. -->
+<meta charset="utf-8">
+<title>Ken: what's working (mock)</title>
+<style>
+:root{--bg:#fff;--side:#f6f5f3;--well:#f3f2ef;--line:#e9e8e5;--ink:#1c1b1a;--muted:#55544f;--faint:#6e6d69;--go:#2f7d4f;--go-soft:#edf5ef}
+*{box-sizing:border-box}body{margin:0;background:#e9e7e2;font:14px/1.45 -apple-system,system-ui,"Segoe UI",sans-serif;color:var(--ink);width:1400px;padding:24px;display:flex;gap:20px}
+.pane{background:var(--bg);border-radius:14px;overflow:hidden;border:1px solid var(--line);display:flex;flex-direction:column}
+.chat{width:760px}.brain{width:572px}
+header{display:flex;gap:6px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.tab{padding:5px 12px;border-radius:8px;color:var(--muted)}.tab.sel{background:var(--well);color:var(--ink);font-weight:600}
+header .r{margin-left:auto;color:var(--faint);font-size:13px}
+.body{padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.me{align-self:flex-end;background:var(--ink);color:#fff;padding:9px 13px;border-radius:14px 14px 4px 14px;max-width:70%}
+.ken{max-width:92%}.ken p{margin:0 0 6px}
+.card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.card .h{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.card .h b{font-size:14px}.card .h small{color:var(--faint)}
+.board img{width:100%;height:250px;object-fit:cover;object-position:top;display:block}
+.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{border:1px solid var(--line);border-radius:99px;padding:6px 12px;background:var(--side);font-size:13px}
+.chip.go{background:var(--ink);color:#fff;border-color:var(--ink)}
+.hook{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;gap:10px}.hook:last-child{border:0}
+.hook i{font-style:normal;color:var(--faint);width:16px}.hook small{display:block;color:var(--faint)}
+.plan{padding:10px 12px;font-size:13px}.plan div{display:flex;gap:10px;padding:3px 0}.plan span{color:var(--faint);width:44px;flex:none}
+.note{font-size:12px;color:var(--faint)}
+.brain .body{background:var(--side);flex:1}
+.sec{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.sec h3{margin:0 0 2px;font-size:14px}.sec p{margin:0;color:var(--muted);font-size:13px}
+.new{font-size:11px;background:var(--go-soft);color:var(--go);border-radius:99px;padding:1px 7px;margin-left:6px;font-weight:600}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:13px}.row:first-of-type{border:0}
+.lbl{font-size:12px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:6px 2px 0}
+</style>
+
+<section class="pane chat">
+  <header><span class="tab sel">Chat</span><span class="tab">Brain</span><span class="r">Claude · Sonnet ▾ &nbsp; ☕ &nbsp; Clear</span></header>
+  <div class="body">
+    <div class="me">what's working in travel reels this week? i want ideas for madeira</div>
+    <div class="ken"><p>Checked 6 accounts you look up to and 8 reels beating their usual views. Your board:</p></div>
+    <div class="card board">
+      <div class="h"><b>Trend board · travel · Nov 19</b><small>board.png · Open preview ↗</small></div>
+      <img src="board-sample.jpg" alt="">
+    </div>
+    <div class="ken"><p><b>What's working:</b> tours and reveals with a voice hook (7 of 8), median 55 s, 3 cuts per 10 s.
+      <b>Worth copying for you:</b> the "it's not X, it's not Y" reveal (Kara and Nate, 52x their usual).</p></div>
+    <div class="chips"><span class="chip go">10 hooks for Madeira</span><span class="chip">Plan my next reel</span><span class="chip">Why did #3 work?</span></div>
+    <div class="me">plan one with hook 2</div>
+    <div class="card">
+      <div class="h"><b>Plan · "The best thing in Madeira is up these stairs"</b><small>plan.md · 32 s · reveal tour</small></div>
+      <div class="plan">
+        <div><span>0–2s</span>Hook: walking up the stairs. "The best thing in Madeira isn't what you think."</div>
+        <div><span>2–14s</span>"It's not Cabo Girão… not the lava pools… not the sunrise" · 4 clips from Dropbox/Madeira</div>
+        <div><span>14–26s</span>"It's this." Reveal held 5 s, two details, the how-to</div>
+        <div><span>26–32s</span>"Save this for your trip." · 2 shots missing: film or use a still</div>
+      </div>
+    </div>
+    <div class="chips"><span class="chip go">Edit it from my footage</span><span class="chip">Change the hook</span><span class="chip">Shorter</span></div>
+    <p class="note">Nothing is posted. The finished reel + caption come back here; posting needs a yes for that exact post.</p>
+  </div>
+</section>
+
+<section class="pane brain">
+  <header><span class="tab">Chat</span><span class="tab sel">Brain</span></header>
+  <div class="body">
+    <div class="lbl">Brain</div>
+    <div class="sec"><h3>Who Ken is</h3><p>Ken · your assistant · travel creator, Madeira + Iceland</p></div>
+    <div class="sec"><h3>Creator <span class="new">new</span></h3>
+      <p style="margin-bottom:8px">What Ken watches for you and what it learnt</p>
+      <div class="row"><span>Niche</span><b>Travel, lifestyle · Madeira, Iceland</b></div>
+      <div class="row"><span>Accounts you look up to</span><b>6 · edit</b></div>
+      <div class="row"><span>Your best reels (Instagram)</span><b>Connect to see ›</b></div>
+      <div class="row"><span>Trend boards</span><b>Nov 19 · Nov 12 ›</b></div>
+      <div class="row"><span>Hook bank</span><b>20 hooks ›</b></div>
+      <div class="row"><span>Your style</span><b>video-style.md ›</b></div>
+    </div>
+    <div class="sec"><h3>Scheduled jobs</h3><p>Morning brief 07:00 · <b>Weekly trends Mon 09:00</b> · Nightly review 23:00</p></div>
+    <div class="sec"><h3>What Ken remembers</h3><p>14 notes</p></div>
+    <div class="sec"><h3>Accounts &amp; passwords</h3><p>YOUTUBE_API_KEY (optional, better discovery)</p></div>
+  </div>
+</section>
