@@ -766,7 +766,7 @@ class Engine:
         ref = ref.strip().strip("`").removeprefix("file://")
         p = Path(os.path.expanduser(ref))
         tries = [p] if p.is_absolute() else [self.home_cwd / p, self.home / p]
-        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.home / "sent", self.agents_dir]
+        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.home / "sent", self.agents_dir]  # sent: until moved
         user, ken = Path.home().resolve(), self.home.resolve()
         for t in tries:
             try:
@@ -782,8 +782,8 @@ class Engine:
                     r.is_relative_to(t) and not any(part.startswith(".") for part in r.relative_to(t).parts)
                     for t in _temp_roots()):
                 return r
-        # A file an older message named in the outbox, kept in "sent" since no Telegram was there to send it
-        # (bot.tidy_outbox): the same file, so their old Download button still opens it.
+        # A file an older message named in the outbox, kept in the workspace's sent-files since no Telegram was there to
+        # send it (bot.tidy_outbox; ~/.ken/sent before that): the same file, so their old Download button still opens it.
         outbox = (self.home / "outbox").resolve()
         for t in tries:
             try:
@@ -795,9 +795,9 @@ class Engine:
                     rel = t.parent.resolve().joinpath(t.name).relative_to(outbox)
                 except (ValueError, OSError):
                     rel = None
-            kept = (self.home / "sent" / rel) if rel else None
-            if kept and kept.is_file():
-                return kept.resolve()
+            for kept in ((self.home_cwd / "sent-files" / rel), (self.home / "sent" / rel)) if rel else ():
+                if kept.is_file():
+                    return kept.resolve()
         raise KeyError(ref)
 
     async def _readable_picture(self, pid: str, name: str) -> str:

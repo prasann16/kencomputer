@@ -471,6 +471,35 @@ def outbox_unsent() -> bool:
     return not ALLOWED_USER_ID
 
 
+def keep_in_workspace() -> int:
+    """Files once kept in ~/.ken/sent move into the workspace (SENT_DIR), so everything Ken keeps is in one place.
+    Moved, never deleted: one identical to what's already there just goes (it's the same file), a different one by
+    the same name stays where it is. Returns how many moved."""
+    moved = 0
+    if not LEGACY_SENT_DIR.is_dir():
+        return moved
+    for path in sorted(LEGACY_SENT_DIR.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            dest = SENT_DIR / path.relative_to(LEGACY_SENT_DIR)
+            if dest.exists():
+                if filecmp.cmp(path, dest, shallow=False):
+                    path.unlink()
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), dest)
+            moved += 1
+        except OSError as e:
+            log.warning("keeping %s in the workspace: %s", path.name, e)
+    for d in sorted((p for p in LEGACY_SENT_DIR.rglob("*") if p.is_dir()), reverse=True) + [LEGACY_SENT_DIR]:
+        try:
+            d.rmdir()  # only empty ones
+        except OSError:
+            pass
+    return moved
+
+
 def tidy_outbox(home_cwd: Path | None = None) -> dict:
     """With no Telegram linked, nothing ever empties the outbox, so files put there for it stay forever (a second copy
     of each reel). Each one moves to SENT_DIR, never deleted: one that's an exact copy of a file in their workspace or
@@ -650,7 +679,8 @@ TELEGRAM_FILES = (
     "videos as playable videos shrunk to fit, everything else as documents; one too big comes as a download link) "
     "and removed from there. That folder is plumbing: never mention it to them, just say what you're sending."
 )
-SENT_DIR = KEN_HOME / "sent"  # outbox files kept when no Telegram will ever send them (tidy_outbox)
+SENT_DIR = WORKSPACE / "sent-files"  # outbox files kept when no Telegram will ever send them (tidy_outbox)
+LEGACY_SENT_DIR = KEN_HOME / "sent"  # where tidy_outbox first kept them, for a day: moved into SENT_DIR at start
 SECRETS_RULE = (
     "SECRETS: when you need a login or API key, ask them to add it in the app's Brain, under Accounts & "
     "passwords (the Brain tab at the top), never as a text file and never in chat. Keys added there reach you as environment "
@@ -2053,10 +2083,11 @@ OLD_NIGHTLY_TAILS = (
     "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\"",
     "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
     "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, caches), list the biggest few with sizes. Never offer browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never offer their own uploads in ~/.ken/inbox. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
 )
 # They decide what goes, their uploads included; the one thing never listed is a browser profile, which holds their
 # sign-ins (clearing one signs them out of their sites).
-NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
+NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder, then ONE du over every folder where files are kept, together so a file kept in two places counts once: your workspace ~/.ken/work (videos, renders, documents, sent-files), their uploads in ~/.ken/inbox, any agents' folders in ~/.ken/agents, ~/.ken/outbox, temp files in /tmp and caches like ~/.cache and ~/.npm. If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. A file kept in two places (the same file, linked) frees nothing until both go, so count and offer it once. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
 
 
 def migrate_jobs() -> None:
@@ -3275,8 +3306,9 @@ async def run() -> None:
             PHONE.keep_starting(token)
         else:
             log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+        await asyncio.to_thread(keep_in_workspace)
         if outbox_unsent():
-            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it elsewhere
+            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it in the workspace
         await ENGINE.resume_interrupted()
         await stop.wait()
     finally:
