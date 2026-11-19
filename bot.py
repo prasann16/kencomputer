@@ -111,6 +111,7 @@ if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
 
 import asyncio
 import html
+import filecmp
 import json
 import logging
 import os
@@ -312,7 +313,7 @@ def video_prompt() -> str:
         "(the file's full path and what they asked) and tell them it's running. Unless they ask for a length, a reel is about 60 seconds: keep what "
         "they meant to say, in their order, minus warm-up, retakes, tangents, repeats and dead air. Reels are vertical 1080x1920. "
         "Watch your own output before sending: grab a few frames "
-        "with ffmpeg and look at them. Then copy the mp4 to the outbox."
+        "with ffmpeg and look at them. Then send it to them as any file (SENDING FILES)."
     )
 
 
@@ -464,6 +465,59 @@ def no_paths(text: str) -> str:
     return _PATH_IN_TEXT.sub(swap, text)
 
 
+def tidy_outbox(home_cwd: Path | None = None) -> dict:
+    """With no Telegram linked, nothing ever empties the outbox, so files put there for it stay forever (a second copy
+    of each reel). Each one moves to SENT_DIR, never deleted: one that's an exact copy of a file in their workspace or
+    files becomes a hard link to it there (the same file, no space twice), anything else is moved as it is. An old chat
+    message's outbox path still opens it (engine.shared_file looks in SENT_DIR). Runs at every start without Telegram."""
+    out = {"linked": 0, "moved": 0}
+    if not OUTBOX_DIR.is_dir():
+        return out
+    work = home_cwd or (KEN_HOME / "work")
+    sizes: dict[int, list[Path]] | None = None
+    for path in sorted(OUTBOX_DIR.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            rel = path.relative_to(OUTBOX_DIR)
+            kept = SENT_DIR / rel
+            if kept.exists():
+                if filecmp.cmp(path, kept, shallow=False):
+                    path.unlink()  # already kept, the same file
+                    out["linked"] += 1
+                continue  # a different file by that name: left where it is, never overwritten
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            if sizes is None:  # what's in their workspace and files, by size, to find an original
+                sizes = {}
+                for root in (work, INBOX_DIR):
+                    for f in (root.rglob("*") if root.is_dir() else []):
+                        try:
+                            if f.is_file() and not f.is_symlink():
+                                sizes.setdefault(f.stat().st_size, []).append(f)
+                        except OSError:
+                            pass
+            size = path.stat().st_size
+            original = next((f for f in sizes.get(size, []) if f.stat().st_ino != path.stat().st_ino
+                             and filecmp.cmp(path, f, shallow=False)), None)
+            if original:
+                os.link(original, kept)
+                path.unlink()
+                out["linked"] += 1
+            else:
+                shutil.move(str(path), kept)
+                out["moved"] += 1
+        except OSError as e:
+            log.warning("outbox tidy: %s: %s", path.name, e)
+    for d in sorted((p for p in OUTBOX_DIR.rglob("*") if p.is_dir()), reverse=True):
+        try:
+            d.rmdir()  # only empty ones
+        except OSError:
+            pass
+    if out["linked"] or out["moved"]:
+        log.info("outbox tidied (no Telegram): %s linked to their originals, %s moved to %s", out["linked"], out["moved"], SENT_DIR)
+    return out
+
+
 async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
@@ -578,16 +632,19 @@ WORK_RULES = (
     "with what it is and two or three concrete things you could do with it for them (a talking video: a ~60-second reel "
     "with captions and graphics, short clips, a post from what they said; a PDF: a summary, the key numbers, a reply), "
     "and wait for them to pick. When they've said what they want, just do it (long work as a background job). "
-    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
-    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, videos as playable videos (converted and shrunk to fit "
-    "Telegram's 50MB automatically), everything else as documents. Copy, don't "
-    "move, if the original matters. Say what you're sending in your reply — the file arrives "
-    "right after it (one too big for Telegram comes as a download link). Never write out where a file is saved. "
-    "When they wrote from the app, give the file's full path alone in backticks: the app shows it as a player or "
-    "a file with a Download button, by name, never the path. "
+    "SENDING FILES: to give the human a file (a chart, PDF, screenshot, export, a video, anything you made or "
+    "found), give its full path alone in backticks in your reply: the app shows it as a player or a file with a "
+    "Download button, by name, never the path. Say what you're sending; never talk about folders or how a file "
+    "reaches them. "
 )
+# Only where Ken on their phone (Telegram) is linked (where_you_are): the outbox is how files reach the chat there.
+TELEGRAM_FILES = (
+    f"FILES ON TELEGRAM: Telegram can't show a path, so also copy each file you send into {OUTBOX_DIR} (create the "
+    "folder if needed; copy, don't move). Right after your reply it's sent to their Telegram (images as photos, "
+    "videos as playable videos shrunk to fit, everything else as documents; one too big comes as a download link) "
+    "and removed from there. That folder is plumbing: never mention it to them, just say what you're sending."
+)
+SENT_DIR = KEN_HOME / "sent"  # outbox files kept when no Telegram will ever send them (tidy_outbox)
 SECRETS_RULE = (
     "SECRETS: when you need a login or API key, ask them to add it in the app's Brain, under Accounts & "
     "passwords (the Brain tab at the top), never as a text file and never in chat. Keys added there reach you as environment "
@@ -614,8 +671,7 @@ HOSTED_PROMPT = (
     "this computer sleeps; it wakes for their messages and for your scheduled jobs. "
     "THE KEN APP: they may talk to you in the Ken phone app instead of Telegram (messages from it say they're "
     "from the app). It shows any file you name by its full path in your reply, and plays videos and pictures "
-    "right in the chat, so name the full path of anything you made for them (a reel, a PDF), as well as putting "
-    "it in the outbox for Telegram."
+    "right in the chat, so name the full path of anything you made for them (a reel, a PDF)."
 )
 
 HEADLESS_BROWSER_PROMPT = (
@@ -957,6 +1013,8 @@ def where_you_are(f: dict | None = None) -> str:
                      "header \"Authorization: Bearer $(cat ~/.ken/web-token)\". Files you make live here: name the full "
                      "path of anything you made for them so they can open it in the app. If you're asked how much of "
                      "their plan is left, tell them it's under Settings.")
+    if f["telegram"] or kind == "server":
+        lines.append(TELEGRAM_FILES)
     return "=== Where you are ===\n" + "\n".join(lines) + "\n=== end where you are ==="
 
 
@@ -3211,6 +3269,7 @@ async def run() -> None:
             PHONE.keep_starting(token)
         else:
             log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it, once, elsewhere
         await ENGINE.resume_interrupted()
         await stop.wait()
     finally:

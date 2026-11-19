@@ -766,7 +766,7 @@ class Engine:
         ref = ref.strip().strip("`").removeprefix("file://")
         p = Path(os.path.expanduser(ref))
         tries = [p] if p.is_absolute() else [self.home_cwd / p, self.home / p]
-        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.agents_dir]
+        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.home / "sent", self.agents_dir]
         user, ken = Path.home().resolve(), self.home.resolve()
         for t in tries:
             try:
@@ -782,6 +782,22 @@ class Engine:
                     r.is_relative_to(t) and not any(part.startswith(".") for part in r.relative_to(t).parts)
                     for t in _temp_roots()):
                 return r
+        # A file an older message named in the outbox, kept in "sent" since no Telegram was there to send it
+        # (bot.tidy_outbox): the same file, so their old Download button still opens it.
+        outbox = (self.home / "outbox").resolve()
+        for t in tries:
+            try:
+                rel = t.absolute().relative_to(outbox) if t.is_absolute() else None
+            except ValueError:
+                rel = None
+            if rel is None and t.is_absolute():
+                try:
+                    rel = t.parent.resolve().joinpath(t.name).relative_to(outbox)
+                except (ValueError, OSError):
+                    rel = None
+            kept = (self.home / "sent" / rel) if rel else None
+            if kept and kept.is_file():
+                return kept.resolve()
         raise KeyError(ref)
 
     async def _readable_picture(self, pid: str, name: str) -> str:
@@ -2189,7 +2205,7 @@ class Engine:
                 note = (f'\n\n=== You are a background job: "{run["title"]}" ===\nKen handed you this job so the chat stays '
                         "free; the brief is the message below. Do the work yourself, start to finish. Nobody is watching, so "
                         "don't ask questions: make sensible choices and say what you chose. Don't start other background jobs, "
-                        "don't message them and don't use the outbox; Ken tells them the result. Things that need their OK "
+                        "don't message them or send them files; Ken tells them the result and sends what you made. Things that need their OK "
                         "(sending, posting, spending) you prepare and leave for Ken to ask about. Save what you make in your "
                         "working folder. End with a short report for Ken: what you did, what you chose, and the full path "
                         "of every file you made.")
