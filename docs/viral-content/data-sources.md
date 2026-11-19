@@ -47,6 +47,50 @@ Other MCP servers found (official registry and GitHub, Nov 19):
 - **Thin wrappers over paid scrapers:** Seym0n/tiktok-mcp (209 stars), HasData, DataLikers, jsonscraper, Xpoz, and registry entries like `ai.trendhaus/tiktok` and `com.shortvidapi/tiktok-instagram-reels-shorts-mcp`.
 - **Avoid:** Bob-lance/instagram-engagement-mcp, which needs your Instagram username and password. That risks her account.
 
+## Free credits and startup programs
+
+Checked Nov 19 2026 on official pages. Nothing signed up for.
+
+| Source | Free now | Startup program |
+|---|---|---|
+| **treg** | $1 once per verified account. Calls at "the provider's own rate, with no markup"; failed calls free; repeat answers from its archive 10% ([pricing](https://treg.to/pricing), [llms.txt](https://treg.to/llms.txt)) | None found. Volume terms by email (llms.txt) |
+| **ScrapeCreators** | 100 credits + up to 1,200 bonus (G2 review 1,000, GitHub star 100, survey 100), no card ([pricing](https://scrapecreators.com/#pricing)) | None found. Smallest pack $47 / 25k = $0.00188 a credit; $497 / 500k = $0.00099 |
+| **Apify** | $5 usage every month, no card ([pricing](https://apify.com/pricing)) | **30% off Scale ($199/mo) for 6 to 12 months**: live product, < $5M raised, company email (Gmail auto-declined), no lead gen ([startups](https://apify.com/resources/startups)). Only pays off at scale |
+| **Bright Data** | 5k records a month free on Web Scraper API, no card; $1.50 / 1k after ([pricing](https://brightdata.com/pricing/web-scraper)) | **AI Startups Program, up to $20K credits**, pre-seed to Series A, AI central to the product ([program](https://brightdata.com/ai/ai-startups-program)). Best credit offer found |
+| **EnsembleData** | 50 units a day ([pricing](https://ensembledata.com/pricing)) | None found |
+| **SociaVault** | 50 credits; $29 / 6k ($4.83 per 1k) ([pricing](https://sociavault.com/pricing)) | None found |
+| **Phyllo** | Sandbox, mock data only ([start](https://www.getphyllo.com/start-building)) | None found, quote only |
+| **Influencers.club** | 10 credits ([pricing](https://influencers.club/pricing/)) | None found |
+| **RapidAPI IG** | Instagram Looter 150 req/mo, Scraper Stable 20 req/mo ([Looter](https://rapidapi.com/irrors-apis/api/instagram-looter2/pricing)) | None found |
+| **SerpApi** | 250 searches a month ([pricing](https://serpapi.com/pricing)) | None found |
+| **DataForSEO** | $1 trial, then $50 minimum top-up ([pricing](https://dataforseo.com/pricing)) | None found |
+| **YouTube Data API** | 10k units a day; `search.list` has its own 100 calls a day; more via the [quota form](https://support.google.com/youtube/contact/yt_api_form) ([docs](https://developers.google.com/youtube/v3/getting-started)) | n/a |
+
+Cloud programs give compute, **not data**: AWS, Google and Azure credits all exclude marketplace / third-party products ([AWS terms](https://aws.amazon.com/awscredits/), [Google FAQ](https://cloud.google.com/startup/faq), [Azure offer](https://azure.microsoft.com/pricing/offers/ms-azr-0036p/)).
+- **AWS Activate Founders:** $1K to $5K, bootstrapped OK ([page](https://aws.amazon.com/startups/credits)). The Bright Data 70% cashback offer is for Portfolio startups only ([offer](https://startups.aws.com/offers/bright-data)).
+- **Google for Startups Start:** up to $2K, needs a working MVP, a live site and a domain email ([FAQ](https://cloud.google.com/startup/faq)).
+- **Microsoft for Startups:** $200, then $4,800 after verification, no investor needed ([FAQ](https://learn.microsoft.com/en-us/startups/microsoft-for-startups/mfs-faqs)).
+- **Cloudflare for Startups Tier 3:** $10K for bootstrapped (< $1M raised), live site and domain email; Workers AI excluded for new joiners from Dec 1 ([page](https://www.cloudflare.com/forstartups/)). Fits ken-hosted, which already uses Cloudflare D1.
+
+**What to apply for:** Bright Data AI Startups (the only real data credits), Cloudflare Tier 3 for ken-hosted, and ScrapeCreators' 1,200 bonus credits. Every program needs the applying company's live site and domain email.
+
+## treg test (Nov 19 2026)
+
+treg (already logged in on Swap's laptop) proxies ScrapeCreators with treg's own key. 4 calls, all HTTP 200, **$0.00752 total** (balance $0.9150 → $0.9075):
+
+| Call | Result |
+|---|---|
+| `scrapecreators.x.v1-instagram-user-reels` handle=tanyakhanijow | 12 reels with `play_count`, likes, comments, date; `max_id` to page |
+| same, page 2 | 12 more. 22 non-pinned reels: median 348k plays, max 10.9M, so outlier scoring works |
+| `scrapecreators.x.v1-instagram-reels-trending` | 12 trending reels with plays and audio (`audio_asset_id` / `audio_cluster_id`, title, `is_trending_in_clips`). Global feed, not travel or India |
+| `scrapecreators.x.v1-instagram-audio-reels` audio_id from that feed | 12 reels on that audio with plays, `has_more`. `media_count` came back 0, so no usage count |
+
+- **Price:** $0.00188 a call, the same as ScrapeCreators' $47 tier (1 credit). Direct gets 2× cheaper at the $497 tier.
+- **Trending audio:** there is no ready list. Build it from the trending feed's audio IDs, then audio reels to count recent plays.
+- **Caveat:** treg tagged user-reels calls `routed_tool: treg.instagram.user.reels`, so treg may route a call to another provider. Pin the provider before relying on it. Every query and answer is logged by treg.
+
+**Recommendation:** prototype through treg now (zero setup, $0.0019 a call, the $0.90 left covers ~480 calls). Production goes through a direct ScrapeCreators key in ken-hosted (`/box/social`), so the key, caps and logs stay ours, and the price halves at volume.
+
 ## Recommendation
 
 **v1 (free, official, no new vendor)**
@@ -74,7 +118,7 @@ Other MCP servers found (official registry and GitHub, Nov 19):
 
 | Day | Do | Pass if |
 |---|---|---|
-| 1 | Get the free key (Swap signs up, no card). Add `--source scrapecreators` to `viral.py fetch`: IG user reels for the 10 travel accounts already in the test. Log credits used per call | Plays, likes and comments come back for at least 8 of 10 accounts. Credits per call are known |
+| 1 | Run through treg now (see the treg test above), or get the free key (Swap signs up, no card). Add `--source scrapecreators` to `viral.py fetch`: IG user reels for the 10 travel accounts already in the test. Log credits used per call | Plays, likes and comments come back for at least 8 of 10 accounts. Credits per call are known |
 | 2 | Compare with ground truth: the same reels via `business_discovery` (her FB login) and the views shown in the IG app | Plays within ±10% of the official `view_count` on at least 80% of reels |
 | 3 | Trending Reels + Reels by audio ID: build an "audio rising" list (reels per audio in the last 7 days, median plays) | At least 5 audios she recognises as trending in her niche (Swap or a test creator judges) |
 | 4 | Discovery: Search Reels and Popular Search for "india travel", "goa vlog", "solo travel india". Keep accounts with outliers ≥ 3× their median | At least 10 new relevant Indian accounts she didn't name |
