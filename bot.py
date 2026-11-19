@@ -31,6 +31,15 @@ if sys.argv[1:2] == ["--eleven"]:  # the video-kit skill's ElevenLabs helper, ru
     runpy.run_path(str(_script), run_name="__main__")
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--tools"]:  # the live-data skill's helper (treg's catalog through the host), run by Ken's own Python
+    import runpy
+    from pathlib import Path
+
+    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "live-data" / "scripts" / "tools.py"
+    sys.argv = [str(_script), *sys.argv[2:]]
+    runpy.run_path(str(_script), run_name="__main__")
+    raise SystemExit(0)
+
 if sys.argv[1:2] == ["--credits"]:  # hosted Ken: what used their Ken AI credits this month (they asked)
     import ken_credits
     raise SystemExit(ken_credits.main())
