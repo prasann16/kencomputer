@@ -551,7 +551,7 @@ def test_audio_only_with_real_ffmpeg(tmp_path):
 
 
 def test_host_clone_sends_consent(hosted, tmp_path, capsys):
-    fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, "1 voices")})
+    fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, ("0.0000", "3.42"))})
     a = tmp_path / "a.mp3"
     a.write_bytes(b"x")
     code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "yes, my own voice", "--own-voice"], capsys)
@@ -900,6 +900,8 @@ def test_a_clone_says_when_its_sample_is_noisy_and_still_clones(api, tmp_path, c
     fake = api({("POST", "/v1/voices/add"): {"voice_id": "v1"}})
     a = tmp_path / "note.mp3"
     a.write_bytes(b"x")
+    code, info, _ = run(["estimate", "clone", str(a)], capsys)  # before cloning: free, nothing sent
+    assert code == 0 and info["noisy"] is True and fake.calls == []
     code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
     assert code == 0 and info["noisy"] is True and [c["path"] for c in fake.calls] == ["/v1/voices/add"]
     monkeypatch.setattr(eleven, "noise_gap", lambda *a: 40.0)
@@ -917,4 +919,5 @@ def test_a_long_voice_note_goes_up_as_its_first_two_minutes(api, tmp_path, capsy
     fake = api({("POST", "/v1/voices/add"): {"voice_id": "v1"}})
     code, info, _ = run(["clone", "--name", "Me", "--sample", str(note), "--said", "yes", "--own-voice"], capsys)
     assert code == 0 and info["sample_seconds"] == 120 and b"voice_note.part.mp3" in fake.calls[0]["data"]
-    assert REAL_DURATION(note) > 190  # their file isn't changed
+    assert REAL_DURATION(note) > 190  # their file isn't changed, and it's the one in the consent record
+    assert json.loads((tmp_path / "consent.json").read_text())[0]["samples"] == [str(note)]

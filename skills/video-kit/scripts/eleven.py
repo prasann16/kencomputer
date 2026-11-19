@@ -186,8 +186,11 @@ def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, s
             answered = getattr(r, "headers", None) or {}
             moved = r.geturl() if hasattr(r, "geturl") else url
             if via and answered.get("x-ken-charged"):
-                CREDITS["used"] = CREDITS.get("used", 0.0) + float(answered.get("x-ken-charged") or 0)
-                CREDITS["left"] = answered.get("x-ken-credits-left")
+                try:
+                    CREDITS["used"] = CREDITS.get("used", 0.0) + float(answered.get("x-ken-charged"))
+                    CREDITS["left"] = answered.get("x-ken-credits-left")
+                except ValueError:
+                    pass
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:600]
         if via and _host_page(e.code, detail):
@@ -340,25 +343,16 @@ def done(**info) -> dict:
         info.pop("usd", None)
         if "used" in CREDITS:
             info["credits_used"] = money(CREDITS["used"])
-            if CREDITS.get("left") is not None:
-                info["credits_left"] = money(float(CREDITS["left"]))
+            try:
+                info["credits_left"] = money(float(CREDITS.get("left")))
+            except (TypeError, ValueError):
+                pass
     else:
         info.setdefault("account", "own")
         if host_route():
             info["account_note"] = "Ran on their own ElevenLabs key (their credits): it wins over Ken AI credits while it's in Brain."
     print(json.dumps(info, ensure_ascii=False))
     return info
-
-
-def margin() -> float:
-    """What Ken AI credits charge over ElevenLabs' price (the host says, in /quota)."""
-    global MARGIN
-    if host() and "margin" not in CREDITS:
-        try:
-            CREDITS["margin"] = MARGIN = float(call("GET", "/quota").get("margin") or MARGIN)
-        except (Fail, ValueError, TypeError):
-            CREDITS["margin"] = MARGIN
-    return MARGIN
 
 
 # ---------- captions: Scribe words → SRT ----------
@@ -424,14 +418,19 @@ def cmd_estimate(a):
     secs = duration(need(a.file)) if a.file else (a.seconds or 0)
     quota = call("GET", "/quota") if host() else None
     usd = cost(a.feature, seconds=secs, chars=a.chars or 0)
+    # A clone sample: is there background noise in it? Checked here with ffmpeg, free; a quiet re-record clones better.
+    extra = {}
+    if a.feature == "clone" and a.file:
+        gap = noise_gap(Path(a.file).expanduser(), None, min(secs, CLONE_MOST))
+        extra["noisy"] = gap is not None and gap < NOISY_DB
     if quota is not None:
         if a.feature == "dub_v2":
             raise Fail("Dubbing v2 isn't available on Ken. Use the normal dub (v1).")
         credits = usd * float(quota.get("margin") or MARGIN)
         left = float(quota.get("credits_left_usd") or 0)
-        return done(feature=a.feature, credits=money(credits), credits_left=money(left), fits=credits <= left)
+        return done(feature=a.feature, credits=money(credits), credits_left=money(left), fits=credits <= left, **extra)
     return done(feature=a.feature, seconds=round(secs, 1), chars=a.chars, usd=usd,
-                note="Estimate from elevenlabs.io/pricing/api; on a plan it comes out of credits first.")
+                note="Estimate from elevenlabs.io/pricing/api; on a plan it comes out of credits first.", **extra)
 
 
 def cmd_tts(a):
@@ -461,16 +460,23 @@ def cmd_clone(a):
     total = sum(duration(s) for s in samples)
     if total < 10:
         raise Fail(f"Samples add up to {total:.0f}s; ElevenLabs needs at least 10 s (1 to 2 minutes of clean talking is best).")
+    originals = samples
     samples, total = clone_part(samples, total)
     gap = noise_gap(samples[0], None, min(total, CLONE_MOST))
     how = "chat" if said else "recording"
     note = f"chat: {said}" if said else consent.name
     note = " ".join(note.split()).encode("ascii", "backslashreplace").decode()  # a header is ASCII, one line
     labels = json.dumps({"consent": how, "made_by": "ken"})
-    r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
-                                               "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
-             files=[("files", s) for s in samples],
-             headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": note[:200]})
+    try:
+        r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
+                                                   "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
+                 files=[("files", s) for s in samples],
+                 headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": note[:200]})
+    finally:
+        for s in samples:
+            if s not in originals:  # a cut made by clone_part
+                shutil.rmtree(s.parent, ignore_errors=True)
+    samples = originals
     record = Path(a.record) if a.record else samples[0].parent / "consent.json"
     entries = json.loads(record.read_text()) if record.exists() else []
     entries.append({"who": a.who or a.name, "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "how": how, "said": said or None,

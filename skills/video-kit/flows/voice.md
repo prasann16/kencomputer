@@ -14,9 +14,9 @@ ElevenLabs plan (Starter and up).
    is the one saying yes to you. Refuse in one friendly line and offer a stock or designed voice instead
    ("I can only clone your own voice, but I can find or design one that sounds close"). That no is final.
 2. **Samples.** A voice note or recording of them talking: clone from it as it is (step 3; the helper sends up to
-   2 minutes). If it says `noisy`, suggest once that a re-record somewhere quiet sounds better; clone anyway if they'd
-   rather not. Nothing sent: ask for a 1 to 2 minute voice note, or find their voice in what exists (the videos they
-   sent, their workspace, their own media folders):
+   2 minutes). If `eleven.py estimate clone <file>` says `noisy`, suggest once a quiet re-record; clone anyway if
+   they'd rather not. Nothing sent: ask for a 1 to 2 minute voice note; only if they don't send one, find their voice
+   in what exists (the videos they sent, their workspace, their own media folders):
 
        <ken> --eleven clone-from [file or folder ...] --out-dir voice/
 

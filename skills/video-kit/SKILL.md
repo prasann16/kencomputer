@@ -59,7 +59,7 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
   friend, a client or anyone "who said it's fine" unless that person says yes to you themselves: refuse in one
   friendly line and offer a stock or designed voice instead.
 - **Clone from what they send.** A voice note or recording of them: clone from it directly. Nothing yet: ask for a
-  1 to 2 minute voice note, or find their talking in their existing videos (`eleven.py clone-from`).
+  1 to 2 minute voice note; only if they don't send one, find their talking in their videos (`eleven.py clone-from`).
 - **Label synthetic media.** A dubbed, cloned or changed voice is AI generated. When they're about to post one,
   remind them in one line to switch on the platform's AI label (India's IT Rules require it since Feb 2026; Meta,
   YouTube and TikTok all have the toggle). Don't nag about cleaned audio, music or sound effects.
