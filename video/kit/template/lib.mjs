@@ -1,17 +1,13 @@
 // Shared by render.mjs and stills.mjs: one Remotion job at a time, and one bundle per version of the code and cut.
-import { createHash } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { bundle } from "@remotion/bundler";
 
-export const hash = (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
+import { codeHash, hash } from "./plan.mjs";
 
-const codeFiles = (dir) =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? codeFiles(join(dir, e.name)) : [join(dir, e.name)]));
-// The project's code (custom graphics included).
-export const codeHash = () => hash(codeFiles("src").sort().map((f) => [f, readFileSync(f, "utf8")]));
+export { codeHash, hash };
 
 // Where each graphic goes, as registered in the reel's own src/graphics/index.ts (so a graphic Ken wrote is placed
 // here the way Reel.tsx places it), over the standard ones in case that file can't be read.
