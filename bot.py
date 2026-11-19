@@ -2548,8 +2548,11 @@ async def model_choices(backend):
     before = path.stat().st_mtime if path.exists() else 0
     stale = not before or time.time() - before > 86400
     if stale or not available_models(backend) or listed_for != login:
+        def seen():  # the list file as it is now; Windows' clock can give a rewrite the same timestamp
+            return (path.stat().st_mtime_ns, path.read_bytes()) if path.exists() else None
+        was = seen()
         await refresh_models_file(backend=backend)
-        if path.exists() and path.stat().st_mtime != before:  # only a list that came back is marked as this login's
+        if path.exists() and seen() != was:  # only a list that came back is marked as this login's
             stamp.write_text(login + "\n")
     return available_models(backend)
 
