@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The video tests (cutting, rendering in pieces, HDR colours) need ffmpeg with zscale; without it they skip.
+      - run: brew install ffmpeg && ffmpeg -hide_banner -filters | grep -E " (zscale|tonemap) "
       - run: |
           npm ci --omit=dev --ignore-scripts
           uv venv -q --seed --managed-python --python 3.13 .venv
