@@ -1418,14 +1418,14 @@ function HostedApps() {
   const logo = (a, size) => a.slug === 'imap' ? html`<i class="imap-logo">${Glyph('mail')}</i>` : html`<img src=${'/app-logos/' + a.slug} alt="" width=${size} height=${size} loading="lazy"/>`;
   const add = (slug) => slug === 'imap' ? setImap(true) : connect(slug);
   // The upgrade card (people still on Agent37's apps whom the site's rollout includes): moves them to Ken's own apps
-  // server with no restart, then the same spot lists the apps they had, to reconnect. Later: gone for 7 days.
-  const upgrade = async (later) => {
-    setBusy(later ? 'later' : 'upgrade'); setProblem('');
+  // server with no restart, then the same spot lists the apps they had, to reconnect. It stays until they upgrade.
+  const upgrade = async () => {
+    setBusy('upgrade'); setProblem('');
     try {
-      const r = await fetch(later ? '/account/apps/later.json' : '/account/apps/upgrade.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({}) });
+      const r = await fetch('/account/apps/upgrade.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({}) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't upgrade just now. Try again in a minute.");
       // Ken asks the site where its apps are now (at once, not at its next check-in); an older Ken just waits for that.
-      if (later) setData((d) => ({ ...d, upgrade: false })); else { await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine(); }
+      await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine();
     } catch (e) { setProblem(e.message); }
     finally { setBusy(''); }
   };
@@ -1448,8 +1448,9 @@ function HostedApps() {
     ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
     ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
     ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
-    ${data?.upgrade && html`<div class="apps-upgrade"><p class="np-help"><b>Upgrade your app connections</b><br/>Faster and more reliable, and Ken can post photos and videos for you. You'll reconnect your apps once, about a minute.</p>
-      <div class="apps-upgrade-actions"><button class="btn sm primary" disabled=${!!busy} onClick=${() => upgrade(false)}>${busy === 'upgrade' ? 'Upgrading…' : 'Upgrade and reconnect'}</button><button class="text-action" disabled=${!!busy} onClick=${() => upgrade(true)}>Later</button></div></div>`}
+    ${data?.upgrade && html`<div class="apps-upgrade"><b class="apps-upgrade-title">Upgrade your app connections</b>
+      <p class="apps-upgrade-text">Faster and more reliable, and Ken can post photos and videos for you. You'll reconnect your apps once. It takes about a minute.</p>
+      <button class="btn sm primary" disabled=${!!busy} onClick=${upgrade}>${busy === 'upgrade' ? 'Upgrading…' : 'Upgrade and reconnect'}</button></div>`}
     ${data?.reconnect?.length > 0 && html`<div class="apps-reconnect"><p class="np-help"><b>Reconnect</b><br/>I've upgraded how I connect to your apps. Reconnect these once and everything works as before.</p>
       <div class="apps-grid">${data.reconnect.map((a) => html`<div class="apps-row" data-name=${a.name}><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span class="app-name">${a.name}${a.accounts?.length > 0 && html` <small>${a.accounts.join(', ')}</small>`}</span>
         <button class="btn sm primary" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Reconnect'}</button></div>`)}</div></div>`}
