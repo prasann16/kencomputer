@@ -1392,15 +1392,18 @@ function HostedApps() {
   const [data, setData] = useState(null), [error, setError] = useState(''), [q, setQ] = useState(''), [busy, setBusy] = useState('');
   // Each connected app's accounts, named by Ken's computer (it asks the apps themselves: /api/apps); the site's own
   // list (no names, its own ids) stands in when Ken can't be asked.
-  const [mine, setMine] = useState(null), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
+  // What was connected last time shows at once (remembered in this browser), and Ken's fresh answer replaces it quietly:
+  // nothing waits or jumps. Never seen yet: the site's list, with the account names as placeholders until Ken says.
+  const [mine, setMine] = useState(() => cached('apps-mine')), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
   // IMAP: any inbox with its password, for technical users; Ken's computer holds these, not the app catalog.
-  const [mail, setMail] = useState(null), [imap, setImap] = useState(false);
+  const [mail, setMail] = useState(() => cached('apps-mail')), [imap, setImap] = useState(false);
   const imapShown = !q.trim() || /imap|mail|inbox|smtp/i.test(q);
   const say = new URLSearchParams(location.search);
   const load = (query = q) => { setError(''); fetch('/account/apps.json' + (query ? '?q=' + encodeURIComponent(query) : ''), { credentials: 'same-origin' })
     .then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load your apps just now.")); };
-  const loadMine = () => api('/api/apps', { timeout: 60000 }).then((r) => setMine(r.connected)).catch(() => setMine(false));
-  useEffect(() => { load(''); loadMine(); api('/api/connections').then((r) => setMail(r.emails)).catch(() => setMail([])); }, []);
+  const loadMine = (fresh) => api('/api/apps' + (fresh ? '?fresh=1' : ''), { timeout: 60000 }).then((r) => { setMine(r.connected); keep('apps-mine', r.connected); })
+    .catch(() => setMine((m) => m || false));
+  useEffect(() => { load(''); loadMine(!!say.get('say')); api('/api/connections').then((r) => { setMail(r.emails); keep('apps-mail', r.emails); }).catch(() => setMail((m) => m || [])); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
     setBusy(slug); setProblem('');
@@ -1413,7 +1416,8 @@ function HostedApps() {
   };
   const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
     .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
-  const connected = [...(mine ? mine.filter((a) => a.accounts?.length) : mine === false ? fromSite : []),
+  const naming = mine === null; // Ken hasn't said whose accounts these are yet (first look in this browser)
+  const connected = [...(mine ? mine.filter((a) => a.accounts?.length) : fromSite),
     ...(mail?.length ? [{ slug: 'imap', name: 'IMAP', accounts: mail.map((m) => ({ id: m.address, label: m.address, via: 'imap' })) }] : [])];
   const logo = (a, size) => a.slug === 'imap' ? html`<i class="imap-logo">${Glyph('mail')}</i>` : html`<img src=${'/app-logos/' + a.slug} alt="" width=${size} height=${size} loading="lazy"/>`;
   const add = (slug) => slug === 'imap' ? setImap(true) : connect(slug);
@@ -1425,7 +1429,7 @@ function HostedApps() {
       const r = await fetch('/account/apps/upgrade.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({}) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't upgrade just now. Try again in a minute.");
       // Ken asks the site where its apps are now (at once, not at its next check-in); an older Ken just waits for that.
-      await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine();
+      await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine(true);
     } catch (e) { setProblem(e.message); }
     finally { setBusy(''); }
   };
@@ -1438,8 +1442,8 @@ function HostedApps() {
         const r = await fetch('/account/apps/disconnect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ id: account.id }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't disconnect that account just now.");
       }
-      if (account.via === 'imap') setMail((await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails);
-      else { await loadMine(); load(); }
+      if (account.via === 'imap') { const left = (await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails; setMail(left); keep('apps-mail', left); }
+      else { await loadMine(true); load(); }
       setAsking('');
     } catch (e) { setProblem(e.message); }
     finally { setBusy(''); }
@@ -1456,12 +1460,11 @@ function HostedApps() {
         <button class="btn sm primary" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Reconnect'}</button></div>`)}</div></div>`}
     ${connected.length > 0 && html`<div class="app-accounts">${connected.map((a) => html`<div class="app-group">
       <div class="app-head">${logo(a, 22)}<span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
-      ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i><span class="app-account-name">${x.label}</span></span>${asking === x.id
+      ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i>${naming ? html`<span class="app-account-name naming" aria-label="Loading"></span>` : html`<span class="app-account-name">${x.label}</span>`}</span>${naming ? '' : asking === x.id
         ? html`<span class="app-confirm"><button class="btn sm" disabled=${!!busy} onClick=${() => disconnect(a, x)}>${busy === 'off:' + x.id ? 'Disconnecting…' : 'Disconnect'}</button><button class="text-action" disabled=${!!busy} onClick=${() => setAsking('')}>Keep</button></span>`
         : html`<button class="text-action" disabled=${!!busy} aria-label=${`Disconnect ${a.name}: ${x.label}`} onClick=${() => setAsking(x.id)}>Disconnect</button>`}</div>`)}
       <button class="app-add" disabled=${!!busy} onClick=${() => add(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
     </div>`)}</div>`}
-    ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
     ${imap && html`<div class="apps-imap"><div class="app-head">${logo({ slug: 'imap' })}<span>Connect an inbox over IMAP</span></div>
       <${EmailForm} onDone=${(r) => { setMail(r.emails); setImap(false); }} onCancel=${() => setImap(false)}/></div>`}
