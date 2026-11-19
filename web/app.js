@@ -72,9 +72,12 @@ async function api(path, opts = {}) {
   const data = await r.json().catch(() => ({}));
   // A code from the host (e.g. "container_unreachable" while Ken's computer wakes) is never shown as is.
   const said = typeof data.error === 'string' && !/^[a-z0-9_.-]+$/.test(data.error) ? data.error : '';
-  if (!r.ok) throw new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText));
+  if (!r.ok) throw Object.assign(new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText)), { status: r.status });
   return data;
 }
+// The web app can be newer than the Ken behind it (hosted Ken serves one app to every computer): a feature that Ken
+// doesn't have yet answers 404 or 405, and the app quietly leaves it out.
+const notYet = (e) => e.status === 404 || e.status === 405;
 
 // Files the user attached; they show in their message, not as Ken's file cards.
 const ATTACHED = new Set();
@@ -890,7 +893,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       const box = thread.current;
       keepFromEnd.current = box ? box.scrollHeight - box.scrollTop : 0;
       setEarlier((e) => ({ messages: [...page.messages, ...e.messages], more: page.more, loading: false }));
-    } catch (e) { toast(e.message); setEarlier((x) => ({ ...x, loading: false })); }
+    } catch (e) { if (!notYet(e)) toast(e.message); setEarlier((x) => ({ ...x, loading: false, more: x.more && !notYet(e) })); }
   };
   useLayoutEffect(() => {
     const box = thread.current;
@@ -1942,6 +1945,12 @@ function Conversations({ pid }) {
 function About({ pid, onClose, onPreview, page, onAddTool }) {
   const [a, setA] = useState(null), [conn, setConn] = useState(null), [jobs, setJobs] = useState([]), [section, setSection] = useState(null);
   const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [skill, setSkill] = useState(null);
+  // Files and Conversations show only when this Ken has them (an older Ken answers 404); any other failure still shows the card.
+  const [has, setHas] = useState({});
+  useEffect(() => {
+    for (const [key, path] of [['files', `/api/files?kind=all&pid=${pid}`], ['conversations', `/api/days?pid=${pid}`]])
+      api(path).then(() => true, (e) => !notYet(e)).then((yes) => setHas((h) => ({ ...h, [key]: yes })));
+  }, []);
   const load = () => {
     api(`/api/about/${pid}`).then(setA).catch((e) => setError(e.message));
     api('/api/connections').then(setConn).catch(() => {});
@@ -1998,8 +2007,8 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
         <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
         ${a.skills.filter((s) => !s.app).map((s) => html`<div class="skill-row"><button class="skill-open" onClick=${() => api(`/api/skills/${encodeURIComponent(s.id)}`).then(setSkill).catch((e) => setError(e.message))}><b>${s.name}</b><span>${s.about}</span></button><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
     jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
-    { key: 'files', title: 'Files', summary: 'Videos, docs and pictures from your chats', body: html`<${ChatFiles} pid=${pid}/>` },
-    { key: 'conversations', title: 'Conversations', summary: 'Every chat, day by day', body: html`<${Conversations} pid=${pid}/>` },
+    has.files && { key: 'files', title: 'Files', summary: 'Videos, docs and pictures from your chats', body: html`<${ChatFiles} pid=${pid}/>` },
+    has.conversations && { key: 'conversations', title: 'Conversations', summary: 'Every chat, day by day', body: html`<${Conversations} pid=${pid}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
@@ -2405,7 +2414,7 @@ function App() {
     try {
       const result = await api(`/api/chats/${target}/unclear`, { json: {} });
       if (pidRef.current === target) setChat({ pid: target, ...result });
-    } catch (e) { toast(e.message); }
+    } catch (e) { toast(notYet(e) ? 'This Ken can’t undo a Clear yet. It can after its next update.' : e.message); }
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
