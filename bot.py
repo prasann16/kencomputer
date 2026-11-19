@@ -137,7 +137,10 @@ def tzset() -> None:
         time.tzset()
 
 
-if os.environ.get("TZ"):
+if os.name == "nt":
+    # Windows' C library reads TZ as "EST5EDT"-style only: "Europe/Lisbon" would put Ken's clock on UTC.
+    os.environ.pop("TZ", None)
+elif os.environ.get("TZ"):
     tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
 use_included_ai()  # a plan's included AI, unless they've connected their own Claude
 
@@ -2659,6 +2662,9 @@ def set_timezone(arg: str = "") -> dict:
         return {"reply": f"Ken's time zone is {os.environ.get('TZ') or time.strftime('%Z')}.", "timezone": os.environ.get("TZ", "")}
     if not _known_zone(name):
         return {"reply": f"I don't know the time zone {name}. Use one like Europe/Lisbon.", "timezone": os.environ.get("TZ", "")}
+    if os.name == "nt":  # see the top: Ken on Windows runs on the computer's own time zone
+        return {"reply": f"Ken uses this computer's time zone ({time.strftime('%Z')}). Change it in Windows Settings → Time & language.",
+                "timezone": ""}
     save_env(KEN_HOME / ".env", "TZ", name)
     tzset()
     return {"reply": f"Time zone set to {name}. It's {time.strftime('%H:%M')} there.", "timezone": name}

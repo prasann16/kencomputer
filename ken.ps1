@@ -22,9 +22,9 @@ function Stop-Ken {
   for ($i = 0; $i -lt 40; $i++) {
     $procs = @(Get-KenProcesses)
     if (-not $procs) { return }
-    if ($i -gt 0) { $procs | ForEach-Object { Write-Host "DEBUG still alive pass $i : $($_.ProcessId) parent $($_.ParentProcessId) $($_.CommandLine)" } }
     $procs | Sort-Object { -not $_.CommandLine.Contains("winrun.py") } |
       ForEach-Object { cmd /c "taskkill /F /T /PID $($_.ProcessId) >nul 2>&1" }
+    $global:LASTEXITCODE = 0  # a child taskkill /T already took is "not found": not a failure
     Start-Sleep -Milliseconds 500
   }
 }
