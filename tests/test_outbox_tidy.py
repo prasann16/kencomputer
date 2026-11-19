@@ -73,3 +73,50 @@ def test_tidied_when_nobody_is_linked_even_with_a_bot_key(monkeypatch):
     assert bot.outbox_unsent()
     monkeypatch.setattr(bot, "ALLOWED_USER_ID", 42)  # their Telegram is linked: the outbox empties itself
     assert not bot.outbox_unsent()
+
+
+def test_files_once_kept_in_sent_move_into_the_workspace_never_deleted(monkeypatch, tmp_path):
+    home = tmp_path / ".ken"
+    legacy, kept = home / "sent", home / "work" / "sent-files"
+    monkeypatch.setattr(bot, "LEGACY_SENT_DIR", legacy)
+    monkeypatch.setattr(bot, "SENT_DIR", kept)
+    (legacy / "sub").mkdir(parents=True)
+    (legacy / "reel.mp4").write_bytes(b"reel")
+    (legacy / "sub" / "a.mp4").write_bytes(b"a")
+    (legacy / "same.pdf").write_bytes(b"same")
+    (legacy / "clash.pdf").write_bytes(b"mine")
+    kept.mkdir(parents=True)
+    (kept / "same.pdf").write_bytes(b"same")  # already there, identical
+    (kept / "clash.pdf").write_bytes(b"other")  # a different file by that name
+    assert bot.keep_in_workspace() == 2
+    assert (kept / "reel.mp4").read_bytes() == b"reel" and (kept / "sub" / "a.mp4").read_bytes() == b"a"
+    assert (kept / "same.pdf").read_bytes() == b"same" and not (legacy / "same.pdf").exists()
+    assert (kept / "clash.pdf").read_bytes() == b"other" and (legacy / "clash.pdf").read_bytes() == b"mine"
+    assert legacy.exists()  # still holds the clash, so it stays
+    (legacy / "clash.pdf").unlink()
+    bot.keep_in_workspace()
+    assert not legacy.exists()
+
+
+def test_an_old_outbox_path_opens_the_file_kept_in_the_workspace(tmp_path):
+    from test_engine import FakeBrain
+    from engine import Engine
+
+    e = Engine(tmp_path, FakeBrain())
+    e.configure_home(tmp_path / "work", lambda: "KEN SOUL", lambda: "KEN AT WORK")
+    (tmp_path / "outbox").mkdir()
+    (tmp_path / "work" / "sent-files").mkdir(parents=True)
+    (tmp_path / "work" / "sent-files" / "reel.mp4").write_bytes(b"reel")
+    assert e.shared_file(str(tmp_path / "outbox" / "reel.mp4")) == (tmp_path / "work" / "sent-files" / "reel.mp4").resolve()
+
+
+def test_both_disk_checks_name_every_folder_where_files_are_kept(tmp_path):
+    for folder in ("~/.ken/work", "~/.ken/inbox", "~/.ken/agents", "~/.ken/outbox", "sent-files", "ONE du", "frees nothing until both go"):
+        assert folder in bot.NEW_NIGHTLY_TAIL
+    import usage
+    u = usage.Usage(tmp_path)
+    home = u.path.parent
+    brief = u.clear_brief(20 * 1024 ** 3, 2 * 1024 ** 3)
+    for folder in (home / "work", home / "inbox", home / "agents", home / "outbox"):
+        assert str(folder) in brief
+    assert "ONE du" in brief and "frees nothing until both go" in brief
