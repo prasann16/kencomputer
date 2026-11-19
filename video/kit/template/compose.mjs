@@ -1,21 +1,22 @@
 // Renders the reel the fast way: Chrome draws only what has to look designed (each distinct look of the captions,
 // once, and the graphics for the seconds they're on screen, on a transparent background), and ffmpeg does the
 // footage (framing, push-ins, the lift under paper, grain) and lays everything over it in one pass.
-// Both kinds of drawing are kept by what's in them, and so is the finished picture, in pieces of a few seconds: after a
-// change only what changed is drawn and encoded again, and the reel is joined from its pieces without re-encoding.
+// Both kinds of drawing are kept by what's in them, so after a change only what changed is drawn again.
 // Usage (from this folder): node compose.mjs <work_dir> <out.mp4> [--plan]
 // --plan only says how much would be drawn, without drawing anything.
 // Whip pans (chapters) aren't done here; render.mjs still does everything in Chrome if a reel needs them.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
-import { cachedBundle, oneAtATime, placements } from "./lib.mjs";
-import { baseHash, captionKey, encodePieces, FPS, graphicsHash, H, hash, joinPieces, planPieces, probeJson, readCutlist, steadyFootage, W } from "./plan.mjs";
+import { cachedBundle, codeHash, hash, oneAtATime, placements } from "./lib.mjs";
+
+const FPS = 30;
+const W = 1080, H = 1920;
+const SHEET_LIFT = 340; // as in src/theme.ts
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -27,17 +28,14 @@ if (!work || !out) {
 const props = JSON.parse(readFileSync(join(work, "props.json"), "utf8"));
 const style = props.style ?? {};
 const total = Math.max(1, Math.round(props.durationSeconds * FPS));
-// Chrome tabs drawing at once: one per CPU unless KEN_RENDER_CONCURRENCY says otherwise (Remotion's own default, half
-// the CPUs, drew about 20% slower on a 4-CPU computer for the same memory).
 const concurrency = (() => {
   const c = process.env.KEN_RENDER_CONCURRENCY;
-  return !c ? Math.min(8, availableParallelism()) : /^\d+$/.test(c) ? Number(c) : c;
+  return c && /^\d+$/.test(c) ? Number(c) : c ?? null;
 })();
 const layers = join(work, ".layers");
 mkdirSync(join(layers, "captions"), { recursive: true });
 mkdirSync(join(layers, "graphics"), { recursive: true });
-mkdirSync(join(layers, "pieces"), { recursive: true });
-const code = baseHash();
+const code = codeHash();
 
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - (1 - x) ** 3);
 const PLACEMENTS = placements();
@@ -62,11 +60,11 @@ if (style.captions !== false) {
     if (end - start < 0.15) return;
     const from = Math.round(start * FPS);
     const duration = Math.max(1, Math.round((end - start) * FPS));
-    const tokens = page.tokens.map((t) => [t.text, emphasized.has(Math.round(t.fromMs))]);
+    const tokens = page.tokens.map((t) => [t.text, Math.round(t.fromMs), emphasized.has(Math.round(t.fromMs))]);
     for (let f = from; f < Math.min(total, from + duration); f++) {
       const nowMs = start * 1000 + ((f - from) / FPS) * 1000;
       const shown = page.tokens.map((t) => +ease((nowMs - t.fromMs) / 120).toFixed(3));
-      looks[f] = { key: captionKey(code, style, tokens, shown), frame: f };
+      looks[f] = { key: hash([code, style, tokens, shown]).slice(0, 24), frame: f };
     }
   });
 }
@@ -74,27 +72,25 @@ const firstOf = new Map();
 for (const l of looks) if (l && !firstOf.has(l.key)) firstOf.set(l.key, l.frame);
 const capFile = (key) => join(layers, "captions", `${key}.png`);
 
-// ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook). Only graphics
-// that overlap share a clip, so changing one redraws only it. One that starts after the reel ends isn't drawn.
+// ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook).
 const hookSeconds = props.hookSeconds ?? props.titleSeconds ?? 2.8;
 const hook = props.hook ?? props.title;
 const spans = graphics.map((g) => [Math.round(g.start * FPS), Math.round(g.start * FPS) + Math.max(1, Math.round((g.end - g.start) * FPS))]);
 if (hook) spans.push([0, Math.round(hookSeconds * FPS)]);
 spans.sort((x, y) => x[0] - y[0]);
 const stretches = [];
-for (const [a, b] of spans.filter(([a]) => a < total)) {
+for (const [a, b] of spans) {
   const last = stretches[stretches.length - 1];
-  if (last && a < last[1]) last[1] = Math.max(last[1], b);
+  if (last && a <= last[1] + FPS / 2) last[1] = Math.max(last[1], b);
   else stretches.push([a, b]);
 }
 const clips = stretches.map(([a, b]) => {
   b = Math.min(b, total);
   const t0 = a / FPS, t1 = b / FPS;
   const rel = (t) => Math.round(t * FPS) - a;
-  const on = graphics.filter((g) => g.start < t1 && g.end > t0);
   const key = hash([
-    graphicsHash(on.map((g) => g.type)), style, b - a,
-    on.map((g) => ({ ...g, start: rel(g.start), end: rel(g.end) })),
+    code, style, b - a,
+    graphics.filter((g) => g.start < t1 && g.end > t0).map((g) => ({ ...g, start: rel(g.start), end: rel(g.end) })),
     hook && hookSeconds > t0 ? [hook, rel(hookSeconds)] : null,
   ]).slice(0, 24);
   const file = join(layers, "graphics", `${key}.mov`);
@@ -145,15 +141,7 @@ if (store) {
 const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
 const clipTodo = clips.filter((c) => !existsSync(c.file));
 
-// ---- The picture in pieces, each named by everything that shows in it (see plan.mjs).
-const videoPath = join(work, props.video);
-let fileHash;
-const footageHash = () => (fileHash ??= hash(readFileSync(videoPath)));
-const pieceDir = join(layers, "pieces");
-const pieces = planPieces({ work, props, graphics, looks, clips, total, footageHash, dir: pieceDir, steady: steadyFootage(videoPath, readCutlist(work)) });
-const pieceTodo = pieces.filter((p) => !existsSync(p.file));
-
-console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips (${clips.reduce((n, c) => n + c.b - c.a, 0)} frames), ${clipTodo.length} to draw; picture: ${pieces.length} pieces, ${pieceTodo.length} to encode (${pieceTodo.reduce((n, p) => n + p.b - p.a, 0)} of ${total} frames)`);
+console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips (${clips.reduce((n, c) => n + c.b - c.a, 0)} frames), ${clipTodo.length} to draw`);
 if (plan) process.exit(0);
 
 // ---- Draw what's missing.
@@ -222,36 +210,95 @@ if (capTodo.length || clipTodo.length) {
 const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`]));
 for (const f of readdirSync(join(layers, "graphics"))) if (!used.has(f)) rmSync(join(layers, "graphics", f), { force: true });
 
-// ---- Encode the pieces that aren't there yet.
+// ---- The captions as one transparent video: each look held until the next one.
 const blank = join(layers, "blank.png");
 if (!existsSync(blank)) execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=black@0.0:s=${W}x${H},format=rgba`, "-frames:v", "1", blank]);
-// Grain and vignette, like Reel.tsx's Grain: fine moving noise, and the same radial darkening (clear to 55% of the
-// way to the corners, then up to 28% black), drawn once as an image.
-const vignette = join(layers, "vignette.png");
-if (style.grain === true && !existsSync(vignette)) {
-  const r = `hypot((X-${W / 2})/${W / 2},(Y-${H / 2})/${H / 2})/sqrt(2)`;
-  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=black:s=${W}x${H},format=rgba`, "-vf",
-    `geq=r=0:g=0:b=0:a='255*0.28*clip((${r}-0.55)/0.45,0,1)'`, "-frames:v", "1", vignette]);
+const runs = [];
+for (let f = 0; f < total; f++) {
+  const file = looks[f] ? capFile(looks[f].key) : blank;
+  if (runs.length && runs[runs.length - 1].file === file) runs[runs.length - 1].frames++;
+  else runs.push({ file, frames: 1 });
 }
-const composeStart = Date.now();
-await encodePieces(pieceTodo, { video: videoPath, captionFile: (name) => (name === "blank" ? blank : capFile(name)), vignette, grain: style.grain === true });
-if (pieceTodo.length) console.log(`encoded ${pieceTodo.length} of ${pieces.length} pieces (${Math.round((Date.now() - composeStart) / 1000)}s)`);
-// Pieces this reel no longer uses go, like its old graphics.
-const kept = new Set(pieces.map((p) => basename(p.file)));
-for (const f of readdirSync(pieceDir)) if (!kept.has(f)) rmSync(join(pieceDir, f), { force: true });
+const capList = join(layers, "captions.txt");
+// Each image is read at 30 fps (ffmpeg's default for a still is 25, which would put captions up to 40 ms off).
+const entry = (file) => `file '${file}'\noption framerate ${FPS}`;
+writeFileSync(capList, "ffconcat version 1.0\n" + runs.map((r) => `${entry(r.file)}\nduration ${(r.frames / FPS).toFixed(6)}`).join("\n") + `\n${entry(runs[runs.length - 1].file)}\n`);
 
-// ---- The sound: the cut's own, a pop when paper comes in, a tick for notes over the video, plus any sfx Ken asked for.
+// ---- The footage: each part's framing, the push-ins, and the lift while paper is up, as ffmpeg expressions of
+// time. The perspective filter samples between pixels, so slow zooms stay smooth instead of stepping a pixel at a time.
+const T = `(in/${FPS})`;
+const E = (x) => `(1-pow(1-clip(${x},0,1),3))`;
+let scale = "1";
+if (style.zoomCuts ?? true) {
+  if (props.framing) for (const f of props.framing) scale = `if(gte(${T},${f.at - 1e-6}),${f.scale},${scale})`;
+  else for (const c of props.cuts ?? []) scale = `if(gte(${T},${c}),${scale === "1" ? 1.06 : 1},${scale})`;
+}
+for (const z of props.zooms ?? []) {
+  scale = `(${scale})*if(between(${T},${z.start},${z.end}),1+0.14*min(${E(`(${T}-${z.start})/1.2`)},${E(`(${z.end}-${T})/0.25`)}),1)`;
+}
+let lift = "0";
+for (const g of graphics.filter((g) => g.placement === "sheet")) {
+  lift = `max(${lift},if(between(${T},${g.start},${g.end}),min(${E(`(${T}-${g.start})/0.4`)},${E(`(${g.end}-${T})/0.3`)}),0))`;
+}
+lift = `(${SHEET_LIFT}*${lift})`;
+// Each corner of the frame shows this point of the source: centre + (corner - centre + lift) / scale.
+const x = (side) => `${W / 2}${side}${W / 2}/(${scale})`;
+const y = (side) => `${H / 2}+(${lift}${side}${H / 2})/(${scale})`;
+// It's skipped (the frame passes through untouched) while the framing is 100% and nothing is lifting.
+const moved = `gt(abs((${scale})-1)+${lift},0.0001)`.replaceAll(T, "t");
+const perspective = `perspective=x0='${x("-")}':y0='${y("-")}':x1='${x("+")}':y1='${y("-")}':x2='${x("-")}':y2='${y("+")}':x3='${x("+")}':y3='${y("+")}':interpolation=linear:eval=frame:enable='${moved}'`;
+
+// ---- Sound: a pop when paper comes in, a tick for notes over the video, plus any sfx Ken asked for.
 const SOUNDS = ["whoosh", "pop", "tick"];
 const sfx = [
   ...graphics.map((g) => ({ at: g.start, sound: g.placement === "over" ? "tick" : "pop" })),
   ...(props.sfx ?? []),
 ].filter((s) => SOUNDS.includes(s.sound) && s.at >= 0 && s.at < props.durationSeconds);
-joinPieces(pieces, { video: videoPath, frames: total, out, list: join(layers, "pieces.txt"),
-  sfx: sfx.map((s) => ({ at: s.at, file: join(resolve("sfx"), `${s.sound}.wav`) })) });
+
+// ---- One pass: footage, graphics, captions, grain, sound.
+const inputs = ["-i", join(work, props.video), "-f", "concat", "-safe", "0", "-i", capList];
+// VP9 keeps its transparency only through libvpx's own decoder.
+clips.forEach((c) => inputs.push(...(c.file.endsWith(".webm") ? ["-c:v", "libvpx-vp9"] : []), "-itsoffset", (c.a / FPS).toFixed(4), "-i", c.file));
+sfx.forEach((s) => inputs.push("-i", join(resolve("sfx"), `${s.sound}.wav`)));
+// Frames exactly every 1/30 s from zero, a missing one filled by repeating the last and the end padded to the full
+// length, so frame n is time n/30 for the expressions above and the overlays.
+const vf = [`[0:v]fps=${FPS}:start_time=0,tpad=stop_mode=clone:stop_duration=2,${perspective}[v0]`];
+let v = "v0";
+clips.forEach((c, i) => {
+  vf.push(`[${v}][${i + 2}:v]overlay=eof_action=pass:format=auto[g${i}]`);
+  v = `g${i}`;
+});
+vf.push(`[1:v]fps=${FPS},format=rgba[cap]`, `[${v}][cap]overlay=eof_action=pass:format=auto:shortest=0[c]`);
+// Grain and vignette, like Reel.tsx's Grain: fine moving noise, and the same radial darkening (clear to 55% of the
+// way to the corners, then up to 28% black), drawn once as an image.
+const vignette = join(layers, "vignette.png");
+if (!existsSync(vignette)) {
+  const r = `hypot((X-${W / 2})/${W / 2},(Y-${H / 2})/${H / 2})/sqrt(2)`;
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=black:s=${W}x${H},format=rgba`, "-vf",
+    `geq=r=0:g=0:b=0:a='255*0.28*clip((${r}-0.55)/0.45,0,1)'`, "-frames:v", "1", vignette]);
+}
+inputs.push("-loop", "1", "-i", vignette);
+const vig = 2 + clips.length + sfx.length;
+vf.push(style.grain === true ? `[c][${vig}:v]overlay=shortest=1:format=auto,noise=c0s=4:c0f=t+u,format=yuv420p[v]` : `[c]format=yuv420p[v]`);
+const sfx0 = 2 + clips.length;
+const af = sfx.length
+  ? [sfx.map((s, i) => `[${sfx0 + i}:a]adelay=${Math.round(s.at * 1000)}:all=1[s${i}]`).join(";") + `;[0:a]${sfx.map((_, i) => `[s${i}]`).join("")}amix=inputs=${sfx.length + 1}:normalize=0:duration=first[a]`]
+  : [];
+const graph = join(layers, "graph.txt");
+writeFileSync(graph, [...vf, ...af].join(";\n"));
+const composeStart = Date.now();
+// Capped near what Instagram keeps anyway (it re-encodes everything), so a one-minute reel is about 45 MB: small
+// enough for a Telegram bot to send as the file itself.
+execFileSync("ffmpeg", [
+  "-v", "error", "-y", ...inputs, "-filter_complex_script", graph, "-map", "[v]", "-map", sfx.length ? "[a]" : "0:a",
+  "-frames:v", String(total), "-c:v", "libx264", "-crf", "19", "-maxrate", "5500k", "-bufsize", "11000k", "-preset", "veryfast",
+  "-c:a", "aac", "-b:a", "192k",
+  "-movflags", "+faststart", out,
+], { stdio: "inherit" });
 console.log(`ffmpeg took ${Math.round((Date.now() - composeStart) / 1000)}s; all in ${Math.round((Date.now() - started) / 1000)}s`);
 // Check the result before calling it done: every frame there, and sound as long as the picture. render.sh falls back
 // to drawing the whole reel in Chrome when this fails.
-const probe = probeJson(out, "stream=codec_type,duration,nb_frames");
+const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration,nb_frames", "-of", "json", out]).toString());
 const video = probe.streams.find((x) => x.codec_type === "video");
 const audio = probe.streams.find((x) => x.codec_type === "audio");
 const problems = [];
