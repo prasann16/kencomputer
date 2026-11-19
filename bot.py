@@ -2297,8 +2297,13 @@ async def keep_awake() -> None:
                                       headers={"Authorization": f"Bearer {token}"})
                 if r.status_code == 200:
                     import apps
-                    if apps.use_apps_server(r.json()):
+                    answer = r.json()
+                    if apps.use_apps_server(answer):
                         log.info("apps server moved: %s", os.environ.get("KEN_APPS_MCP_URL", ""))
+                    import engine as engine_mod
+                    if engine_mod.save_kits(ENGINE.home, answer.get("kits")):  # a kit switched on or off for them
+                        ENGINE.sync_skills()
+                        log.info("kits now: %s", engine_mod.kits_on(ENGINE.home))
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)
             await asyncio.sleep(60)
