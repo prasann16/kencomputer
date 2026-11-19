@@ -361,6 +361,39 @@ def fmt(n) -> str:
     return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}K" if n >= 1e3 else str(n)
 
 
+# The board looks like Ken's chat (web/theme.css): Geist, warm greys, white cards on a grey card, green for "beat their usual".
+FONTS = Path(__file__).resolve().parents[2] / "web" / "fonts"
+BOARD_PAGE = """<!doctype html><meta charset="utf-8"><title>Trend board</title><style>
+@font-face{{font-family:Geist;src:url('{fonts}/geist-400.ttf');font-weight:400}}
+@font-face{{font-family:Geist;src:url('{fonts}/geist-500.ttf');font-weight:500}}
+@font-face{{font-family:Geist;src:url('{fonts}/geist-600.ttf');font-weight:600}}
+body{{margin:0;padding:24px;width:1032px;background:#fff;color:#1c1b1a;font:15px/1.45 Geist,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}}
+.board{{padding:8px 8px 8px;border-radius:20px;background:#f3f2ef}}
+.head{{padding:10px 12px 14px}}
+h1{{margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em}} .sum{{margin:2px 0 0;font-size:13px;color:#6e6d69}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
+article{{display:flex;gap:14px;height:220px;padding:12px;border-radius:14px;background:#fff;box-sizing:border-box}}
+img{{width:130px;height:196px;flex-shrink:0;object-fit:cover;border-radius:10px;background:#000}}
+.b{{display:flex;flex-direction:column;gap:5px;min-width:0}} p{{margin:0}}
+.top{{display:flex;align-items:center;justify-content:space-between;gap:8px}}
+.acct{{font-size:13px;font-weight:500;color:#55544f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.out{{padding:2px 10px;border-radius:999px;background:#edf5ef;color:#2f6b45;font-size:12px;font-weight:500;white-space:nowrap}}
+.hook{{font-size:15px;font-weight:500;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}}
+.hook small{{margin-right:6px;font-size:12px;color:#6e6d69}} .m{{font-size:13px;color:#6e6d69}}
+.steal{{margin-top:auto;font-size:13px;line-height:1.4;color:#2f6b45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}}
+</style><div class="board"><div class="head"><h1>Trend board · {niche} · {today}</h1><p class="sum">{summary}</p></div>
+<div class="grid">{cards}</div></div>"""
+
+
+def short_hook(kind: str | None) -> str:
+    """'voice + text (spoken claim, big word captions)' → 'Spoken claim': the part a person reads at a glance."""
+    if not kind:
+        return "?"
+    inner = re.search(r"\(([^)]+)\)", kind)
+    t = (inner.group(1) if inner else kind).split(",")[0].strip()
+    return t[:1].upper() + t[1:]
+
+
 def cmd_board(a) -> None:
     root = Path(a.dir)
     rows = load(root)
@@ -382,11 +415,9 @@ def cmd_board(a) -> None:
                f"- Why it worked: {j.get('why_it_worked') or '?'}", f"- Steal this: {j.get('steal_this') or '?'}", ""]
         thumb = s["dir"] / "hook-frames" / "001.jpg"
         cards.append(f"""<article><img src="{html.escape(os.path.relpath(thumb, root))}" alt="">
-<div class="b"><div class="top"><span class="rank">{i}</span><span class="out">{html.escape(out)}</span></div>
-<h3>{html.escape(j.get('hook_text') or s['meta'].get('title') or s['id'])}</h3>
-<p class="m">@{html.escape(s.get('account') or '?')} · {fmt(m.get('views'))} views · {m['duration_s']:.0f}s · {m['cuts_per_10s']} cuts/10s</p>
-<p><b>{html.escape(j.get('format') or '?')}</b> · {html.escape(j.get('hook_type') or '?')} hook</p>
-<p class="why">{html.escape(j.get('why_it_worked') or '')}</p>
+<div class="b"><div class="top"><span class="acct">{i} · @{html.escape(s.get('account') or '?')}</span><span class="out">{html.escape(out)}</span></div>
+<p class="hook"><small>0–3s</small>“{html.escape(j.get('hook_text') or s['meta'].get('title') or s['id'])}”</p>
+<p class="m">{html.escape(short_hook(j.get('hook_type')))} · {fmt(m.get('views'))} views · {m['duration_s']:.0f}s</p>
 <p class="steal">Steal: {html.escape(j.get('steal_this') or '')}</p></div></article>""")
     fams = {"tour": "tour", "list": "list", "pov": "POV", "explain": "explainer", "reveal": "reveal",
             "challenge": "challenge", "talking head": "talking head", "montage": "montage", "before": "before/after",
@@ -404,18 +435,8 @@ def cmd_board(a) -> None:
                "their voice · formats: " + ", ".join(f"{k} ({v})" for k, v in sorted(fmts.items(), key=lambda x: -x[1])[:4]))
     md[3:3] = [f"**This week:** {summary}", ""]
     (root / "board.md").write_text("\n".join(md))
-    (root / "board.html").write_text(f"""<!doctype html><meta charset="utf-8"><title>Trend board</title><style>
-body{{margin:0;padding:28px;background:#f6f4ef;font:15px/1.4 -apple-system,system-ui,sans-serif;color:#1d1b18;width:1180px}}
-h1{{font-size:26px;margin:0 0 4px}} .sum{{color:#5c574f;margin:0 0 20px}}
-.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}
-article{{background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e6e1d8}}
-img{{width:100%;aspect-ratio:9/12;object-fit:cover;display:block}} .b{{padding:10px 12px 12px}}
-.top{{display:flex;justify-content:space-between;align-items:center}} .rank{{font-weight:700;color:#8a8379}}
-.out{{background:#1d1b18;color:#fff;border-radius:99px;padding:2px 9px;font-size:12px;font-weight:600}}
-h3{{font-size:15px;margin:8px 0 4px}} p{{margin:4px 0;font-size:13px}} .m{{color:#8a8379}}
-.why{{color:#3b3832}} .steal{{color:#0b6b4f;font-weight:600}}</style>
-<h1>Trend board · {html.escape(a.niche)} · {today}</h1><p class="sum">{html.escape(summary)}</p>
-<div class="grid">{''.join(cards)}</div>""")
+    (root / "board.html").write_text(BOARD_PAGE.format(fonts=FONTS.as_uri() if FONTS.is_dir() else "", niche=html.escape(a.niche),
+                                                        today=today, summary=html.escape(summary), cards="".join(cards)))
     png = shot(root / "board.html", root / "board.png", rows)
     print(f"{root / 'board.md'}\n{root / 'board.html'}" + (f"\n{png}" if png else "\n(no Chrome/Chromium for board.png)"))
 
@@ -424,8 +445,8 @@ def shot(page: Path, png: Path, rows: list) -> Path | None:
     """board.png from board.html, so the board shows as a picture in the chat and on their phone."""
     for b in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
         if shutil.which(b):
-            h = 160 + 720 * -(-len(rows) // 4)
-            run([b, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--window-size=1236,{h}",
+            h = 112 + 232 * -(-len(rows) // 2)
+            run([b, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2", f"--window-size=1080,{h}",
                  f"--screenshot={png}", page.resolve().as_uri()], timeout=120)
             return png if png.exists() else None
     return None

@@ -3,7 +3,9 @@
 Research, design and v1 for helping creators (travel and lifestyle first) find what's working and make content
 from it. The v1 is a skill: `skills/viral-content` (SKILL.md + `viral.py`). Research date: Nov 19 2026.
 
-![mock](mock.png)
+![chat mock](chat-mock.png)
+
+![older mock](mock.png)
 
 ## 1. Where the data comes from
 
