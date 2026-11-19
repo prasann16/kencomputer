@@ -31,6 +31,8 @@ import usage
 log = logging.getLogger("ken")
 
 HOME = "home"  # the conversation with Ken itself
+# Where a reply names a file: `in code`, a [link](target), or a bare path (the same places the apps look).
+NAMED_RE = re.compile(r"`([^`\n]+)`|\]\(<?([^()<>\n]+?)>?\)|((?:~|/)[^\s`'\"()<>\]]+)")
 WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)",
          "voice": "said out loud on a voice call, passed on by your voice side, which speaks your answer back to them: keep it short and speakable"}
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
@@ -1978,13 +1980,16 @@ class Engine:
         async with lock:
             # Archive by boundary, rather than deleting messages, transcripts or memory.
             if clear:
-                after = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                previous = json.loads(self.kv_get(f"thread:{pid}") or "{}")
+                after = previous.get("after", 0)
                 thread = [m for m in self.messages(pid) if m["id"] > after]
                 if any(m["role"] == "you" and str(m.get("text", "")).strip() for m in thread):
                     self._bg.append(asyncio.create_task(self._save_thread(pid, thread)))
                     saving = True
                 boundary = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE project=?", (pid,)).fetchone()[0]
-                self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time()}))
+                # Where the thread started before, so this Clear can be undone (unclear_chat).
+                self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time(),
+                                                          "before": {"after": after, "cleared_at": previous.get("cleared_at", 0)}}))
             s = self.chats.pop(pid, None)
             self.db.execute("DELETE FROM kv WHERE k IN (?, ?)", (f"session:{pid}", f"session:codex:{pid}"))
             self.db.execute("DELETE FROM kv WHERE k=?", (f"brain:{pid}",))
@@ -1992,6 +1997,20 @@ class Engine:
                 await s.close()
             self.broadcast("chat.reset", pid)
         return saving
+
+    async def unclear_chat(self, pid: str) -> None:
+        """Undo the latest Clear: the thread starts where it did before. The AI got a fresh session on Clear, so the
+        next message carries the last few for context, as after a roll-over."""
+        lock = self.chat_locks.setdefault(pid, asyncio.Lock())
+        if lock.locked():
+            raise ValueError("Ken is still working. Stop or finish the reply first.")
+        async with lock:
+            before = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("before")
+            if before is None:
+                raise ValueError("There's nothing to undo.")
+            self.kv_set(f"thread:{pid}", json.dumps(before))
+            self.kv_set(f"primer:{pid}", "1")
+            self.broadcast("chat.reset", pid)
 
     # A conversation that has grown heavy, or a session the AI stopped answering, starts over: what mattered goes into
     # memory (as Clear does), the AI gets a fresh session, and the next message carries the last few for context. The
@@ -2733,6 +2752,97 @@ class Engine:
         messages = [m for m in self.messages(pid) if m["id"] > boundary.get("after", 0)]
         return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid) or pid in self._greeting,
                 "cleared_at": boundary.get("cleared_at", 0)}
+
+    # ------------------------------------------------------------- history
+    # Nothing in a chat is ever deleted: Clear only moves where the thread starts. These let them look back (earlier
+    # messages, a day's conversation) and find every file that passed through the chat, on every screen.
+
+    def _message_rows(self, where: str, args: tuple, limit: int) -> list[dict]:
+        rows = self.db.execute(f"SELECT * FROM events WHERE type='message' AND {where} ORDER BY id DESC LIMIT ?",
+                               (*args, limit)).fetchall()
+        return [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
+
+    def earlier_messages(self, pid: str, before: int | None = None, limit: int = 50) -> dict:
+        """A page of the messages before the current thread (or before `before`), oldest first, and whether there's more."""
+        limit = max(1, min(int(limit), 200))
+        cutoff = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0) + 1
+        if before:
+            cutoff = min(cutoff, int(before))
+        rows = self._message_rows("project=? AND id<?", (pid, cutoff), limit + 1)
+        return {"messages": rows[:limit][::-1], "more": len(rows) > limit}
+
+    def days(self, pid: str) -> list[dict]:
+        """Each day they talked with Ken, newest first, with a short line of what it was about."""
+        rows = self.db.execute("SELECT date(ts, 'unixepoch', 'localtime') AS day, data FROM events "
+                               "WHERE project=? AND type='message' ORDER BY id", (pid,)).fetchall()
+        days: dict[str, dict] = {}
+        for r in rows:
+            d = days.setdefault(r["day"], {"date": r["day"], "count": 0, "said": [], "first": ""})
+            d["count"] += 1
+            m = json.loads(r["data"])
+            text = " ".join(str(m.get("text") or "").split())
+            if m.get("role") == "you" and text and len(d["said"]) < 2:
+                d["said"].append(text)
+            elif not d["first"]:  # a day of only Ken's own reports reads as what they were
+                d["first"] = (m.get("job") or {}).get("label") or m.get("run_title") or text
+        out = []
+        for d in sorted(days.values(), key=lambda d: d["date"], reverse=True):
+            line = " · ".join(d.pop("said")) or d["first"]
+            d.pop("first")
+            out.append({**d, "summary": line if len(line) <= 80 else line[:79].rstrip() + "…"})
+        return out
+
+    def day_messages(self, pid: str, date: str) -> list[dict]:
+        """One day's conversation (the computer's own time), as the chat shows it."""
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date or ""):
+            raise ValueError("That isn't a day.")
+        rows = self._message_rows("project=? AND date(ts, 'unixepoch', 'localtime')=?", (pid, date), 1000)
+        return rows[::-1]
+
+    FILE_KINDS = {
+        "video": (".mp4", ".mov", ".webm", ".m4v", ".mkv", ".avi"),
+        "picture": (".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif", ".svg"),
+        "doc": (".pdf", ".doc", ".docx", ".txt", ".md", ".csv", ".xls", ".xlsx", ".ppt", ".pptx", ".key", ".pages",
+                ".numbers", ".rtf", ".srt", ".html"),
+        "audio": (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"),
+        "other": (".zip",),
+    }
+
+    def chat_files(self, pid: str, kind: str = "all", limit: int = 300) -> list[dict]:
+        """Every file that passed through the chat, newest first: what they sent, and what Ken named in its replies
+        (only files they may open, and only ones still there). Ken's scratch files never show: only what was in a message."""
+        kinds = {s: k for k, suffixes in self.FILE_KINDS.items() for s in suffixes}
+        inbox, seen, out = self.files_dir(pid), set(), []
+        for m in self._message_rows("project=?", (pid,), 5000):
+            if m.get("role") == "you":
+                if m.get("voice"):
+                    continue  # a voice note is something they said, not a file
+                found = [(inbox / str(name), "you") for name in m.get("files") or []]
+            else:
+                found = []
+                for hit in NAMED_RE.finditer(str(m.get("text") or "")):
+                    ref = next(g for g in hit.groups() if g).strip().rstrip(".,;:!?")
+                    if Path(ref).suffix.lower() not in kinds:
+                        continue
+                    try:
+                        found.append((self.shared_file(ref), "ken"))
+                    except KeyError:
+                        continue
+            for path, who in found:
+                try:
+                    path = path.resolve()
+                    st = path.stat()
+                except OSError:
+                    continue
+                k = kinds.get(path.suffix.lower())
+                if k is None or path in seen or not path.is_file() or (kind != "all" and k != kind):
+                    continue
+                seen.add(path)
+                out.append({"path": str(path), "name": path.name, "kind": k, "size": st.st_size, "mtime": st.st_mtime,
+                            "from": who, "ts": m["ts"]})
+                if len(out) >= limit:
+                    return out
+        return out
 
     # ---------------------------------------------------------------------- kv
 
