@@ -632,6 +632,48 @@ function RunCard({ run, project, openRun, toast, showProject = true }) {
   </div>`;
 }
 
+// While background jobs run in this chat, a small pill pinned under the top bar: "⏳ 2 running · Turkish dub · 1m 20s ›".
+// Tap it for each job's latest step and a Stop. It follows the live events (/api/today is asked again on each one), and
+// is gone once nothing runs; a finished job's result still comes into the chat as before.
+const runClock = (ts) => {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
+};
+
+function RunningPill({ runs, toast }) {
+  const [open, setOpen] = useState(false), [stopping, setStopping] = useState({}), [, setNow] = useState(0);
+  const box = useRef(null), any = runs.length > 0;
+  useEffect(() => {
+    if (!any) { setOpen(false); return; }
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [any]);
+  useLayoutEffect(() => {  // at once, so a tap elsewhere right after opening still closes it
+    if (!open) return;
+    const away = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === 'Escape') setOpen(false); };
+    addEventListener('pointerdown', away); addEventListener('keydown', key);
+    return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', key); };
+  }, [open]);
+  if (!any) return null;
+  const list = [...runs].sort((a, b) => b.created - a.created), first = list[0];
+  const since = (r) => runClock(r.started || r.created);
+  const stop = async (id) => {
+    setStopping((s) => ({ ...s, [id]: true }));
+    try { await api(`/api/runs/${id}/stop`, { json: {} }); } catch (e) { setStopping((s) => ({ ...s, [id]: false })); toast(e.message); }
+  };
+  return html`<div class="running" ref=${box}>
+    <button class="running-pill" aria-expanded=${open} aria-label=${`${list.length} running. Show jobs`} onClick=${() => setOpen(!open)}>
+      <span aria-hidden="true">⏳</span>${list.length > 1 && html`<b>${list.length} running</b><span class="sep">·</span>`}<span class="ellipsis">${first.title}</span><span class="sep">·</span><span class="t">${since(first)}</span><span class="chev" aria-hidden="true">›</span>
+    </button>
+    ${open && html`<div class="running-list" role="dialog" aria-label="Running jobs">${list.map((r) => html`<div class="running-item" key=${r.id}>
+      <div class="run-text"><div class="title ellipsis">${r.title}</div><div class="run-step ellipsis" key=${r.activity}>${r.status === 'queued' ? 'Waiting for a free slot' : r.activity || 'Working'}</div></div>
+      <span class="t">${since(r)}</span>
+      <button class="btn sm" disabled=${!!stopping[r.id]} onClick=${() => stop(r.id)}>${stopping[r.id] ? 'Stopping…' : 'Stop'}</button>
+    </div>`)}</div>`}
+  </div>`;
+}
+
 function DoneItem({ run, project, openRun }) {
   const mark = run.status === 'done' ? html`<span class="ok">✓</span>` : run.status === 'stopped' ? html`<span class="meta">■</span>` : html`<span class="bad">✕</span>`;
   return html`<button class="done-item" onClick=${() => openRun(run.id)}>
@@ -834,8 +876,9 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   }
   // Scrolling up yourself always wins over following.
   const leave = () => { following.current = false; };
-  return html`<section class="conversation-body" aria-label="Conversation"
+  return html`<section class=${'conversation-body' + (runs.length ? ' has-running' : '')} aria-label="Conversation"
 >
+    <${RunningPill} runs=${runs} toast=${toast}/>
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">
