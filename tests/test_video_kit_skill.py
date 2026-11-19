@@ -358,11 +358,12 @@ TOKEN = "ai_token_of_this_computer_123"
 class HostResp(Resp):
     def __init__(self, data, left=None):
         super().__init__(data)
-        self.headers = {"x-ken-quota-left": left} if left else {}
+        # left: (what it used, what's left), in dollars of Ken AI credits
+        self.headers = {"x-ken-charged": left[0], "x-ken-credits-left": left[1]} if left else {}
 
 
 class FakeHost(FakeAPI):
-    """The host: same paths as ElevenLabs under /box/eleven, answers may carry x-ken-quota-left."""
+    """The host: same paths as ElevenLabs under /box/eleven, answers may carry x-ken-charged and x-ken-credits-left."""
 
     def __call__(self, req, timeout=None):
         url = req.full_url
@@ -383,10 +384,8 @@ class FakeHost(FakeAPI):
         raise AssertionError(f"unexpected call {req.get_method()} {path}")
 
 
-QUOTA = {"period": "2026-11", "resets": "on the 1st of next month (UTC)", "features": {
-    "tts": {"unit": "chars", "limit": 20000, "used": 500, "left": 19500},
-    "dub": {"unit": "seconds", "limit": 600, "used": 60, "left": 540},
-    "clone": {"unit": "voices", "limit": 2, "used": 0, "left": 2}}}
+QUOTA = {"period": "2026-11", "resets": "on the 1st of next month (UTC)", "credits_left_usd": 3.42, "margin": 1.1,
+         "can_clone": True, "clones_left": 9, "dub_v2": False}
 
 
 @pytest.fixture
@@ -397,7 +396,7 @@ def hosted(monkeypatch):
     monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://app.example.dev/ai")
     monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", TOKEN)
     monkeypatch.setattr(eleven, "duration", lambda p: 12.0)
-    eleven.QUOTA_LEFT.clear()
+    eleven.CREDITS.clear()
 
     def install(routes):
         fake = FakeHost(routes)
@@ -414,12 +413,13 @@ def hrun(argv, capsys):
 
 
 def test_host_is_the_default_and_uses_the_computers_token_not_a_key(hosted, tmp_path, capsys):
-    fake = hosted({("POST", "/v1/text-to-speech/V"): (b"ID3audio", "19489 chars")})
+    fake = hosted({("POST", "/v1/text-to-speech/V"): (b"ID3audio", ("0.0012", "3.42"))})
     code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello world", "--out", str(tmp_path / "vo.mp3")], capsys)
     assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
     sent = fake.calls[0]["headers"]
     assert sent["Authorization"] == f"Bearer {TOKEN}" and "Xi-api-key" not in sent and sent["User-agent"] == "Ken"
-    assert "usd" not in info and info["quota_left"] == "19489 chars"  # no prices on Ken's account
+    # Ken's account: what it used of their Ken AI credits (the host's charge), not ElevenLabs' price
+    assert "usd" not in info and info["credits_used"] == "under $0.01" and info["credits_left"] == "$3.42"
 
 
 def test_their_own_key_always_wins_over_the_host(hosted, monkeypatch):
@@ -445,14 +445,14 @@ def straight_to_elevenlabs(monkeypatch, answer):
     return seen
 
 
-def test_own_key_on_hosted_ken_runs_on_their_key_not_the_allowance(hosted, monkeypatch, tmp_path, capsys):
+def test_own_key_on_hosted_ken_runs_on_their_key_not_ken_credits(hosted, monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("ELEVENLABS_API_KEY", KEY)
     seen = straight_to_elevenlabs(monkeypatch, lambda req: Resp(b"ID3audio"))
     code, info, _ = hrun(["tts", "--voice", "V", "--text", "hello", "--out", str(tmp_path / "vo.mp3")], capsys)
     assert code == 0 and (tmp_path / "vo.mp3").read_bytes() == b"ID3audio"
     assert seen[0]["url"].startswith("https://api.elevenlabs.io/") and seen[0]["headers"]["Xi-api-key"] == KEY
     assert "Authorization" not in seen[0]["headers"]
-    assert info["account"] == "own" and info["usd"] == 0.0004 and "allowance" in info["account_note"]
+    assert info["account"] == "own" and info["usd"] == 0.0004 and "Ken AI credits" in info["account_note"]
 
 
 def test_check_with_own_key_on_hosted_ken_shows_their_plan(hosted, monkeypatch, capsys):
@@ -474,30 +474,41 @@ def test_own_key_out_of_credits_says_top_up_or_remove_it_and_never_uses_kens_acc
     code, _, err = hrun(["tts", "--voice", "V", "--text", "hi", "--out", str(tmp_path / "a.mp3")], capsys)
     assert code == 1 and len(seen) == 1 and not (tmp_path / "a.mp3").exists()
     assert "Their own ElevenLabs credits are used up" in err and "top up on elevenlabs.io" in err
-    assert "remove ELEVENLABS_API_KEY from Brain (Accounts & passwords)" in err and "Ken's included allowance" in err
+    assert "remove ELEVENLABS_API_KEY from Brain (Accounts & passwords)" in err and "their Ken AI credits instead" in err
     assert "key is wrong" not in err and KEY not in err
 
 
-def test_check_on_the_host_shows_whats_left_not_money(hosted, capsys):
+def test_check_on_the_host_shows_ken_credits_left(hosted, capsys):
     hosted({("GET", "/quota"): QUOTA})
     code, info, _ = hrun(["check"], capsys)
-    assert code == 0 and info["account"] == "ken" and info["left"]["dub"] == "9 min" and info["can_clone"] is True
-    assert "usd" not in json.dumps(info) and "credits" not in json.dumps(info)
+    assert code == 0 and info == {"account": "ken", "credits_left": "$3.42", "resets": QUOTA["resets"], "can_clone": True,
+                                  "clones_left": 9, "dub_v2": False}
 
 
-def test_estimate_on_the_host_says_if_it_fits(hosted, tmp_path, capsys):
+def test_estimate_on_the_host_says_what_it_uses_of_their_credits(hosted, tmp_path, capsys):
     hosted({("GET", "/quota"): QUOTA})
     src = tmp_path / "r.mp4"
     src.write_bytes(b"v")
+    code, info, _ = hrun(["estimate", "dub", str(src)], capsys)  # 12 s at $0.50 a minute = $0.10, plus 10%
+    assert code == 0 and info == {"feature": "dub", "credits": "$0.11", "credits_left": "$3.42", "fits": True}
+    hosted({("GET", "/quota"): {**QUOTA, "credits_left_usd": 0.05}})
     code, info, _ = hrun(["estimate", "dub", str(src)], capsys)
-    assert code == 0 and info == {"feature": "dub", "needs": "0.2 min", "left": "9 min", "fits": True}
+    assert info["fits"] is False
 
 
-def test_quota_reached_is_one_clear_line(hosted, tmp_path, capsys):
-    hosted({("POST", "/v1/text-to-speech/"): (402, {"code": "quota", "error": "That needs 900 chars of tts, and 10 chars are left this month."})})
+def test_dub_v2_on_the_host_is_refused_before_anything_is_sent(hosted, tmp_path, capsys):
+    fake = hosted({})
+    src = tmp_path / "r.mp4"
+    src.write_bytes(b"v")
+    code, _, err = hrun(["dub", "--in", str(src), "--to", "pt", "--out", str(tmp_path / "o.mp4"), "--v2"], capsys)
+    assert code == 1 and "v2 isn't available" in err and fake.calls == []
+
+
+def test_out_of_credits_is_one_clear_line(hosted, tmp_path, capsys):
+    hosted({("POST", "/v1/text-to-speech/"): (402, {"code": "credits", "error": "That uses about $0.08 of their Ken AI credits, and $0.01 is left. They can add Ken AI credits (https://app.example.dev/account/topup) or wait for next month's credits on the 1st."})})
     code, _, err = hrun(["tts", "--voice", "V", "--text", "x" * 900, "--out", str(tmp_path / "a.mp3")], capsys)
-    assert code == 1 and "Allowance used up" in err and "10 chars are left" in err and "$" not in err
-    assert "ELEVENLABS_API_KEY" in err and "KEN_ELEVEN" not in err
+    assert code == 1 and "Not enough Ken AI credits" in err and "/account/topup" in err and "retry" in err
+    assert "KEN_ELEVEN" not in err
 
 
 def test_eleven_down_says_dont_loop(hosted, tmp_path, capsys):
@@ -507,7 +518,7 @@ def test_eleven_down_says_dont_loop(hosted, tmp_path, capsys):
 
 
 def test_host_uploads_send_their_length_and_a_video_goes_up_as_audio(hosted, tmp_path, capsys, monkeypatch):
-    fake = hosted({("POST", "/v1/audio-isolation"): (b"clean", "1788 seconds")})
+    fake = hosted({("POST", "/v1/audio-isolation"): (b"clean", ("0.0264", "3.39"))})
     sent_audio = tmp_path / "x" / "talk.audio.mp3"
 
     def fake_audio_only(src):
@@ -523,7 +534,7 @@ def test_host_uploads_send_their_length_and_a_video_goes_up_as_audio(hosted, tmp
     call = fake.calls[0]
     assert code == 0 and call["headers"]["X-ken-seconds"] == "12.00"
     assert b"just-audio" in call["data"] and b"the whole video" not in call["data"]
-    assert swapped == [("talk.mp4", b"clean")] and info["quota_left"] == "29.8 min"
+    assert swapped == [("talk.mp4", b"clean")] and info["credits_used"] == "$0.03" and info["credits_left"] == "$3.39"
     assert not sent_audio.parent.exists()  # the temporary audio is gone
 
 
@@ -540,7 +551,7 @@ def test_audio_only_with_real_ffmpeg(tmp_path):
 
 
 def test_host_clone_sends_consent(hosted, tmp_path, capsys):
-    fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, "1 voices")})
+    fake = hosted({("POST", "/v1/voices/add"): ({"voice_id": "v9"}, ("0.0000", "3.42"))})
     a = tmp_path / "a.mp3"
     a.write_bytes(b"x")
     code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "yes, my own voice", "--own-voice"], capsys)
@@ -559,7 +570,7 @@ def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(host
     swapped = []
     monkeypatch.setattr(eleven, "swap_audio", lambda v, au, out: (swapped.append((v.name, au.read_bytes())), out.write_bytes(b"muxed"), out)[2])
     fake = hosted({
-        ("POST", "/v1/dubbing"): ({"dubbing_id": "d1", "expected_duration_sec": 12}, "528 seconds"),
+        ("POST", "/v1/dubbing"): ({"dubbing_id": "d1", "expected_duration_sec": 12}, ("0.1100", "3.31")),
         ("GET", "/v1/dubbing/d1/audio/hi"): b"dubbed-mp3",
         ("GET", "/v1/dubbing/d1/transcripts/hi/format/srt"): {"srt": ""},
         ("GET", "/v1/dubbing/d1"): {"status": "dubbed"},
@@ -568,7 +579,7 @@ def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(host
     src.write_bytes(b"v")
     code, info, _ = hrun(["dub", "--in", str(src), "--to", "hi", "--out", str(tmp_path / "reel.hi.mp4")], capsys)
     assert code == 0 and info["job"] == "v1:d1:a" and swapped == [("reel.mp4", b"dubbed-mp3")]
-    assert (tmp_path / "reel.hi.mp4").read_bytes() == b"muxed" and info["quota_left"] == "8.8 min"
+    assert (tmp_path / "reel.hi.mp4").read_bytes() == b"muxed" and info["credits_used"] == "$0.11"
     assert fake.calls[0]["headers"]["X-ken-seconds"] == "12.00" and b'name="name"\r\n\r\nreel\r\n' in fake.calls[0]["data"]
 
 
@@ -588,7 +599,7 @@ def test_voice_delete_on_their_own_key_needs_the_yes_too(api, capsys):
 
 
 def test_a_clone_that_replaced_their_old_one_says_so(hosted, tmp_path, capsys):
-    hosted({("POST", "/v1/voices/add"): ({"voice_id": "v10", "replaced": ["v9"]}, "1 voices")})
+    hosted({("POST", "/v1/voices/add"): ({"voice_id": "v10", "replaced": ["v9"]}, ("0.0000", "3.42"))})
     a = tmp_path / "a.mp3"
     a.write_bytes(b"x")
     code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
@@ -848,7 +859,7 @@ def test_clone_from_builds_one_sample_from_their_solo_talking(api, tmp_path, cap
     assert [l.get("skipped") for l in record["looked"]] == [None, "conversation", None]
 
 
-def test_clone_from_cleans_a_noisy_sample(api, tmp_path, capsys, monkeypatch):
+def test_clone_from_says_a_sample_is_noisy_and_cleans_only_when_asked(api, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(eleven, "duration", REAL_DURATION)
     monkeypatch.setattr(eleven, "noise_gap", lambda *a: 15.0)  # a fan under the voice
     src = tmp_path / "voice_note.mp3"
@@ -858,6 +869,8 @@ def test_clone_from_cleans_a_noisy_sample(api, tmp_path, capsys, monkeypatch):
     fake = api({("POST", "/v1/speech-to-text"): {"words": solo(0, 65)},
                 ("POST", "/v1/audio-isolation"): clean.read_bytes()})
     code, info, _ = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice")], capsys)
+    assert code == 0 and info["noisy"] and not info["cleaned"] and not any(c["path"] == "/v1/audio-isolation" for c in fake.calls)
+    code, info, _ = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice"), "--clean", "always"], capsys)
     assert code == 0 and info["cleaned"] and any(c["path"] == "/v1/audio-isolation" for c in fake.calls)
     assert Path(info["sample"]).read_bytes() == clean.read_bytes() and (tmp_path / "voice" / "sample.raw.mp3").exists()
 
@@ -880,3 +893,31 @@ def test_clone_from_never_sends_a_file_with_no_sound(api, tmp_path, capsys, monk
     fake = api({})
     code, _, err = run(["clone-from", str(src), "--out-dir", str(tmp_path / "voice")], capsys)
     assert code == 1 and "voice note" in err and fake.calls == []
+
+
+def test_a_clone_says_when_its_sample_is_noisy_and_still_clones(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "noise_gap", lambda *a: 15.0)  # checked here with ffmpeg, nothing sent for it
+    fake = api({("POST", "/v1/voices/add"): {"voice_id": "v1"}})
+    a = tmp_path / "note.mp3"
+    a.write_bytes(b"x")
+    code, info, _ = run(["estimate", "clone", str(a)], capsys)  # before cloning: free, nothing sent
+    assert code == 0 and info["noisy"] is True and fake.calls == []
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert code == 0 and info["noisy"] is True and [c["path"] for c in fake.calls] == ["/v1/voices/add"]
+    monkeypatch.setattr(eleven, "noise_gap", lambda *a: 40.0)
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert code == 0 and "noisy" not in info
+
+
+def test_a_long_voice_note_goes_up_as_its_first_two_minutes(api, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(eleven, "duration", REAL_DURATION)
+    note = tmp_path / "voice_note.mp3"
+    try:
+        _tone(note, 200)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no ffmpeg")
+    fake = api({("POST", "/v1/voices/add"): {"voice_id": "v1"}})
+    code, info, _ = run(["clone", "--name", "Me", "--sample", str(note), "--said", "yes", "--own-voice"], capsys)
+    assert code == 0 and info["sample_seconds"] == 120 and b"voice_note.part.mp3" in fake.calls[0]["data"]
+    assert REAL_DURATION(note) > 190  # their file isn't changed, and it's the one in the consent record
+    assert json.loads((tmp_path / "consent.json").read_text())[0]["samples"] == [str(note)]

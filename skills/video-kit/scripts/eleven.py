@@ -3,12 +3,12 @@
 
 Two ways in. Their own key from ELEVENLABS_API_KEY (never printed) always wins when they added one, even on hosted
 Ken. Without it, on hosted Ken (the computer has a host: KEN_INCLUDED_AI_URL/TOKEN, or KEN_ELEVEN_URL/TOKEN) every call
-goes through the host's /box/eleven, which uses Ken's own ElevenLabs account with a monthly allowance per person: no
-key here, nothing for them to pay. A key that runs out of credits never falls back to Ken's account. Every command
-prints one JSON line on success (the files it wrote, the job id, and the estimated cost on their key or what's left
-of the allowance on Ken's); errors go to stderr.
+goes through the host's /box/eleven, which uses Ken's own ElevenLabs account and charges each use to their Ken AI
+credits (ElevenLabs' price plus Ken's margin): no key here. A key that runs out of credits never falls back to Ken's
+account. Every command prints one JSON line on success (the files it wrote, the job id, and the estimated cost on
+their key, or what it used of their Ken AI credits and what's left on Ken's); errors go to stderr.
 
-    eleven.py check                                      what's left (Ken's allowance, or their plan's credits)
+    eleven.py check                                      what's left (their Ken AI credits, or their plan's credits)
     eleven.py voices [--search calm]                     their voices (id, name, kind)
     eleven.py estimate <feature> [file] [--chars N]      what a run would cost, before spending anything
     eleven.py tts --voice ID (--text "..." | --text-file f) --out vo.mp3 [--model eleven_multilingual_v2]
@@ -21,7 +21,7 @@ of the allowance on Ken's); errors go to stderr.
     eleven.py captions --in video.mp4 --out video.srt [--lang hi] [--speakers]
     eleven.py design --describe "warm, older Indian man" [--text "..."] --out-dir previews/
     eleven.py design-save --id GENERATED_ID --name "Narrator" --describe "..."
-    eleven.py dub --in reel.mp4 --to hi [--from en] --out reel.hi.mp4 [--v2] [--speakers 1]
+    eleven.py dub --in reel.mp4 --to hi [--from en] --out reel.hi.mp4 [--v2: their own key only] [--speakers 1]
     eleven.py dub-start / dub-status ID / dub-get ID --to hi --out f    the same, in steps (a long video)
     eleven.py voice-delete ID --confirmed                delete a voice they made, once they said yes in chat
     eleven.py over --video broll.mp4 [--video b2.mp4] --audio vo.mp3 --out source.mp4 [--bed 0.1]   voiceover under footage
@@ -105,7 +105,9 @@ def host_route() -> tuple[str, str] | None:
     return (url, token) if token and (url.startswith("https://") or local) else None
 
 
-QUOTA_LEFT: list[str] = []  # what the host said is left after the last call ("540 seconds")
+CREDITS: dict = {}  # on Ken's account: what the calls so far used of their Ken AI credits ("used", dollars) and what's left
+MARGIN = 1.1  # what Ken AI credits charge over ElevenLabs' price, unless the host says otherwise (/quota "margin")
+CLONE_MOST = 120  # seconds of picked speech a clone sample keeps (and voice isolation cleans) at most
 NOT_LIVE = ("Ken's built-in ElevenLabs isn't switched on for this computer yet, so nothing ran. If they have their own "
             "ElevenLabs key, ask them to add it in the Brain tab, under Accounts & passwords, named ELEVENLABS_API_KEY: "
             "it runs on that from their next message.")
@@ -183,9 +185,12 @@ def _call(via, method, path, *, query, json_body, fields, files, raw, timeout, s
             body = r.read()
             answered = getattr(r, "headers", None) or {}
             moved = r.geturl() if hasattr(r, "geturl") else url
-            left = answered.get("x-ken-quota-left")
-            if left:
-                QUOTA_LEFT[:] = [left]
+            if via and answered.get("x-ken-charged"):
+                try:
+                    CREDITS["used"] = CREDITS.get("used", 0.0) + float(answered.get("x-ken-charged"))
+                    CREDITS["left"] = answered.get("x-ken-credits-left")
+                except ValueError:
+                    pass
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:600]
         if via and _host_page(e.code, detail):
@@ -223,15 +228,14 @@ def _host_page(code: int, detail: str) -> bool:
 
 
 def _explain_host(code: int, detail: str) -> str:
-    """The host's answer ({"error", "code"}), for the chat: what happened and what to do, never a price."""
+    """The host's answer ({"error", "code"}), for the chat: what happened and what to do."""
     try:
         said = json.loads(detail)
     except ValueError:
         said = {}
     error, kind = _redact(str(said.get("error") or detail)), said.get("code")
-    if kind == "quota":
-        return (f"Allowance used up: {error} Tell them in one line; if they have their own ElevenLabs key, adding it in "
-                "the Brain tab under Accounts & passwords as ELEVENLABS_API_KEY runs everything on that instead.")
+    if kind == "credits":
+        return f"Not enough Ken AI credits: {error} Tell them in one line, with that way on; don't retry."
     if kind in ("eleven_down", "busy"):
         return f"{error} Don't retry in a loop."
     return f"{error} ({code})"
@@ -248,8 +252,8 @@ def _explain(code: int, detail: str) -> str:
     message = str(said.get("message") or "") if isinstance(said, dict) else ""
     if status in ("quota_exceeded", "insufficient_credits", "payment_required") or code == 402:
         # Their key, their credits: never quietly switch to Ken's account while their key is set.
-        fix = ("top up on elevenlabs.io, or remove ELEVENLABS_API_KEY from Brain (Accounts & passwords) to use Ken's "
-               "included allowance instead" if host_route() else "top up on elevenlabs.io, or wait for the plan to reset")
+        fix = ("top up on elevenlabs.io, or remove ELEVENLABS_API_KEY from Brain (Accounts & passwords) to use their "
+               "Ken AI credits instead" if host_route() else "top up on elevenlabs.io, or wait for the plan to reset")
         return (f"{OWN_CREDITS_GONE} ({message or 'quota exceeded'}): {fix}. Tell them exactly that in one line; "
                 "don't retry.")
     if status in ("missing_permissions", "missing_group_permissions"):
@@ -329,29 +333,26 @@ def cost(feature: str, *, seconds: float = 0, chars: int = 0) -> float:
     return usd
 
 
+def money(usd: float) -> str:
+    """Dollars as said in chat: "$0.55", "under $0.01"."""
+    return "under $0.01" if 0 < usd < 0.005 else f"${usd:.2f}"
+
+
 def done(**info) -> dict:
-    if host():  # Ken's account: no prices for the chat, only what's left
+    if host():  # Ken's account: what it used of their Ken AI credits (ElevenLabs' price plus the margin), and what's left
         info.pop("usd", None)
-        if QUOTA_LEFT:
-            info["quota_left"] = _readable(QUOTA_LEFT[0])
+        if "used" in CREDITS:
+            info["credits_used"] = money(CREDITS["used"])
+            try:
+                info["credits_left"] = money(float(CREDITS.get("left")))
+            except (TypeError, ValueError):
+                pass
     else:
         info.setdefault("account", "own")
         if host_route():
-            info["account_note"] = "Ran on their own ElevenLabs key (their credits): it wins over Ken's allowance while it's in Brain."
+            info["account_note"] = "Ran on their own ElevenLabs key (their credits): it wins over Ken AI credits while it's in Brain."
     print(json.dumps(info, ensure_ascii=False))
     return info
-
-
-def _readable(left: str) -> str:
-    """"540 seconds" → "9 min"; other units as they are."""
-    n, _, unit = left.partition(" ")
-    if unit == "seconds" and n.isdigit():
-        return f"{int(n) / 60:.1f}".rstrip("0").rstrip(".") + " min"
-    return left
-
-
-# The host's feature names, for estimate (tts on Flash and v2 dubs are counted under their own).
-QUOTA_FEATURE = {"tts_flash": "tts", "dub_v2": "dub_v2"}
 
 
 # ---------- captions: Scribe words → SRT ----------
@@ -398,8 +399,8 @@ def words_to_srt(words: list[dict], max_chars: int = 32, max_secs: float = 2.5, 
 def cmd_check(a):
     q = call("GET", "/quota") if host() else None
     if q is not None:
-        left = {f: _readable(f"{v['left']} {v['unit']}") for f, v in q.get("features", {}).items()}
-        return done(account="ken", left=left, resets=q.get("resets"), can_clone=q.get("features", {}).get("clone", {}).get("left", 0) > 0)
+        return done(account="ken", credits_left=money(float(q.get("credits_left_usd") or 0)), resets=q.get("resets"),
+                    can_clone=bool(q.get("can_clone")), clones_left=q.get("clones_left"), dub_v2=False)
     s = call("GET", "/v1/user/subscription")
     left = (s.get("character_limit") or 0) - (s.get("character_count") or 0)
     return done(tier=s.get("tier"), credits_used=s.get("character_count"), credits_limit=s.get("character_limit"),
@@ -416,16 +417,20 @@ def cmd_voices(a):
 def cmd_estimate(a):
     secs = duration(need(a.file)) if a.file else (a.seconds or 0)
     quota = call("GET", "/quota") if host() else None
-    if quota is not None:
-        feature = QUOTA_FEATURE.get(a.feature, a.feature)
-        q = quota.get("features", {}).get(feature, {})
-        unit = q.get("unit", "seconds")
-        needs = {"chars": a.chars or 0, "seconds": round(secs), "voices": 1, "runs": 1}.get(unit, 0)
-        return done(feature=a.feature, needs=_readable(f"{needs} {unit}"), left=_readable(f"{q.get('left', 0)} {unit}"),
-                    fits=needs <= q.get("left", 0))
     usd = cost(a.feature, seconds=secs, chars=a.chars or 0)
+    # A clone sample: is there background noise in it? Checked here with ffmpeg, free; a quiet re-record clones better.
+    extra = {}
+    if a.feature == "clone" and a.file:
+        gap = noise_gap(Path(a.file).expanduser(), None, min(secs, CLONE_MOST))
+        extra["noisy"] = gap is not None and gap < NOISY_DB
+    if quota is not None:
+        if a.feature == "dub_v2":
+            raise Fail("Dubbing v2 isn't available on Ken. Use the normal dub (v1).")
+        credits = usd * float(quota.get("margin") or MARGIN)
+        left = float(quota.get("credits_left_usd") or 0)
+        return done(feature=a.feature, credits=money(credits), credits_left=money(left), fits=credits <= left, **extra)
     return done(feature=a.feature, seconds=round(secs, 1), chars=a.chars, usd=usd,
-                note="Estimate from elevenlabs.io/pricing/api; on a plan it comes out of credits first.")
+                note="Estimate from elevenlabs.io/pricing/api; on a plan it comes out of credits first.", **extra)
 
 
 def cmd_tts(a):
@@ -455,14 +460,23 @@ def cmd_clone(a):
     total = sum(duration(s) for s in samples)
     if total < 10:
         raise Fail(f"Samples add up to {total:.0f}s; ElevenLabs needs at least 10 s (1 to 2 minutes of clean talking is best).")
+    originals = samples
+    samples, total = clone_part(samples, total)
+    gap = noise_gap(samples[0], None, min(total, CLONE_MOST))
     how = "chat" if said else "recording"
     note = f"chat: {said}" if said else consent.name
     note = " ".join(note.split()).encode("ascii", "backslashreplace").decode()  # a header is ASCII, one line
     labels = json.dumps({"consent": how, "made_by": "ken"})
-    r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
-                                               "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
-             files=[("files", s) for s in samples],
-             headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": note[:200]})
+    try:
+        r = call("POST", "/v1/voices/add", fields={"name": a.name, "description": a.description or "Their own voice, cloned with consent",
+                                                   "remove_background_noise": "true" if a.denoise else "false", "labels": labels},
+                 files=[("files", s) for s in samples],
+                 headers={"X-Ken-Consent": "own-voice", "X-Ken-Consent-Note": note[:200]})
+    finally:
+        for s in samples:
+            if s not in originals:  # a cut made by clone_part
+                shutil.rmtree(s.parent, ignore_errors=True)
+    samples = originals
     record = Path(a.record) if a.record else samples[0].parent / "consent.json"
     entries = json.loads(record.read_text()) if record.exists() else []
     entries.append({"who": a.who or a.name, "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "how": how, "said": said or None,
@@ -470,8 +484,36 @@ def cmd_clone(a):
                     "voice_id": r.get("voice_id")})
     record.write_text(json.dumps(entries, ensure_ascii=False, indent=1))
     extra = {"replaced": r["replaced"]} if r.get("replaced") else {}  # on Ken's account a new clone replaces their old one
+    if gap is not None and gap < NOISY_DB:
+        extra["noisy"] = True  # background noise in the sample: a quiet re-record makes a better clone (never required)
     return done(voice_id=r.get("voice_id"), requires_verification=r.get("requires_verification"), sample_seconds=round(total, 1),
                 consent=how, record=str(record), **extra)
+
+
+def clone_part(samples: list[Path], total: float) -> tuple[list[Path], float]:
+    """What goes up for a clone: all of it up to CLONE_MOST seconds; past that, the first CLONE_MOST seconds (a longer
+    sample doesn't make a better clone). The files themselves are never changed."""
+    if total <= CLONE_MOST + 5 or not shutil.which("ffmpeg"):
+        return samples, total
+    out, left = [], float(CLONE_MOST)
+    tmp = Path(tempfile.mkdtemp(prefix="ken-clone-"))
+    for s in samples:
+        if left < 1:
+            break
+        d = duration(s)
+        if d <= left:
+            out.append(s)
+        else:
+            cut = tmp / f"{s.stem}.part.mp3"
+            try:
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(s), "-t", f"{left:.2f}", "-vn", "-c:a", "libmp3lame",
+                                "-b:a", "192k", str(cut)], check=True, capture_output=True)
+            except (OSError, subprocess.CalledProcessError):
+                return samples, total  # couldn't cut it: send it whole
+            out.append(cut)
+            d = left
+        left -= d
+    return out, CLONE_MOST - left
 
 
 # ---------- clone from what they already have: find their talking in existing videos and audio ----------
@@ -589,9 +631,12 @@ def _pcm(src: Path, seconds: float) -> array:
     return a
 
 
-def noise_gap(src: Path, runs: list[tuple[float, float, str]], seconds: float) -> float | None:
-    """How far their voice is above the background, in dB: loud talking frames against the quietest stretches.
-    Under about 25 dB the background (a fan, traffic, a room) is audible in a clone, so the sample gets cleaned."""
+NOISY_DB = 25  # under this the background (a fan, traffic, a room) is audible in a clone
+
+
+def noise_gap(src: Path, runs: list[tuple[float, float, str]] | None, seconds: float) -> float | None:
+    """How far their voice is above the background, in dB: loud talking frames against the quietest stretches, here
+    with ffmpeg (free, nothing sent). runs: when they talk (from speech to text); None: the loud frames are the voice."""
     try:
         a = _pcm(src, seconds)
     except (OSError, subprocess.CalledProcessError):
@@ -604,7 +649,7 @@ def noise_gap(src: Path, runs: list[tuple[float, float, str]], seconds: float) -
         db.append(20 * math.log10(rms + 1e-5))
     if len(db) < 50:
         return None
-    inside = sorted(d for i, d in enumerate(db) if any(s <= i * 0.02 < e for s, e, _ in runs))
+    inside = sorted(d for i, d in enumerate(db) if runs is None or any(s <= i * 0.02 < e for s, e, _ in runs))
     if not inside:
         return None
     voice = inside[int(len(inside) * 0.75)]  # a loud syllable, not a peak
@@ -634,7 +679,7 @@ def join_pieces(pieces: list[tuple[Path, float, float]], out: Path) -> Path:
 
 
 def cmd_clone_from(a):
-    """Find 1 to 3 minutes of them talking alone in what they already have, and make it one clean sample for `clone`."""
+    """Find up to 2 minutes of them talking alone in what they already have, as one sample for `clone`."""
     if not shutil.which("ffmpeg"):
         raise Fail("ffmpeg isn't installed, so existing videos can't be searched for their voice")
     inputs = [Path(p).expanduser() for p in a.inputs] or default_places()
@@ -643,7 +688,8 @@ def cmd_clone_from(a):
             raise Fail(f"No file or folder at {p}")
     out_dir = Path(a.out_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
-    target, most = max(30.0, a.target), max(a.target, a.most)
+    most = min(a.most, CLONE_MOST)
+    target = min(max(30.0, a.target), most)
     files = media_files(inputs, a.any_name)
     pieces, used, looked, heard, cost_secs = [], [], [], 0, 0.0
     for f in files:
@@ -698,7 +744,7 @@ def cmd_clone_from(a):
         raise Fail(f"Found only {total:.0f} s of them talking alone in {len(looked)} file(s) (of {len(files)} searched); "
                    "a clone needs a minute. Ask them for a 1 minute voice note: just them, talking normally, a quiet room.")
     raw = join_pieces(pieces, out_dir / "sample.raw.mp3")
-    noisy = a.clean == "always" or (a.clean == "auto" and any((u.get("noise_gap_db") or 99) < 25 for u in used))
+    noisy = a.clean == "always"  # only when they asked for it, or said the clone sounds bad
     sample = out_dir / "sample.mp3"
     if noisy:
         sample.write_bytes(call("POST", "/v1/audio-isolation", files=[("audio", raw)], raw=True, seconds=duration(raw)))
@@ -707,7 +753,8 @@ def cmd_clone_from(a):
     record.write_text(json.dumps({"sample": str(sample), "seconds": round(total, 1), "cleaned": noisy, "used": used,
                                   "looked": looked}, ensure_ascii=False, indent=1))
     usd = cost("captions", seconds=cost_secs) + (cost("isolate", seconds=duration(raw)) if noisy else 0)
-    return done(sample=str(sample), seconds=round(total, 1), cleaned=noisy, record=str(record),
+    loud = not noisy and any((u.get("noise_gap_db") or 99) < NOISY_DB for u in used)
+    return done(sample=str(sample), seconds=round(total, 1), cleaned=noisy, noisy=loud, record=str(record),
                 used=[{"file": u["file"], "seconds": u["used_seconds"], "origin": u["origin"], "others": u["others"]}
                       for u in used],
                 short=total < 60, usd=round(usd, 4))
@@ -823,6 +870,8 @@ def cmd_design_save(a):
 # lossless audio + subtitles, which go back over the original picture here. A job id is "v1:<id>" or "v2:<project>:<lang>".
 
 def dub_start(a) -> str:
+    if a.v2 and host():
+        raise Fail("Dubbing v2 isn't available on Ken. The normal dub (v1, without --v2) is: use that.")
     src = Path(a.inp) if a.inp else None
     if src:
         need(str(src))
@@ -1027,11 +1076,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--own-voice", action="store_true", help="they confirmed every sample is their own voice")
     s.add_argument("--description"); s.add_argument("--denoise", action="store_true"); s.set_defaults(fn=cmd_clone)
 
-    s = sub.add_parser("clone-from", help="find 1 to 3 minutes of them talking alone in existing videos/audio, as one sample")
+    s = sub.add_parser("clone-from", help="find up to 2 minutes of them talking alone in existing videos/audio, as one sample")
     s.add_argument("inputs", nargs="*", help="files or folders (default: what they sent Ken, Ken's workspace, Videos, Music...)")
     s.add_argument("--out-dir", default="voice"); s.add_argument("--target", type=float, default=120, help="seconds to aim for")
-    s.add_argument("--most", type=float, default=180, help="seconds at most"); s.add_argument("--max-files", type=int, default=5)
-    s.add_argument("--clean", choices=("auto", "always", "never"), default="auto", help="voice isolation on the sample")
+    s.add_argument("--most", type=float, default=CLONE_MOST, help="seconds at most (120 at most)"); s.add_argument("--max-files", type=int, default=5)
+    s.add_argument("--clean", choices=("always", "never"), default="never", help="voice isolation on the sample (only when they ask)")
     s.add_argument("--any-name", action="store_true", help="every file in the folders is them (not just ones named like a recording)")
     s.set_defaults(fn=cmd_clone_from)
 

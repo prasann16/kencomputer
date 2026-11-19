@@ -1,8 +1,8 @@
 # ElevenLabs: prices, limits, plans (checked Nov 17 2026)
 
-On hosted Ken none of this is said to them: it runs on Ken's own account through the host (`/box/eleven`), and the
-only number that matters is what's left of their monthly allowance (`eleven.py check`). The table is for their own
-key, and for knowing the limits.
+On hosted Ken it runs on Ken's own account through the host (`/box/eleven`), and each use comes out of their Ken AI
+credits at these prices plus Ken's margin (`eleven.py estimate` says what a run uses, `eleven.py check` what's left).
+Dubbing v2 isn't available there. Voice clones are free: they keep one, up to 10 new ones a month.
 
 API usage is billed in US dollars; on a subscription it comes out of the plan's included credits first. Prices
 change: `eleven.py estimate` uses the table in `scripts/eleven.py`, and `eleven.py check` shows what's left.

@@ -12,7 +12,7 @@ original file: every output is a new file next to it.
 
 The ElevenLabs helper is `<ken> --eleven <command> ...`, where `<ken>` is the exact command in your instructions
 (the same one the video skill uses). Every command prints one JSON line: the files it wrote, and either
-`quota_left` (Ken's account) or `usd` (their own key).
+`credits_used`/`credits_left` (Ken's account) or `usd` (their own key).
 `<ken> --eleven -h` lists them all. Below, `eleven.py <command>` is short for `<ken> --eleven <command>`.
 
 ## Pick the flow
@@ -37,17 +37,17 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 
 - **Whose account.** Run `eleven.py check` once per chat before the first ElevenLabs call. If they added their own
   `ELEVENLABS_API_KEY` in Brain, it always wins, hosted Ken or not: `"account": "own"`, their money, the own-key
-  rules below. Otherwise `"account": "ken"` means hosted Ken: it runs on Ken's own ElevenLabs account, included in
-  their plan, with a monthly allowance per feature (`left`). They need no ElevenLabs account and no key: never ask
-  for one. If Ken's route isn't live on this computer yet, the helper says so in one line.
-- **On Ken's account, no money talk.** Never mention dollars, prices, credits or plans. The only number they hear
-  is what's left, when it matters: before a dub or anything long, `eleven.py estimate <feature> <file>` and say it
-  in one line ("that uses 3 of your 9 dub minutes this month"), then go; a small thing just runs. When `fits` is
-  false or a call says the allowance is used up, say what's left and when it comes back, once. Only if they say
-  they have their own ElevenLabs key: adding it in Brain as `ELEVENLABS_API_KEY` runs everything on that.
+  rules below. Otherwise `"account": "ken"` means hosted Ken: it runs on Ken's own ElevenLabs account and each use
+  comes out of their Ken AI credits (`credits_left`). They need no ElevenLabs account and no key: never ask for one.
+  If Ken's route isn't live on this computer yet, the helper says so in one line.
+- **On Ken's account, say what it uses.** Before anything costly (a dub, long music), `eleven.py estimate <feature>
+  <file>` and say it in one line ("That uses about $0.55 of your Ken AI credits."), then go; a small thing just
+  runs. When `fits` is false or a call says credits ran out, pass on what it says (top up, or next month's credits)
+  once. Only if they say they have their own ElevenLabs key: adding it in Brain as `ELEVENLABS_API_KEY` runs
+  everything on that.
 - **On their own key**: it reads `ELEVENLABS_API_KEY` from the environment. Never print it, echo it, write it to a
   file or put it in a command line. When their credits run out, the helper says so: pass it on as is (top up on
-  elevenlabs.io, or on hosted Ken remove the key from Brain to go back to Ken's allowance). Never switch to Ken's
+  elevenlabs.io, or on hosted Ken remove the key from Brain to go back to their Ken AI credits). Never switch to Ken's
   account yourself while their key is set. With no key and no host, the helper says so: tell them in one line to
   add it in the Brain tab under Accounts & passwords, named `ELEVENLABS_API_KEY` (elevenlabs.io → Developers → API
   keys), and that it works from their next message. It's their money: before anything over about $0.50, or any
@@ -55,12 +55,11 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 - Hooks, clips and free captions don't need ElevenLabs: do those anyway.
 - **Their own voice only.** Clone only the voice of the person you're talking to, after one yes in chat
   (`flows/voice.md`), which the helper records. On Ken's account a clone is theirs alone (nobody else can use it),
-  they keep 3 at most (cloning again replaces their old clone), and the free trial has none. Never a celebrity, a
+  they keep one (cloning again replaces it), and the free trial has none. Never a celebrity, a
   friend, a client or anyone "who said it's fine" unless that person says yes to you themselves: refuse in one
   friendly line and offer a stock or designed voice instead.
-- **Clone from what they have.** A clone never needs a new recording first: `eleven.py clone-from` finds a minute
-  or more of them talking alone in their existing videos and audio. Only when there isn't enough, ask for a
-  1 minute voice note.
+- **Clone from what they send.** A voice note or recording of them: clone from it directly. Nothing yet: ask for a
+  1 to 2 minute voice note; only if they don't send one, find their talking in their videos (`eleven.py clone-from`).
 - **Label synthetic media.** A dubbed, cloned or changed voice is AI generated. When they're about to post one,
   remind them in one line to switch on the platform's AI label (India's IT Rules require it since Feb 2026; Meta,
   YouTube and TikTok all have the toggle). Don't nag about cleaned audio, music or sound effects.
@@ -69,7 +68,7 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 - **Show, then post.** Send the file and wait for their yes before anything is posted anywhere.
 - **Long work in the background.** A dub, music over a minute, or clipping a long video takes minutes: hand it to a
   background job with the folder, the exact commands and what they asked, and tell them in one line it's running.
-- **Fail once, plainly.** If ElevenLabs or Ken says no (allowance used up, ElevenLabs down, file too big), the
+- **Fail once, plainly.** If ElevenLabs or Ken says no (credits used up, ElevenLabs down, file too big), the
   helper explains why. Tell them in one line with the fix; never retry in a loop.
 - **Listen to what you made** before sending: check the length with ffprobe, and for a voice, read the words back
   with `transcribe_media` on the output. A dub or voiceover with a mispronounced name gets fixed first.
