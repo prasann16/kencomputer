@@ -144,8 +144,12 @@ def _project(home: Path, folder: Path, say=print) -> None:
     for item in template.iterdir():
         dest = folder / item.name
         if item.name == "src":
-            if not dest.exists():
-                shutil.copytree(item, dest)
+            # Ken's own files are kept; any of the kit's that went missing come back, so the reel always builds.
+            for f in item.rglob("*"):
+                to = dest / f.relative_to(item)
+                if f.is_file() and not to.exists():
+                    to.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(f, to)
         elif item.name in ENGINE:
             if dest.is_dir():
                 shutil.rmtree(dest)

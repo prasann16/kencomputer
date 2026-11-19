@@ -163,3 +163,15 @@ def test_the_skill_leaves_the_design_to_ken():
     assert "Every reel gets infographics" in skill and "your call" in skill
     for gone in ("design.md", "Craft rules", "Restraint", "basics.tsx"):
         assert gone not in skill, gone
+
+
+def test_a_reel_missing_kit_files_gets_them_back_and_keeps_its_own(tmp_path, monkeypatch):
+    monkeypatch.setattr(v, "setup", lambda home, say=print: tmp_path / "kit")
+    (tmp_path / "kit" / "node_modules").mkdir(parents=True)
+    graphics = tmp_path / "reel" / "src" / "graphics"
+    graphics.mkdir(parents=True)
+    (graphics / "index.ts").write_text("// Ken's own registry")
+    (graphics / "mine.tsx").write_text("// Ken's graphic")
+    v._project(tmp_path, tmp_path / "reel", lambda *_: None)
+    assert (tmp_path / "reel" / "src" / "index.ts").exists() and (tmp_path / "reel" / "src" / "Reel.tsx").exists()
+    assert (graphics / "index.ts").read_text() == "// Ken's own registry" and (graphics / "mine.tsx").exists()
