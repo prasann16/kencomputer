@@ -47,6 +47,35 @@ def _url(app: str = "") -> str:
     return f"{base}/box/apps" + (f"?app={urllib.parse.quote(app)}" if app else "")
 
 
+def use_apps_server(answer: dict) -> bool:
+    """Where the host says this computer's apps are (its own Composio, or Agent37's), from its check-in answer or
+    refresh_server(): a move between them takes without a restart. Running replies and jobs carry on with the server
+    they started with; new ones (and idle chats, which reopen: engine._tools_stamp) use this one. The boot settings
+    stay the fallback. True when it changed."""
+    via = answer.get("apps_via") if isinstance(answer, dict) else None
+    if via not in ("ken", "agent37") or os.environ.get("KEN_APPS", "1") != "1":
+        return False  # a host that doesn't say, or apps turned off on this computer
+    if via == "ken":
+        server = answer.get("apps_mcp")
+        url, token = (str(server.get("url", "")), str(server.get("token", ""))) if isinstance(server, dict) else ("", "")
+    else:  # Agent37's own apps server, as ken-supervise picks it at boot
+        url, token = os.environ.get("AGENT37_COMPOSIO_MCP_URL", ""), os.environ.get("AGENT37_MANAGED_TOKEN", "")
+    if not url.startswith("https://") or not token:
+        return False  # never leaves Ken with no apps server over a half answer
+    if (os.environ.get("KEN_APPS_MCP_URL", ""), os.environ.get("KEN_APPS_MCP_TOKEN", "")) == (url, token):
+        return False
+    os.environ["KEN_APPS_MCP_URL"], os.environ["KEN_APPS_MCP_TOKEN"] = url, token
+    return True
+
+
+def refresh_server() -> bool:
+    """Ask the host where the apps are now (its /box/apps-server), right after they move themselves in Settings → Apps."""
+    req = urllib.request.Request(_url().replace("/box/apps", "/box/apps-server"),
+                                 headers={"Authorization": f"Bearer {os.environ['KEN_KEEPALIVE_TOKEN']}", "User-Agent": "Ken"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return use_apps_server(json.loads(r.read()))
+
+
 def fetch(app: str = "") -> dict:
     """{"connected": [{"slug", "name", "accounts": [...]}], "apps_url": ..., "match": {...} | None}."""
     # A named client: Cloudflare in front of the host refuses Python's default "Python-urllib" (403), as in voice.py.

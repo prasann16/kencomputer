@@ -644,6 +644,18 @@ class WebApp:
         connected = await asyncio.to_thread(apps.with_accounts, data.get("connected", []))
         return _json({"connected": connected, "apps_url": data.get("apps_url", "")})
 
+    async def apps_refresh(self, request):
+        """Hosted Ken's Settings → Apps, right after they moved to Ken's own apps server: ask the host where the apps
+        are now (never taken from the browser), so it takes at once rather than at the next minute's check-in."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            await asyncio.to_thread(apps.refresh_server)
+        except Exception:
+            return _json({"error": "Couldn't check just now."}, 502)
+        return _json({"ok": True, "apps": apps.mcp_ready()})
+
     async def apps_disconnect(self, request):
         """Hosted Ken's Settings → Apps: disconnect one account ({"app", "account"}: the apps tools' id from /api/apps)."""
         import apps
@@ -1384,6 +1396,7 @@ class WebApp:
         r.add_post("/api/telegram-files/{token}/uploads/{uid}/done", self.big_file_upload)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)
+        r.add_post("/api/apps/refresh", self.apps_refresh)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

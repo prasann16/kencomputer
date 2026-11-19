@@ -999,7 +999,8 @@ class Engine:
 
     def _tools_stamp(self, pid: str) -> tuple:
         """Changes when its tools, keys or skills do, so an open chat reopens with them."""
-        out = [self.backend(pid)]
+        # The apps server too (hosted Ken: bot.use_apps_server moves it without a restart).
+        out = [self.backend(pid), os.environ.get("KEN_APPS_MCP_URL", "")]
         others = [d for dirs in self.other_skills.values() for d in dirs]
         for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills",
                   self.home / "skills-off.json", *others):
