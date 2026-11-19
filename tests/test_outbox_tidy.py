@@ -65,3 +65,11 @@ def test_an_old_outbox_path_opens_the_kept_file(tmp_path):
     assert e.shared_file(str(tmp_path / "outbox" / "plan.pdf")) == (tmp_path / "sent" / "plan.pdf").resolve()
     (tmp_path / "outbox" / "new.pdf").write_bytes(b"new")  # still in the outbox: that one
     assert e.shared_file(str(tmp_path / "outbox" / "new.pdf")) == (tmp_path / "outbox" / "new.pdf").resolve()
+
+
+def test_tidied_when_nobody_is_linked_even_with_a_bot_key(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:shared-bot")  # a hosted computer: the shared bot's key
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 0)
+    assert bot.outbox_unsent()
+    monkeypatch.setattr(bot, "ALLOWED_USER_ID", 42)  # their Telegram is linked: the outbox empties itself
+    assert not bot.outbox_unsent()

@@ -465,6 +465,12 @@ def no_paths(text: str) -> str:
     return _PATH_IN_TEXT.sub(swap, text)
 
 
+def outbox_unsent() -> bool:
+    """Nobody is linked on Telegram, so nothing will ever send the outbox. A bot key alone isn't enough: a hosted
+    computer has the shared bot's key whether or not they linked their Telegram (ALLOWED_USER_ID is the link)."""
+    return not ALLOWED_USER_ID
+
+
 def tidy_outbox(home_cwd: Path | None = None) -> dict:
     """With no Telegram linked, nothing ever empties the outbox, so files put there for it stay forever (a second copy
     of each reel). Each one moves to SENT_DIR, never deleted: one that's an exact copy of a file in their workspace or
@@ -3269,7 +3275,8 @@ async def run() -> None:
             PHONE.keep_starting(token)
         else:
             log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
-            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it, once, elsewhere
+        if outbox_unsent():
+            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it elsewhere
         await ENGINE.resume_interrupted()
         await stop.wait()
     finally:
