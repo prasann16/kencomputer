@@ -490,6 +490,11 @@ def test_next_job_time(monkeypatch):
 def test_timezone_command(monkeypatch, tmp_path):
     import bot
     monkeypatch.setattr(bot, "KEN_HOME", tmp_path)
+    if os.name == "nt":  # Windows' C library can't read "Europe/Lisbon": Ken there keeps the computer's zone
+        monkeypatch.delenv("TZ", raising=False)
+        assert bot.set_timezone("Europe/Lisbon")["timezone"] == "" and "TZ" not in os.environ
+        assert not (tmp_path / ".env").exists()
+        return
     monkeypatch.setenv("TZ", "UTC")
     try:
         r = bot.set_timezone("Europe/Lisbon")

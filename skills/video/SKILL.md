@@ -196,10 +196,10 @@ The first time, this sets up Remotion (a one-time download, a few minutes): tell
 
     <ken> --video-render videos/<short-name>
 
-makes `reel.mp4`, ready to post. Remotion draws only the captions and graphics, and keeps each by what's in it;
-ffmpeg lays them over the footage in one pass. The first render takes a few minutes, so run it as a background
-job; a fix later redraws only what changed and takes a minute or two. A style change (caption font or colour)
-redraws everything, so settle those with stills first. `--plan` says how much a change would redraw without
+makes `reel.mp4`, ready to post. Remotion draws only the captions and graphics, ffmpeg lays them over the footage,
+and every piece is kept by what's in it. The first render takes a few minutes, so run it as a background job; a fix
+later redraws and re-encodes only the seconds it changes (a new ending takes well under a minute). A style change
+(caption font or colour) redraws everything, so settle those with stills first. `--plan` says how much a change would redraw without
 rendering. The render checks its own result and, if that fails, draws the whole reel in Chrome instead (slower,
 always right). Then:
 
@@ -222,6 +222,8 @@ download it to keep it."
 
 "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
-everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
-changed, render, check the strip once.
+everything else in `props.json`; move graphics after a change by the same amount). Cut again only when the words
+change; it re-encodes only the parts that changed. To hold the ending longer (room for a call to action), raise
+`durationSeconds`: the last frame holds. Never make a new video file by hand: the whole reel renders again. Check
+stills of only what changed, render, check the strip once.
 Note every correction in their style note, since it probably applies to future reels too.
