@@ -467,6 +467,10 @@ async def test_a_download_link_hands_over_exactly_its_file_as_a_download(engine,
     assert r.status == 200 and await r.read() == body
     assert r.headers["Content-Disposition"] == "attachment; filename*=UTF-8''episode%204.mp3"
     assert r.headers["X-Content-Type-Options"] == "nosniff"
+    for _ in range(100):  # the server lets go of it just after the last byte reaches the client
+        if not web.DOWNLOADS:
+            break
+        await asyncio.sleep(0.01)
     assert not web.DOWNLOADS  # done going out (and while it was: test_a_download_going_out_keeps_ken_busy)
     # A big file can be fetched in parts, and resumed.
     part = await client.get(f"/api/telegram-downloads/{key}", headers={"Range": "bytes=1000-1999"})

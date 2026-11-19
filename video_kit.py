@@ -334,6 +334,29 @@ def _stamp(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
+# Phones film HDR (iPhones in HLG, many Androids in HDR10/PQ). Squeezed into an 8-bit reel as if it were ordinary video,
+# it comes out grey and washed out, so HDR is tone mapped to SDR first (their white at 203 nits, the HDR reference white,
+# lands on SDR white; brighter highlights roll off softly); every reel leaves as plain BT.709, TV range.
+HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+TONEMAP = "zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.7:desat=0,zscale=t=bt709:m=bt709:r=tv"
+SDR_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+
+
+def _to_sdr(src: Path, say=print) -> str:
+    """The filters (with a trailing comma, or none) that bring this footage to SDR BT.709 before it's framed."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
+                        "-of", "csv=p=0", str(src)], capture_output=True, text=True)
+    if r.stdout.strip().strip(",") not in HDR_TRANSFERS:
+        return ""
+    filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+    if " zscale " not in filters:
+        say("This video is HDR and this computer's ffmpeg can't convert HDR (no zscale), so its colours may look "
+            "washed out. An ffmpeg built with zimg fixes it.")
+        return ""
+    say("The video is HDR: converting it to normal colour so it doesn't look washed out.")
+    return TONEMAP + ","
+
+
 def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     if spec.strip() == "all":
         return [(0, count - 1)]
@@ -349,7 +372,7 @@ def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     return keep
 
 
-CUT_VERSION = 1  # bump when the picture of a part changes, so no part from an older cut is reused
+CUT_VERSION = 2  # bump when the picture of a part changes, so no part from an older cut is reused
 
 
 def _identity(path: Path) -> dict:
@@ -375,8 +398,10 @@ def _cut_video(folder: Path, src: Path, pieces: list[list], speed: float, say=pr
     files = [store / (hashlib.sha256(json.dumps([CUT_VERSION, source, a, b, speed]).encode()).hexdigest()[:24] + ".mp4")
              for a, b, _ in pieces]
     todo = [(a, b, f) for (a, b, _), f in zip(pieces, files) if not f.exists()]
+    sdr = ""
     if todo:
         say(f"Cutting {src.name}: {len(todo)} of {len(pieces)} parts to encode…")
+        sdr = _to_sdr(src, say)
 
     def encode(job):
         a, b, f = job
@@ -385,9 +410,9 @@ def _cut_video(folder: Path, src: Path, pieces: list[list], speed: float, say=pr
         # Each part starts at zero (a seek lands a little after it) and is exactly its frames, so joining them leaves
         # no missing frames. Phones tag their videos "rotate 90°"; the frames come out upright, so the tag is dropped.
         r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src), "-an", "-vf",
-                            f"setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase,"
+                            f"{sdr}setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase:out_range=tv,"
                             f"crop=1080:1920,setsar=1,format=yuv420p,sidedata=delete:type=DISPLAYMATRIX,tpad=stop_mode=clone:stop={n}",
-                            "-frames:v", str(n), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(2 * FPS), str(tmp)],
+                            "-frames:v", str(n), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(2 * FPS), *SDR_TAGS, str(tmp)],
                            capture_output=True, text=True)
         if r.returncode:
             tmp.unlink(missing_ok=True)

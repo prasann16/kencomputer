@@ -22,6 +22,15 @@ if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["-
     video_kit.main(sys.argv[1:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))))
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--eleven"]:  # the video-kit skill's ElevenLabs helper, run by Ken's own Python (the app has no other)
+    import runpy
+    from pathlib import Path
+
+    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "video-kit" / "scripts" / "eleven.py"
+    sys.argv = [str(_script), *sys.argv[2:]]
+    runpy.run_path(str(_script), run_name="__main__")
+    raise SystemExit(0)
+
 if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a file at full quality (the too_big page)
     import json as _json, os as _os, secrets as _secrets, time as _time
     from pathlib import Path as _Path
@@ -77,6 +86,10 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--apps-file"]:  # hosted Ken: a file here, ready for an apps tool that takes one (apps.py)
+    import apps
+    raise SystemExit(apps.file_main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -128,8 +141,20 @@ from telegram.ext import (
 
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
-if os.environ.get("TZ") and hasattr(time, "tzset"):  # Windows has no tzset (and Ken there never sets TZ)
-    time.tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
+
+
+def tzset() -> None:
+    """A changed time zone counts from now. Windows has no time.tzset: Ken there keeps the computer's own time
+    zone, which Windows itself keeps right (only a computer in the cloud saves a TZ, from the app)."""
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+if os.name == "nt":
+    # Windows' C library reads TZ as "EST5EDT"-style only: "Europe/Lisbon" would put Ken's clock on UTC.
+    os.environ.pop("TZ", None)
+elif os.environ.get("TZ"):
+    tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
 use_included_ai()  # a plan's included AI, unless they've connected their own Claude
 
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
@@ -229,6 +254,13 @@ HOSTED_APPS_PROMPT = (
     "exactly what you'll do and wait for a yes. Each app action counts toward their plan's monthly app actions, so "
     f"don't loop over hundreds of items without asking. `{KEN_CMD} --apps` lists each app's accounts by name with "
     "the id to pass as `account`. " + MULTI_ACCOUNT
+)
+
+
+# Ken's own Composio: a file on this computer goes to an apps tool through the host first (apps.py stage_file).
+APPS_FILES_PROMPT = (
+    f"For a post, upload or email with a picture, video or attachment, run `{KEN_CMD} --apps-file <path> <TOOL_SLUG>` "
+    "and pass what it prints as that tool's file argument."
 )
 
 
@@ -949,6 +981,8 @@ def build_system() -> str:
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
+        if apps.files_ready():
+            system += " " + APPS_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
@@ -2054,7 +2088,7 @@ def apply_onboarding(facts: dict) -> dict:
 async def scheduler() -> None:
     while True:
         try:
-            time.tzset()  # a time zone set while Ken runs (sudo timedatectl) counts from the next minute
+            tzset()  # a time zone set while Ken runs (sudo timedatectl) counts from the next minute
             jobs = all_jobs()
             now = time.localtime()
             state = {}
@@ -2548,8 +2582,11 @@ async def model_choices(backend):
     before = path.stat().st_mtime if path.exists() else 0
     stale = not before or time.time() - before > 86400
     if stale or not available_models(backend) or listed_for != login:
+        def seen():  # the list file as it is now; Windows' clock can give a rewrite the same timestamp
+            return (path.stat().st_mtime_ns, path.read_bytes()) if path.exists() else None
+        was = seen()
         await refresh_models_file(backend=backend)
-        if path.exists() and path.stat().st_mtime != before:  # only a list that came back is marked as this login's
+        if path.exists() and seen() != was:  # only a list that came back is marked as this login's
             stamp.write_text(login + "\n")
     return available_models(backend)
 
@@ -2647,9 +2684,11 @@ def set_timezone(arg: str = "") -> dict:
         return {"reply": f"Ken's time zone is {os.environ.get('TZ') or time.strftime('%Z')}.", "timezone": os.environ.get("TZ", "")}
     if not _known_zone(name):
         return {"reply": f"I don't know the time zone {name}. Use one like Europe/Lisbon.", "timezone": os.environ.get("TZ", "")}
+    if os.name == "nt":  # see the top: Ken on Windows runs on the computer's own time zone
+        return {"reply": f"Ken uses this computer's time zone ({time.strftime('%Z')}). Change it in Windows Settings → Time & language.",
+                "timezone": ""}
     save_env(KEN_HOME / ".env", "TZ", name)
-    if hasattr(time, "tzset"):  # not on Windows
-        time.tzset()
+    tzset()
     return {"reply": f"Time zone set to {name}. It's {time.strftime('%H:%M')} there.", "timezone": name}
 
 

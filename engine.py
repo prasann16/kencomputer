@@ -542,6 +542,18 @@ class Engine:
                 "or ChatGPT, or pick a plan with more Ken AI credits.")
         return self.log_message(HOME, "ken", text, action="credits", note=True)
 
+    def apps_reconnect(self, note_id: str, apps: list[dict]) -> dict:
+        """Hosted Ken: its host moved their apps to Ken's own Composio, so the apps they had need connecting again. One
+        message in Home's chat with a one-tap Connect link for each; it reaches the app, the phone and Telegram like any
+        message Ken starts. Said once per `note_id`, however often the host asks."""
+        for m in reversed(self.messages(HOME, limit=200)):
+            if m.get("note_id") == note_id:
+                return m
+        links = " · ".join(f"[{a['name']}]({a['url']})" for a in apps)
+        text = ("I've upgraded how I connect to your apps. Reconnect them once and everything works as before. "
+                f"Tap each one: {links}")
+        return self.log_message(HOME, "ken", text, via="background", action="apps_reconnect", note_id=note_id)
+
     async def app_connected(self, slug: str, name: str) -> str | None:
         """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
         recent Ken reply with that link, in the last hour) carries on with what they asked. Returns that chat."""
@@ -550,7 +562,8 @@ class Engine:
         best = None
         for pid in [HOME, *[a["id"] for a in self.list_agents()]]:
             for m in reversed(self.messages(pid, limit=20)):
-                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since:
+                # Not the note asking them to reconnect after the move (apps_reconnect): no chat asked for anything.
+                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since and m.get("action") != "apps_reconnect":
                     if best is None or m["ts"] > best[1]:
                         best = (pid, m["ts"])
                     break
@@ -866,7 +879,7 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         background = "" if pid != HOME else (
-            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than a minute or two (editing a video, "
+            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than about 30 seconds (editing a video, "
             "long research, building something) goes to a background job right away, before you start on it, never here "
             "where it would keep them waiting. Before handing it off, take a quick look and tell them in a few short lines "
             "what you found, what you'll do and roughly how long it'll take (no need to wait for a yes unless something's "

@@ -489,6 +489,27 @@ class WebApp:
             return _json({"error": "invalid"}, 400)
         return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
 
+    async def apps_reconnect(self, request):
+        """Hosted Ken: its host moved their apps to Ken's own Composio; one note in the chat asking them to reconnect
+        the apps they had. {"id": "...", "apps": [{"slug", "name", "url"}]}, each url the host's Connect link."""
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+            note_id = str(data["id"])
+            given = [(str(a["slug"]), str(a.get("name") or a["slug"]), str(a["url"])) for a in data["apps"]][:30]
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        ok = re.fullmatch(r"[A-Za-z0-9_-]{1,80}", note_id) and given and all(
+            re.fullmatch(r"[a-z0-9_-]{1,60}", slug) and re.fullmatch(rf"https://[A-Za-z0-9.-]+(:\d+)?/account/apps/connect/{slug}", url)
+            for slug, _, url in given)
+        if not ok:
+            return _json({"error": "invalid"}, 400)
+        names = [{"slug": slug, "name": re.sub(r"[\[\]()\n]", "", name)[:80] or slug, "url": url} for slug, name, url in given]
+        self.engine.apps_reconnect(note_id, names)
+        return _json({"ok": True})
+
     async def credits_low(self, request):
         """Hosted Ken: its host says most of the Ken AI credits are used (once per threshold): a note in the chat."""
         import apps
@@ -1354,6 +1375,7 @@ class WebApp:
         r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/apps/connected", self.app_connected)
         r.add_post("/api/credits/low", self.credits_low)
+        r.add_post("/api/apps/reconnect", self.apps_reconnect)
         r.add_get("/api/telegram-downloads/{key}", self.telegram_download)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)

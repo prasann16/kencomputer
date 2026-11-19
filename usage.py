@@ -159,9 +159,30 @@ def ken_memory(root: int | None = None) -> int:
     total, todo = 0, [root or os.getpid()]
     while todo:
         pid = todo.pop()
-        total += rss.get(pid, 0)
+        total += _own_share(pid, rss.get(pid, 0))
         todo += kids.get(pid, [])
-    return total
+    return min(total, physical_memory() or total)
+
+
+def _own_share(pid: int, rss: int) -> int:
+    """A process's fair share of memory. A browser's many processes share most of theirs, so adding up each one's
+    resident size counted it several times (a 4 GB computer was told Ken used 12.7 GB). Linux knows each process's
+    share (Pss); elsewhere the resident size is all there is."""
+    try:
+        for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines():
+            if line.startswith("Pss:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return rss
+
+
+def physical_memory() -> int:
+    """This computer's memory, in bytes (0 where it can't tell): no total can honestly be more than this."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return 0
 
 
 def memory_critical() -> bool | None:
@@ -241,8 +262,9 @@ def biggest_app() -> tuple[str, int]:
     for pid, _, rss, comm in rows:
         if pid in mine:
             continue
-        by[app_name(comm)] = by.get(app_name(comm), 0) + rss
-    return max(by.items(), key=lambda kv: kv[1], default=("", 0))
+        by[app_name(comm)] = by.get(app_name(comm), 0) + _own_share(pid, rss)
+    top = max(by.items(), key=lambda kv: kv[1], default=("", 0))
+    return (top[0], min(top[1], physical_memory() or top[1]))
 
 
 def gb(n: float) -> str:
