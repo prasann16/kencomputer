@@ -1394,7 +1394,15 @@ function HostedApps() {
   // list (no names, its own ids) stands in when Ken can't be asked.
   // What was connected last time shows at once (remembered in this browser), and Ken's fresh answer replaces it quietly:
   // nothing waits or jumps. Never seen yet: the site's list, with the account names as placeholders until Ken says.
-  const [mine, setMine] = useState(() => cached('apps-mine')), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
+  const [mine, setMine] = useState(() => cached('apps-mine')), [asking, setAsking] = useState('');
+  // Whatever goes wrong here (or right, back from an app's sign-in) is a toast: seen wherever they've scrolled to.
+  const told = useRef(false);
+  useEffect(() => { if (say.get('app_problem')) notify("That didn't connect. Try again."); }, []);
+  useEffect(() => {
+    if (told.current || !data || !say.get('connected')) return;
+    told.current = true;
+    notify(`${data.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected ✓`);
+  }, [data]);
   // IMAP: any inbox with its password, for technical users; Ken's computer holds these, not the app catalog.
   const [mail, setMail] = useState(() => cached('apps-mail')), [imap, setImap] = useState(false);
   const imapShown = !q.trim() || /imap|mail|inbox|smtp/i.test(q);
@@ -1406,13 +1414,13 @@ function HostedApps() {
   useEffect(() => { load(''); loadMine(!!say.get('say')); api('/api/connections').then((r) => { setMail(r.emails); keep('apps-mail', r.emails); }).catch(() => setMail((m) => m || [])); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
-    setBusy(slug); setProblem('');
+    setBusy(slug);
     try {
       const r = await fetch('/account/apps/connect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ app: slug }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body.url) throw new Error(body.error || "Couldn't start connecting just now. Try again.");
       location.href = body.url;  // the app's own sign-in; it comes back to Settings → Apps
-    } catch (e) { setProblem(e.message); setBusy(''); }  // shown at the top, by the card and the Reconnect list
+    } catch (e) { notify(e.message); setBusy(''); }
   };
   const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
     .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
@@ -1424,17 +1432,17 @@ function HostedApps() {
   // The upgrade card (people still on Agent37's apps whom the site's rollout includes): moves them to Ken's own apps
   // server with no restart, then the same spot lists the apps they had, to reconnect. It stays until they upgrade.
   const upgrade = async () => {
-    setBusy('upgrade'); setProblem('');
+    setBusy('upgrade');
     try {
       const r = await fetch('/account/apps/upgrade.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({}) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't upgrade just now. Try again in a minute.");
       // Ken asks the site where its apps are now (at once, not at its next check-in); an older Ken just waits for that.
       await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine(true);
-    } catch (e) { setProblem(e.message); }
+    } catch (e) { notify(e.message); }
     finally { setBusy(''); }
   };
   const disconnect = async (app, account) => {
-    setBusy(`off:${account.id}`); setProblem('');
+    setBusy(`off:${account.id}`);
     try {
       if (account.via === 'imap') {}
       else if (account.via === 'apps') await api('/api/apps/disconnect', { json: { app: app.slug, account: account.id } });
@@ -1445,13 +1453,10 @@ function HostedApps() {
       if (account.via === 'imap') { const left = (await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails; setMail(left); keep('apps-mail', left); }
       else { await loadMine(true); load(); }
       setAsking('');
-    } catch (e) { setProblem(e.message); }
+    } catch (e) { notify(e.message); }
     finally { setBusy(''); }
   };
   return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 1,700+ more apps. Ken asks before it sends or changes anything.</p>
-    ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
-    ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
-    ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
     ${data?.upgrade && html`<div class="apps-upgrade"><b class="apps-upgrade-title">Upgrade your app connections</b>
       <p class="apps-upgrade-text">Faster and more reliable, and Ken can post photos and videos for you. You'll reconnect your apps once. It takes about a minute.</p>
       <button class="btn sm primary" disabled=${!!busy} onClick=${upgrade}>${busy === 'upgrade' ? 'Upgrading…' : 'Upgrade and reconnect'}</button></div>`}
@@ -2107,7 +2112,7 @@ function App() {
   openReport = () => setReporting(true);
   const [docFile, setDocFile] = useState(null);
   showDoc = setDocFile;
-  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000 + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
+  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);
     setOutbox((all) => all.filter((m) => !received.current.has(m.client_id)));
