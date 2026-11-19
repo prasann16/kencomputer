@@ -55,7 +55,7 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
 - Hooks, clips and free captions don't need ElevenLabs: do those anyway.
 - **Their own voice only.** Clone only the voice of the person you're talking to, after one yes in chat
   (`flows/voice.md`), which the helper records. On Ken's account a clone is theirs alone (nobody else can use it),
-  they keep 3 at most (`eleven.py voice-delete <id>` frees one), and the free trial has none. Never a celebrity, a
+  they keep 3 at most (cloning again replaces their old clone), and the free trial has none. Never a celebrity, a
   friend, a client or anyone "who said it's fine" unless that person says yes to you themselves: refuse in one
   friendly line and offer a stock or designed voice instead.
 - **Clone from what they have.** A clone never needs a new recording first: `eleven.py clone-from` finds a minute
