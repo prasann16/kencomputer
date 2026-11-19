@@ -128,8 +128,17 @@ from telegram.ext import (
 
 KEN_HOME = Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))
 load_dotenv(KEN_HOME / ".env")
-if os.environ.get("TZ") and hasattr(time, "tzset"):  # Windows has no tzset (and Ken there never sets TZ)
-    time.tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
+
+
+def tzset() -> None:
+    """A changed time zone counts from now. Windows has no time.tzset: Ken there keeps the computer's own time
+    zone, which Windows itself keeps right (only a computer in the cloud saves a TZ, from the app)."""
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+if os.environ.get("TZ"):
+    tzset()  # a time zone saved in .env (set from the app on a computer in the cloud)
 use_included_ai()  # a plan's included AI, unless they've connected their own Claude
 
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
@@ -2054,7 +2063,7 @@ def apply_onboarding(facts: dict) -> dict:
 async def scheduler() -> None:
     while True:
         try:
-            time.tzset()  # a time zone set while Ken runs (sudo timedatectl) counts from the next minute
+            tzset()  # a time zone set while Ken runs (sudo timedatectl) counts from the next minute
             jobs = all_jobs()
             now = time.localtime()
             state = {}
@@ -2651,8 +2660,7 @@ def set_timezone(arg: str = "") -> dict:
     if not _known_zone(name):
         return {"reply": f"I don't know the time zone {name}. Use one like Europe/Lisbon.", "timezone": os.environ.get("TZ", "")}
     save_env(KEN_HOME / ".env", "TZ", name)
-    if hasattr(time, "tzset"):  # not on Windows
-        time.tzset()
+    tzset()
     return {"reply": f"Time zone set to {name}. It's {time.strftime('%H:%M')} there.", "timezone": name}
 
 

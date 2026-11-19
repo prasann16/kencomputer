@@ -17,9 +17,16 @@ function Start-Ken {
   Start-Process -FilePath $Pythonw -ArgumentList "`"$App\winrun.py`"" -WorkingDirectory $KenHome
 }
 function Stop-Ken {
-  # winrun.py first, so it doesn't start Ken again.
-  Get-KenProcesses | Sort-Object { -not $_.CommandLine.Contains("winrun.py") } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  # winrun.py first, so it doesn't start Ken again; taskkill /T takes each one's children with it. Then wait
+  # until none are left, so `ken status` and `ken start` right after see Ken stopped.
+  for ($i = 0; $i -lt 40; $i++) {
+    $procs = @(Get-KenProcesses)
+    if (-not $procs) { return }
+    if ($i -gt 0) { $procs | ForEach-Object { Write-Host "DEBUG still alive pass $i : $($_.ProcessId) parent $($_.ParentProcessId) $($_.CommandLine)" } }
+    $procs | Sort-Object { -not $_.CommandLine.Contains("winrun.py") } |
+      ForEach-Object { cmd /c "taskkill /F /T /PID $($_.ProcessId) >nul 2>&1" }
+    Start-Sleep -Milliseconds 500
+  }
 }
 
 switch ($Command) {

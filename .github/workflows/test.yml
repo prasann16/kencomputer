@@ -41,6 +41,17 @@ jobs:
             [System.Management.Automation.PSParser]::Tokenize((Get-Content $f -Raw), [ref]$errs) | Out-Null
             if ($errs) { $errs; exit 1 }
           }
+      - name: DEBUG tz probe
+        run: |
+          uv venv -q --managed-python --python 3.13 tzprobe
+          $py = "tzprobe\Scripts\python.exe"
+          & $py -c "import time; print('noTZ', time.localtime(), time.strftime('%Z'))"
+          $env:TZ = 'Asia/Kolkata'
+          & $py -c "import time; print('TZ env', time.localtime(), time.strftime('%Z'))"
+          Remove-Item Env:TZ
+          & $py -c "import os, time; os.environ['TZ']='Asia/Kolkata'; print('TZ set late', time.localtime(), time.strftime('%Z'))"
+          & $py -c "import os, time; time.localtime(); os.environ['TZ']='Asia/Kolkata'; print('TZ set after use', time.localtime(), time.strftime('%Z'))"
+          Remove-Item -Recurse -Force tzprobe
       - name: Tests
         run: |
           uv venv -q --seed --managed-python --python 3.13 .venv
@@ -67,6 +78,11 @@ jobs:
           Get-Content "$env:KEN_HOME\logs\ken.log" -ErrorAction SilentlyContinue
           if (-not $up) { "Ken never answered on 7777"; exit 1 }
           $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*running*") { exit 1 }
+          if (Select-String -Path "$env:KEN_HOME\logs\ken.log" -Pattern "scheduler error" -Quiet) { "the scheduler failed"; exit 1 }
+          Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Format-List ProcessId, ParentProcessId, Name, CommandLine
           & "$app\ken.ps1" stop
-          Start-Sleep 3
-          $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*stopped*") { exit 1 }
+          $s = & "$app\ken.ps1" status; $s
+          if ($s -notlike "*stopped*") {
+            Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Format-List ProcessId, ParentProcessId, Name, CommandLine
+            exit 1
+          }
