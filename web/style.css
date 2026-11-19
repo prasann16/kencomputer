@@ -454,6 +454,8 @@ ol.conn-steps li { margin: 2px 0; }
 .apps-row .conn-on { font-size: var(--text-sm); font-weight: 400; }
 /* Apps they had before Ken moved to its own Composio, to connect again (the site's reconnect list), above the rest. */
 .apps-reconnect { margin-bottom: var(--s4); }
+/* An account Ken is still naming: a quiet placeholder the same height as the name, so nothing moves when it fills in. */
+.app-account-name.naming { display: inline-block; width: 160px; height: 1em; border-radius: 4px; background: var(--well); animation: skeleton 1.4s ease-in-out infinite; vertical-align: middle; }
 .apps-upgrade { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); margin-bottom: var(--s5); padding: var(--s5); border-radius: var(--r-card); background: var(--well); }
 .apps-upgrade-title { font-size: var(--text-md); font-weight: 600; color: var(--ink); }
 .apps-upgrade-text { margin: 0 0 var(--s2); color: var(--muted); font-size: var(--text-md); line-height: 1.5; }

@@ -25,6 +25,15 @@ DATA = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _fresh_apps_list():
+    """Settings' connected-apps answer is kept a minute (web._APPS_KEPT): each test starts without one."""
+    import web
+    web._APPS_KEPT.clear()
+    yield
+    web._APPS_KEPT.clear()
+
+
 @pytest.fixture
 def on_host(monkeypatch):
     monkeypatch.setenv("KEN_KEEPALIVE_URL", f"{SITE}/box/checkin")
@@ -157,7 +166,10 @@ async def test_settings_lists_connected_apps(engine, aiohttp_client, monkeypatch
         raise OSError("down")
 
     monkeypatch.setattr(apps, "fetch", broken)
-    r = await client.get("/api/apps")
+    # Opened again within a minute: the answer it just gave, without asking the apps again.
+    assert (await (await client.get("/api/apps")).json()) == data
+    # Asked afresh (back from connecting one): the apps are asked, and a failure says so.
+    r = await client.get("/api/apps?fresh=1")
     assert r.status == 502 and (await r.json())["error"] == "Couldn't check your apps just now."
 
 
