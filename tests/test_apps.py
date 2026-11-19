@@ -100,6 +100,48 @@ async def test_the_connected_endpoint(engine, aiohttp_client, monkeypatch, on_ho
     assert (await client.post("/api/apps/connected", json={"slug": "notion"})).status == 404
 
 
+async def test_reconnect_after_the_move_is_one_note_with_a_link_per_app(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
+    seen = []
+    q = engine.subscribe()
+    app, client = await signed_in(engine, aiohttp_client)
+    body = {"id": "reconnect-1763553600000", "apps": [
+        {"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/gmail"},
+        {"slug": "instagram", "name": "Insta[gram]", "url": f"{SITE}/account/apps/connect/instagram"},
+    ]}
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 200
+    note = engine.messages(HOME, limit=5)[-1]
+    assert note["text"] == ("I've upgraded how I connect to your apps. Reconnect them once and everything works as before. "
+                            f"Tap each one: [Gmail]({SITE}/account/apps/connect/gmail) · [Instagram]({SITE}/account/apps/connect/instagram)")
+    # Started by Ken, so it goes to Telegram and the phone app like any message Ken starts (bot.py forwards "background").
+    assert note["role"] == "ken" and note["via"] == "background" and note["action"] == "apps_reconnect"
+    while not q.empty():
+        seen.append(q.get_nowait())
+    assert any(e["type"] == "message" and e.get("action") == "apps_reconnect" for e in seen)
+    # The host asks again (its answer was lost): still one note.
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 200
+    assert sum(m.get("action") == "apps_reconnect" for m in engine.messages(HOME, limit=50)) == 1
+    # Only the host's own Connect links, for the app named.
+    for bad in ({**body, "apps": [{"slug": "gmail", "name": "Gmail", "url": "https://evil.example/x"}]},
+                {**body, "apps": [{"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/notion"}]},
+                {**body, "apps": []}, {**body, "id": "../x"}, {"apps": body["apps"]}):
+        assert (await client.post("/api/apps/reconnect", json=bad)).status == 400
+    monkeypatch.delenv("KEN_KEEPALIVE_URL")
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 404
+
+
+async def test_connecting_from_the_reconnect_note_doesnt_start_a_turn(engine, monkeypatch):  # noqa: F811
+    sent = []
+
+    async def send_message(pid, text, *a, **kw):
+        sent.append(pid)
+        return True
+
+    monkeypatch.setattr(engine, "send_message", send_message)
+    engine.apps_reconnect("reconnect-1", [{"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/gmail"}])
+    assert await engine.app_connected("gmail", "Gmail") is None
+    assert sent == []
+
+
 async def test_settings_lists_connected_apps(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
     monkeypatch.setattr(apps, "fetch", lambda app="": DATA)
     app, client = await signed_in(engine, aiohttp_client)

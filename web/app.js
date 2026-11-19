@@ -1393,6 +1393,9 @@ function HostedApps() {
     ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
     ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
     ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
+    ${data?.reconnect?.length > 0 && html`<div class="apps-reconnect"><p class="np-help"><b>Reconnect</b><br/>I've upgraded how I connect to your apps. Reconnect these once and everything works as before.</p>
+      <div class="apps-grid">${data.reconnect.map((a) => html`<div class="apps-row" data-name=${a.name}><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span class="app-name">${a.name}${a.accounts?.length > 0 && html` <small>${a.accounts.join(', ')}</small>`}</span>
+        <button class="btn sm primary" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Reconnect'}</button></div>`)}</div></div>`}
     ${connected.length > 0 && html`<div class="app-accounts">${connected.map((a) => html`<div class="app-group">
       <div class="app-head">${logo(a, 22)}<span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
       ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i><span class="app-account-name">${x.label}</span></span>${asking === x.id
