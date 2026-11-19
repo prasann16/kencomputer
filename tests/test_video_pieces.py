@@ -159,3 +159,10 @@ const plan = (steady) => P.planPieces({ work: ".", props: { video: "x.mp4" }, gr
 console.log(JSON.stringify({ thirty: P.steadyFootage("thirty.mp4"), phone: P.steadyFootage("phone.mp4"), one: plan(false), many: plan(true) }));""")
     assert out["thirty"] and not out["phone"]
     assert out["one"] == [0] and len(out["many"]) > 1
+
+
+@needs_node
+def test_a_video_file_is_hashed_by_its_bytes(tmp_path):
+    # JSON of a 200 MB video's Buffer is an array as long as the file: it ran node out of memory.
+    out = node(tmp_path, 'const b = Buffer.alloc(300 * 1024 * 1024, 7); console.log(JSON.stringify([P.hash(b).length, P.hash(Buffer.from("ab")) === P.hash("ab")]));')
+    assert out == [64, True]

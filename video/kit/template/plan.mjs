@@ -13,7 +13,9 @@ export const W = 1080, H = 1920;
 export const SHEET_LIFT = 340; // as in src/theme.ts
 export const PIECE = 90; // frames (3 s) per piece of the final picture
 
-export const hash = (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
+// A file's bytes are hashed as they are: JSON of a video's Buffer is an array as long as the file, and ran out of memory.
+export const hash = (value) =>
+  createHash("sha256").update(typeof value === "string" || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest("hex");
 
 const codeFiles = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? codeFiles(join(dir, e.name)) : [join(dir, e.name)]));
