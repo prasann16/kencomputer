@@ -1,5 +1,6 @@
 """Hosted Ken's apps: Ken asks its host what's connected (never guesses), hands out the host's one-tap Connect
 link for the rest, and carries on in the chat that gave the link once the host says it's connected."""
+import hashlib
 import io
 import json
 import os
@@ -97,6 +98,53 @@ async def test_the_connected_endpoint(engine, aiohttp_client, monkeypatch, on_ho
     assert calls == [("notion", "Notion")]
     monkeypatch.delenv("KEN_KEEPALIVE_URL")
     assert (await client.post("/api/apps/connected", json={"slug": "notion"})).status == 404
+
+
+async def test_reconnect_after_the_move_is_one_note_with_a_link_per_app(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
+    seen = []
+    q = engine.subscribe()
+    app, client = await signed_in(engine, aiohttp_client)
+    body = {"id": "reconnect-1763553600000", "apps": [
+        {"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/gmail"},
+        {"slug": "instagram", "name": "Insta[gram]", "url": f"{SITE}/account/apps/connect/instagram"},
+    ]}
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 200
+    note = engine.messages(HOME, limit=5)[-1]
+    assert note["text"] == ("I've upgraded how I connect to your apps. Reconnect them once and everything works as before. "
+                            f"Tap each one: [Gmail]({SITE}/account/apps/connect/gmail) · [Instagram]({SITE}/account/apps/connect/instagram)")
+    # Started by Ken, so it goes to Telegram and the phone app like any message Ken starts (bot.py forwards "background").
+    assert note["role"] == "ken" and note["via"] == "background" and note["action"] == "apps_reconnect"
+    # On Telegram each app is still a tap (what send_outbound does to Ken's words).
+    import bot
+    sent = bot.md_to_html(bot.no_paths(note["text"]))
+    for slug in ("gmail", "instagram"):
+        assert f'href="{SITE}/account/apps/connect/{slug}"' in sent
+    while not q.empty():
+        seen.append(q.get_nowait())
+    assert any(e["type"] == "message" and e.get("action") == "apps_reconnect" for e in seen)
+    # The host asks again (its answer was lost): still one note.
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 200
+    assert sum(m.get("action") == "apps_reconnect" for m in engine.messages(HOME, limit=50)) == 1
+    # Only the host's own Connect links, for the app named.
+    for bad in ({**body, "apps": [{"slug": "gmail", "name": "Gmail", "url": "https://evil.example/x"}]},
+                {**body, "apps": [{"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/notion"}]},
+                {**body, "apps": []}, {**body, "id": "../x"}, {"apps": body["apps"]}):
+        assert (await client.post("/api/apps/reconnect", json=bad)).status == 400
+    monkeypatch.delenv("KEN_KEEPALIVE_URL")
+    assert (await client.post("/api/apps/reconnect", json=body)).status == 404
+
+
+async def test_connecting_from_the_reconnect_note_doesnt_start_a_turn(engine, monkeypatch):  # noqa: F811
+    sent = []
+
+    async def send_message(pid, text, *a, **kw):
+        sent.append(pid)
+        return True
+
+    monkeypatch.setattr(engine, "send_message", send_message)
+    engine.apps_reconnect("reconnect-1", [{"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/gmail"}])
+    assert await engine.app_connected("gmail", "Gmail") is None
+    assert sent == []
 
 
 async def test_settings_lists_connected_apps(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
@@ -272,3 +320,66 @@ async def test_a_disconnect_that_didnt_take_says_so(engine, aiohttp_client, two_
     app, client = await signed_in(engine, aiohttp_client)
     r = await client.post("/api/apps/disconnect", json={"app": "gmail", "account": "gmail_jati-off"})
     assert r.status == 502 and "Couldn't disconnect" in (await r.json())["error"]
+
+
+# ------------------------------------------------------------------ files, on a host that runs the apps tools itself
+
+@pytest.fixture
+def own_apps(on_host, monkeypatch):
+    monkeypatch.setenv("KEN_APPS_MCP_URL", f"{SITE}/box/apps-mcp")
+    monkeypatch.setenv("KEN_APPS_MCP_TOKEN", "checkin-tok")
+
+
+def test_a_file_goes_to_composio_through_the_host_and_ken_gets_the_tool_argument(own_apps, monkeypatch, tmp_path, capsys):
+    video = tmp_path / "reel.mp4"
+    video.write_bytes(b"not really a video")
+    staged = {"upload_url": "https://storage.composio.dev/put?sig=1", "upload_headers": {"content-type": "video/mp4"},
+              "file": {"name": "reel.mp4", "mimetype": "video/mp4", "s3key": "projects/p/reel.mp4"}}
+    seen = []
+
+    def urlopen(req, timeout):
+        body = req.data.read() if hasattr(req.data, "read") else req.data
+        seen.append({"url": req.full_url, "method": req.get_method(), "headers": {k.lower(): v for k, v in req.header_items()}, "body": body})
+        return io.BytesIO(json.dumps(staged).encode() if req.full_url.startswith(SITE) else b"")
+
+    monkeypatch.setattr(apps.urllib.request, "urlopen", urlopen)
+    assert apps.file_main([str(video), "youtube_upload_video"]) == 0
+    ask, put = seen
+    assert ask["url"] == f"{SITE}/box/apps-file" and ask["headers"]["authorization"] == "Bearer checkin-tok"
+    assert json.loads(ask["body"]) == {"tool": "YOUTUBE_UPLOAD_VIDEO", "app": "youtube", "name": "reel.mp4", "mimetype": "video/mp4",
+                                       "md5": hashlib.md5(b"not really a video").hexdigest(), "size": 18}
+    # The file itself goes straight to Composio's storage, never through the host, with no token of ours.
+    assert put["url"] == staged["upload_url"] and put["method"] == "PUT" and put["body"] == b"not really a video"
+    assert put["headers"]["content-type"] == "video/mp4" and "authorization" not in put["headers"]
+    assert put["headers"]["user-agent"] == "Ken"  # Cloudflare in front of storage may refuse Python's own
+    out = capsys.readouterr().out
+    assert json.loads(out.splitlines()[0]) == staged["file"]
+    assert "as the file argument of YOUTUBE_UPLOAD_VIDEO" in out
+
+
+def test_files_plainly_refused_where_the_host_cant_take_them(on_host, monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.com/mcp/composio")  # Agent37's apps server
+    assert not apps.files_ready()
+    assert apps.file_main([str(tmp_path / "a.png"), "TWITTER_UPLOAD_MEDIA"]) == 1
+    assert "can't carry this file for now" in capsys.readouterr().out
+
+
+def test_a_missing_file_or_a_refusal_is_said_plainly(own_apps, monkeypatch, capsys, tmp_path):
+    assert apps.file_main([str(tmp_path / "nope.png"), "TWITTER_UPLOAD_MEDIA"]) == 1
+    assert "There's no file at" in capsys.readouterr().out
+    (tmp_path / "a.png").write_bytes(b"png")
+
+    def urlopen(req, timeout):
+        raise apps.urllib.error.HTTPError(req.full_url, 409, "no", {}, io.BytesIO(b'{"error": "Apps on this computer go through Agent37."}'))
+
+    monkeypatch.setattr(apps.urllib.request, "urlopen", urlopen)
+    assert apps.file_main([str(tmp_path / "a.png"), "TWITTER_UPLOAD_MEDIA"]) == 1
+    assert "go through Agent37" in capsys.readouterr().out
+
+
+def test_the_file_line_is_in_kens_instructions_only_where_files_work(own_apps, monkeypatch):
+    import bot
+    assert bot.apps_mcp()["apps"]["url"] == f"{SITE}/box/apps-mcp"
+    assert "--apps-file <path> <TOOL_SLUG>" in bot.build_system()
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.com/mcp/composio")
+    assert "--apps-file" not in bot.build_system()
