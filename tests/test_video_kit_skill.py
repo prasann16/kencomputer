@@ -572,10 +572,28 @@ def test_host_dub_goes_up_as_audio_and_comes_back_over_the_original_picture(host
     assert fake.calls[0]["headers"]["X-ken-seconds"] == "12.00" and b'name="name"\r\n\r\nreel\r\n' in fake.calls[0]["data"]
 
 
-def test_voice_delete(hosted, capsys):
+def test_voice_delete_only_once_they_confirmed(hosted, capsys):
     fake = hosted({("DELETE", "/v1/voices/v9"): {"status": "ok"}})
-    code, info, _ = hrun(["voice-delete", "v9"], capsys)
+    code, info, err = hrun(["voice-delete", "v9"], capsys)
+    assert code == 1 and info is None and fake.calls == []  # nothing sent without --confirmed
+    assert "Delete your cloned voice?" in err and "--confirmed" in err and "email" in err
+    code, info, _ = hrun(["voice-delete", "v9", "--confirmed"], capsys)
     assert code == 0 and info == {"deleted": "v9"} and fake.calls[0]["method"] == "DELETE"
+
+
+def test_voice_delete_on_their_own_key_needs_the_yes_too(api, capsys):
+    fake = api({("DELETE", "/v1/voices/v9"): {"status": "ok"}})
+    code, _, _ = run(["voice-delete", "v9"], capsys)
+    assert code == 1 and fake.calls == []
+
+
+def test_a_clone_that_replaced_their_old_one_says_so(hosted, tmp_path, capsys):
+    hosted({("POST", "/v1/voices/add"): ({"voice_id": "v10", "replaced": ["v9"]}, "1 voices")})
+    a = tmp_path / "a.mp3"
+    a.write_bytes(b"x")
+    code, info, _ = hrun(["clone", "--name", "Me", "--sample", str(a), "--said", "yes", "--own-voice"], capsys)
+    assert code == 0 and info["voice_id"] == "v10" and info["replaced"] == ["v9"]
+    assert a.exists()  # the sample stays, for a new clone later
 
 
 class Redirected(HostResp):
@@ -626,7 +644,7 @@ def test_a_redirect_urllib_wont_follow_is_the_route_not_being_live(hosted, monke
     def urlopen(req, timeout=None):  # urllib raises a DELETE's 302 instead of following it
         raise urllib.error.HTTPError(req.full_url, 302, "Found", {"location": "/"}, io.BytesIO(b""))
     monkeypatch.setattr(eleven.urllib.request, "urlopen", urlopen)
-    code, _, err = hrun(["voice-delete", "v9"], capsys)
+    code, _, err = hrun(["voice-delete", "v9", "--confirmed"], capsys)
     assert code == 1 and "isn't switched on" in err and "(302)" not in err
 
 
