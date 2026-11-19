@@ -114,6 +114,11 @@ async def test_reconnect_after_the_move_is_one_note_with_a_link_per_app(engine, 
                             f"Tap each one: [Gmail]({SITE}/account/apps/connect/gmail) · [Instagram]({SITE}/account/apps/connect/instagram)")
     # Started by Ken, so it goes to Telegram and the phone app like any message Ken starts (bot.py forwards "background").
     assert note["role"] == "ken" and note["via"] == "background" and note["action"] == "apps_reconnect"
+    # On Telegram each app is still a tap (what send_outbound does to Ken's words).
+    import bot
+    sent = bot.md_to_html(bot.no_paths(note["text"]))
+    for slug in ("gmail", "instagram"):
+        assert f'href="{SITE}/account/apps/connect/{slug}"' in sent
     while not q.empty():
         seen.append(q.get_nowait())
     assert any(e["type"] == "message" and e.get("action") == "apps_reconnect" for e in seen)
