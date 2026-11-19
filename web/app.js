@@ -1403,13 +1403,13 @@ function HostedApps() {
   useEffect(() => { load(''); loadMine(); api('/api/connections').then((r) => setMail(r.emails)).catch(() => setMail([])); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
-    setBusy(slug); setError('');
+    setBusy(slug); setProblem('');
     try {
       const r = await fetch('/account/apps/connect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ app: slug }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body.url) throw new Error(body.error || "Couldn't start connecting just now. Try again.");
       location.href = body.url;  // the app's own sign-in; it comes back to Settings → Apps
-    } catch (e) { setError(e.message); setBusy(''); }
+    } catch (e) { setProblem(e.message); setBusy(''); }  // shown at the top, by the card and the Reconnect list
   };
   const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
     .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
