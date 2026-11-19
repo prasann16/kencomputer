@@ -30,11 +30,15 @@ TIMEOUT = 15
 MCP_TIMEOUT = 30
 # The call that says whose account it is, for the apps where we know it. Others are named by alias or number.
 PROFILE = {
-    "gmail": "GMAIL_GET_PROFILE",
-    "github": "GITHUB_GET_THE_AUTHENTICATED_USER",
-    "notion": "NOTION_GET_ABOUT_ME",
+    "gmail": ("GMAIL_GET_PROFILE", {}),
+    "github": ("GITHUB_GET_THE_AUTHENTICATED_USER", {}),
+    "notion": ("NOTION_GET_ABOUT_ME", {}),
+    "googlecalendar": ("GOOGLECALENDAR_GET_CURRENT_USER", {}),  # email
+    "instagram": ("INSTAGRAM_GET_USER_INFO", {}),  # username
+    "youtube": ("YOUTUBE_LIST_CHANNELS", {"mine": True, "part": "snippet"}),  # customUrl, the @handle
+    "linkedin": ("LINKEDIN_GET_MY_INFO", {}),  # localizedFirstName + localizedLastName
 }
-NAME_KEYS = ("emailAddress", "email", "user_email", "login", "username", "name")
+NAME_KEYS = ("emailAddress", "email", "user_email", "login", "username", "customUrl", "name")
 RETRY_UNNAMED_S = 7 * 86400  # an account that couldn't be named is asked again after a week (each try is an app action)
 
 
@@ -145,12 +149,16 @@ def mcp_accounts(slugs: list[str]) -> dict[str, list[dict]]:
 
 def profile_name(slug: str, account: str) -> str | None:
     """Whose account it is (an address, a login), from the app's own profile call with that account."""
-    tool = PROFILE.get(slug)
-    if not tool:
+    if slug not in PROFILE:
         return None
+    tool, arguments = PROFILE[slug]
     answer = mcp_call("COMPOSIO_MULTI_EXECUTE_TOOL", {
-        "tools": [{"tool_slug": tool, "arguments": {}, "account": account}],
+        "tools": [{"tool_slug": tool, "arguments": arguments, "account": account}],
         "thought": "Find out whose account this is, so Settings and Ken can tell their accounts apart."})
+    for d in _walk(answer):  # LinkedIn: a person's name in two parts
+        first, last = d.get("localizedFirstName"), d.get("localizedLastName")
+        if isinstance(first, str) and first.strip():
+            return f"{first.strip()} {last.strip() if isinstance(last, str) else ''}".strip()[:120]
     for key in NAME_KEYS:  # the most telling kind of name first, wherever the answer puts it
         for d in _walk(answer):
             v = d.get(key)
