@@ -2155,6 +2155,25 @@ def upcoming_job() -> float | None:
     return next_job_time(all_jobs(), state, time.time())
 
 
+def computer_stats() -> dict:
+    """The computer's disk (the one Ken's home is on, as the disk watch reads it) and memory, used and total, in bytes,
+    for the owner's fleet page. A reading that fails is left out; the check-in still goes."""
+    out = {}
+    try:
+        d = shutil.disk_usage(KEN_HOME)
+        out.update(disk_used=d.total - d.free, disk_total=d.total)
+    except OSError:
+        pass
+    try:
+        from usage import memory
+        m = memory()
+        if m.get("total"):
+            out.update(mem_used=max(0, m["total"] - m.get("available", 0)), mem_total=m["total"])
+    except Exception:
+        pass
+    return out
+
+
 async def keep_awake() -> None:
     """A computer in the cloud sleeps when nobody's using it, and work running inside it doesn't count as use. Every
     minute, tell the host (KEN_KEEPALIVE_URL) whether Ken is in the middle of something, so it keeps the computer up
@@ -2168,8 +2187,9 @@ async def keep_awake() -> None:
                 busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
+                stats = await asyncio.to_thread(computer_stats)  # disk and memory, for the owner's fleet page
                 r = await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
-                                                 "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {})},
+                                                 "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {}), **stats},
                                       headers={"Authorization": f"Bearer {token}"})
                 if r.status_code == 200:
                     import apps

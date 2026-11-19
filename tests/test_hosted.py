@@ -566,7 +566,10 @@ async def test_keep_awake_checks_in(monkeypatch):
     monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "secret")
     with pytest.raises(SystemExit):
         await bot.keep_awake()
-    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev", "started", "talked"}
+    assert posts[0][0] == "Bearer secret" and {"busy", "next_job", "rev", "started", "talked"} <= set(posts[0][1])
+    assert set(posts[0][1]) - {"busy", "next_job", "rev", "started", "talked"} <= {"disk_used", "disk_total", "mem_used", "mem_total"}
+    # The computer's disk and memory, for the owner's fleet page.
+    assert 0 < posts[0][1]["disk_used"] <= posts[0][1]["disk_total"]
     assert posts[0][1]["started"] == bot.STARTED_AT and posts[0][1]["talked"] == bot.BORN_FLAG.exists()
     # How Ken thinks, once chosen on its first screen (the host's funnel counts it once).
     class Claude:
@@ -578,6 +581,19 @@ async def test_keep_awake_checks_in(monkeypatch):
     assert posts[1][1]["ai"] == "credits"
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "http://insecure.example")
     assert await bot.keep_awake() is None
+
+
+def test_computer_stats(monkeypatch):
+    import bot
+    import usage
+    monkeypatch.setattr(usage, "memory", lambda: {"total": 8_000, "available": 3_000})
+    stats = bot.computer_stats()
+    assert stats["mem_used"] == 5_000 and stats["mem_total"] == 8_000
+    assert 0 < stats["disk_used"] <= stats["disk_total"]
+    # A reading that fails is left out, so the check-in still goes.
+    monkeypatch.setattr(usage, "memory", lambda: {})
+    monkeypatch.setattr(bot.shutil, "disk_usage", lambda path: (_ for _ in ()).throw(OSError("gone")))
+    assert bot.computer_stats() == {}
 
 
 def test_the_hosts_answer_moves_the_apps_server_without_a_restart(monkeypatch):
