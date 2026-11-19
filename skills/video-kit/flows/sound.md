@@ -8,7 +8,7 @@ Fans, traffic, echo, a café: keeps only the voice.
 
 A video in and a video out keeps the picture and swaps in the clean sound; audio in gives audio out. Up to 500 MB
 and 1 hour, about $0.12 a minute. It removes music too, so clean before adding music, not after. When the source is noisy, clean it
-before the video skill's cut and give the cut the clean file; clean a noisy sample before cloning from it.
+before the video skill's cut and give the cut the clean file.
 
 Free first try for light hiss: `ffmpeg -i in.mp4 -af "highpass=f=80,afftdn=nf=-25" -c:v copy out.mp4`. If that's
 not enough, use the isolator.

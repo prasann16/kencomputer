@@ -13,8 +13,8 @@ Meta skips (Gujarati, Malayalam, Punjabi, Odia and more), or when they want cont
 ## Steps
 
 1. The video is in `videos/<short-name>/`. If they also want it cut or cleaned, do that first (dub last).
-2. `eleven.py estimate dub <file>`. On Ken's account: say in one line how many of their dub minutes it uses (each
-   language uses the reel's length again) and go. On their own key: tell them the cost per language (a 60 s reel
+2. `eleven.py estimate dub <file>`. On Ken's account: say in one line what it uses of their Ken AI credits (each
+   language costs the reel's length again) and go. On their own key: tell them the cost per language (a 60 s reel
    is about $0.50 a language) and wait for the yes (more than one language: one total).
 3. Run it as a background job, one command per language:
 
@@ -32,11 +32,10 @@ Meta skips (Gujarati, Malayalam, Punjabi, Odia and more), or when they want cont
 ## Choosing the engine
 
 - Default (no flag): Dubbing v1, about **$0.50 a minute**, no watermark, returns the finished video. Good for reels.
-- `--v2`: Dubbing v2, about **$2.20 a minute**, newer voices and translation, returns lossless audio and subtitles
-  that the helper puts back over the original picture. Use when they ask for the best quality, or when v1 says it's
-  no longer available (ElevenLabs marked it deprecated in 2026).
-- On Ken's account the prices above are never said; v2 has its own, smaller allowance (`dub_v2` in `check`), so
-  use it only when they ask for the best quality.
+- `--v2`: Dubbing v2, about **$2.20 a minute**, their own key only (not available on Ken's account). Returns
+  lossless audio and subtitles that the helper puts back over the original picture.
+- A dialect dubbing can't pick (European vs Brazilian Portuguese, say): write the script in that dialect and voice it
+  in their clone with Multilingual v2 (next section).
 - On their own key, a free ElevenLabs plan watermarks dubs. Say so if `check` shows tier `free`.
 
 ## When they want it "in my voice" in another language, with their own script
