@@ -128,7 +128,7 @@ def _run(cmd: list[str], cwd: Path, home: Path) -> None:
         raise SystemExit(f"{' '.join(Path(c).name for c in cmd[:2])} failed:\n{(r.stderr or r.stdout)[-2000:]}")
 
 
-ENGINE = ("compose.mjs", "lib.mjs", "plan.mjs", "render.mjs", "stills.mjs", "tsconfig.json", "sfx")
+ENGINE = ("compose.mjs", "lib.mjs", "render.mjs", "stills.mjs", "tsconfig.json", "sfx")
 
 
 def _project(home: Path, folder: Path, say=print) -> None:
@@ -345,78 +345,6 @@ def _parse_keep(spec: str, count: int) -> list[tuple[int, int]]:
     return keep
 
 
-CUT_VERSION = 1  # bump when the picture of a part changes, so no part from an older cut is reused
-
-
-def _identity(path: Path) -> dict:
-    st = path.stat()
-    return {"name": path.name, "size": st.st_size, "mtime": round(st.st_mtime, 3)}
-
-
-def _jobs() -> int:
-    """How many ffmpeg encodes to run side by side: their filters mostly use one core each."""
-    return max(1, min(4, (os.cpu_count() or 2) // 2))
-
-
-def _cut_video(folder: Path, src: Path, pieces: list[list], speed: float, say=print) -> int:
-    """cut.mp4 from the parts. Each part's picture is encoded on its own and kept in .cut/ by what it is (the source,
-    where, how fast), so cutting again (a new ending, a sentence dropped, the same words) only encodes the parts that
-    are new, and the parts are joined as they are. The sound is made whole every time, so no join clicks. Returns how
-    many parts were already there."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    store = folder / ".cut"
-    store.mkdir(exist_ok=True)
-    source = _identity(src)
-    files = [store / (hashlib.sha256(json.dumps([CUT_VERSION, source, a, b, speed]).encode()).hexdigest()[:24] + ".mp4")
-             for a, b, _ in pieces]
-    todo = [(a, b, f) for (a, b, _), f in zip(pieces, files) if not f.exists()]
-    if todo:
-        say(f"Cutting {src.name}: {len(todo)} of {len(pieces)} parts to encode…")
-
-    def encode(job):
-        a, b, f = job
-        n = max(1, round((b - a) / speed * FPS))
-        tmp = f.with_suffix(".part.mp4")
-        # Each part starts at zero (a seek lands a little after it) and is exactly its frames, so joining them leaves
-        # no missing frames. Phones tag their videos "rotate 90°"; the frames come out upright, so the tag is dropped.
-        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src), "-an", "-vf",
-                            f"setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase,"
-                            f"crop=1080:1920,setsar=1,format=yuv420p,sidedata=delete:type=DISPLAYMATRIX,tpad=stop_mode=clone:stop={n}",
-                            "-frames:v", str(n), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", str(2 * FPS), str(tmp)],
-                           capture_output=True, text=True)
-        if r.returncode:
-            tmp.unlink(missing_ok=True)
-            raise SystemExit(f"ffmpeg failed:\n{r.stderr[-2000:]}")
-        tmp.replace(f)
-
-    with ThreadPoolExecutor(_jobs()) as pool:
-        list(pool.map(encode, todo))
-    for old in store.iterdir():  # parts no cut uses any more
-        if old not in files:
-            old.unlink(missing_ok=True)
-
-    inputs, graph = [], []
-    for i, (a, b, _) in enumerate(pieces):
-        inputs += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
-        # Each part's sound is exactly as long as its picture, so the voice stays in sync to the last word.
-        n = max(1, round((b - a) / speed * FPS)) / FPS
-        graph.append(f"[{i + 1}:a]asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo:sample_rates=48000,atempo={speed},"
-                     f"afade=t=in:d={FADE_IN},afade=t=out:st={max(0, (b - a) / speed - FADE_OUT):.3f}:d={FADE_OUT},"
-                     f"apad=whole_dur={n:.6f},atrim=end={n:.6f}[a{i}]")
-    graph.append("".join(f"[a{i}]" for i in range(len(pieces))) + f"concat=n={len(pieces)}:v=0:a=1[ac]")
-    graph.append("[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=channel_layouts=stereo[a]")
-    listing = store / "parts.txt"
-    listing.write_text("ffconcat version 1.0\n" + "".join(f"file '{f}'\n" for f in files))
-    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), *inputs,
-                        "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
-                        "-b:a", "192k", "-movflags", "+faststart", str(folder / "cut.mp4")], capture_output=True, text=True)
-    listing.unlink(missing_ok=True)
-    if r.returncode:
-        raise SystemExit(f"ffmpeg failed:\n{r.stderr[-2000:]}")
-    return len(pieces) - len(todo)
-
-
 def cut(folder: Path, spec: str | None, say=print, speed: float = 1.0, zoom: bool = True) -> None:
     """Without `spec`, the numbered transcript to choose from. With it, cut.mp4 (vertical 1080x1920, 30 fps,
     loudness-normalised) and props.json with every kept word timed on it, keeping anything else already there."""
@@ -437,9 +365,24 @@ def cut(folder: Path, spec: str | None, say=print, speed: float = 1.0, zoom: boo
         raise SystemExit("Nothing left to keep.")
     # Whole frames per part, so every cut lands exactly on a frame.
     pieces = [[a, round(min(length, a + max(1, round((b - a) / speed * FPS)) / FPS * speed), 4), real] for a, b, real in pieces]
+    inputs, graph = [], []
+    for i, (a, b, _) in enumerate(pieces):
+        inputs += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(src)]
+        # Each part starts at zero (a seek lands a little after it), so joining them leaves no missing frames.
+        # Phones tag their videos "rotate 90°"; the frames come out upright, so the tag is dropped.
+        graph.append(f"[{i}:v]setpts=(PTS-STARTPTS)/{speed},fps={FPS},scale=1080:1920:force_original_aspect_ratio=increase,"
+                     f"crop=1080:1920,setsar=1,format=yuv420p,sidedata=delete:type=DISPLAYMATRIX[v{i}]")
+        graph.append(f"[{i}:a]asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo:sample_rates=48000,atempo={speed},"
+                     f"afade=t=in:d={FADE_IN},afade=t=out:st={max(0, (b - a) / speed - FADE_OUT):.3f}:d={FADE_OUT}[a{i}]")
+    graph.append("".join(f"[v{i}][a{i}]" for i in range(len(pieces))) + f"concat=n={len(pieces)}:v=1:a=1[v][ac]")
+    graph.append("[ac]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=channel_layouts=stereo[a]")
     out = folder / "cut.mp4"
-    done = _cut_video(folder, src, pieces, speed, say)
-    say(f"Cut {src.name} into {len(pieces)} parts" + (f" ({done} of them kept from the last cut)" if done else "") + ".")
+    say(f"Cutting {src.name} into {len(pieces)} parts…")
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(graph), "-map", "[v]",
+                        "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+                        "-movflags", "+faststart", str(out)], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit(f"ffmpeg failed:\n{r.stderr[-2000:]}")
 
     # Every word in a kept range is on the new timeline, so nothing they say goes uncaptioned. Fixes made to the
     # words earlier (spelling, emphasis) carry over when a reel is cut again.
@@ -459,9 +402,7 @@ def cut(folder: Path, spec: str | None, say=print, speed: float = 1.0, zoom: boo
     if not zoom:
         props["style"] = {**props.get("style", {}), "zoomCuts": False}
     props_path.write_text(json.dumps(props, indent=1))
-    # What cut.mp4 is made of, so a render can tell which seconds of the reel stayed the same after cutting again.
-    (folder / "cutlist.json").write_text(json.dumps({"keep": spec, "speed": speed, "pieces": [[a, b] for a, b, _ in pieces],
-                                                     "version": CUT_VERSION, "source": _identity(src), "video": _identity(out)}))
+    (folder / "cutlist.json").write_text(json.dumps({"keep": spec, "speed": speed, "pieces": [[a, b] for a, b, _ in pieces]}))
     say(f"{out}: {duration:.1f}s from {length:.1f}s. Its words, timed on the new video, are in {props_path}"
         " (fix any misheard word there).")
     say("\nThe reel's script (/ marks a cut):\n" + " / ".join(" ".join(words[i]["w"] for i in range(a, b + 1)) for a, b in keep) + "\n")

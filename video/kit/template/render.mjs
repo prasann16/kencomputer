@@ -172,10 +172,10 @@ const list = join(cache, `${hash(chunks.map((c) => c.key)).slice(0, 12)}.txt`);
 writeFileSync(list, chunks.map((c) => `file '${c.file}'`).join("\n") + "\n");
 const sfxDir = resolve("sfx");
 const inputs = sfx.flatMap((s) => ["-i", join(sfxDir, `${s.sound}.wav`)]);
-// The sound runs on in silence past the cut's end (a held ending), and stops with the picture.
-const mix = ["-filter_complex", [`[1:a]apad${sfx.length ? "[voice]" : "[a]"}`, ...sfx.map((s, i) => `[${i + 2}:a]adelay=${Math.round(s.at * 1000)}:all=1[s${i}]`),
-  ...(sfx.length ? [`[voice]${sfx.map((_, i) => `[s${i}]`).join("")}amix=inputs=${sfx.length + 1}:normalize=0:duration=first[a]`] : [])].join(";"),
-"-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"];
+const mix = sfx.length
+  ? ["-filter_complex", sfx.map((s, i) => `[${i + 2}:a]adelay=${Math.round(s.at * 1000)}:all=1[s${i}]`).join(";") +
+      `;[1:a]${sfx.map((_, i) => `[s${i}]`).join("")}amix=inputs=${sfx.length + 1}:normalize=0:duration=first[a]`, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+  : ["-map", "0:v", "-map", "1:a", "-c", "copy"];
 execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-i", videoPath, ...inputs, ...mix,
   "-shortest", "-movflags", "+faststart", out], { stdio: "inherit" });
 console.log(`Rendered ${out} (${(statSync(out).size / 1e6).toFixed(1)} MB)`);
