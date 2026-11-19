@@ -67,6 +67,10 @@ jobs:
           Get-Content "$env:KEN_HOME\logs\ken.log" -ErrorAction SilentlyContinue
           if (-not $up) { "Ken never answered on 7777"; exit 1 }
           $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*running*") { exit 1 }
+          if (Select-String -Path "$env:KEN_HOME\logs\ken.log" -Pattern "scheduler error" -Quiet) { "the scheduler failed"; exit 1 }
           & "$app\ken.ps1" stop
-          Start-Sleep 3
-          $s = & "$app\ken.ps1" status; $s; if ($s -notlike "*stopped*") { exit 1 }
+          $s = & "$app\ken.ps1" status; $s
+          if ($s -notlike "*stopped*") {
+            Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Format-List ProcessId, ParentProcessId, Name, CommandLine
+            exit 1
+          }
