@@ -879,7 +879,7 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         background = "" if pid != HOME else (
-            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than a minute or two (editing a video, "
+            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than about 30 seconds (editing a video, "
             "long research, building something) goes to a background job right away, before you start on it, never here "
             "where it would keep them waiting. Before handing it off, take a quick look and tell them in a few short lines "
             "what you found, what you'll do and roughly how long it'll take (no need to wait for a yes unless something's "
