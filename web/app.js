@@ -1787,7 +1787,7 @@ function CreditsUsed() {
   useEffect(() => { fetch('/account/credits.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setUsed).catch(() => {}); }, []);
   if (!used?.days?.length) return '';
   const rows = used.days.flatMap((d) => d.entries.map((e) => ({ day: d.label, ...e })));
-  const shown = all ? rows : rows.slice(0, 6);
+  const shown = all ? rows : rows.slice(0, 3);
   return html`<div class="credits-used"><div class="credits-used-top"><span>Used this month</span><span>${used.total}</span></div>
     ${shown.map((e) => html`<div class="credits-used-row"><span><i>${e.day}</i> · ${e.label}</span><span>${e.usd}</span></div>`)}
     ${rows.length > shown.length && html`<button class="text-action" onClick=${() => setAll(true)}>Show all ${rows.length}</button>`}</div>`;
