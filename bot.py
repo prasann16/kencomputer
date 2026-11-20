@@ -118,7 +118,6 @@ import os
 import re
 import secrets
 import shutil
-import tempfile
 import urllib.parse
 import time
 from pathlib import Path
@@ -1721,18 +1720,32 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not model_cached and not cloud():
         await msg.reply_text("🎙️ First voice note — downloading the transcription model (one-time, can take a minute)…")
     tg_file = await voice.get_file()
-    with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
-        path = f.name
-    try:
-        await tg_file.download_to_drive(path)
-        text = await asyncio.to_thread(transcribe, path)
-    finally:
-        os.unlink(path)
+    # The recording itself is kept in their files, not only its words: a voice note is often the voiceover itself.
+    kept = keep_voice_note(getattr(voice, "file_name", None), ".oga" if msg.voice else ".m4a")
+    await tg_file.download_to_drive(str(kept))
+    text = await asyncio.to_thread(transcribe, str(kept))
     if not text:
         await msg.reply_text("🎙️ Couldn't make out any speech in that one.")
         return
     await msg.reply_text(f"🎙️ “{text}”", do_quote=True, allow_sending_without_reply=True)
-    await handle_prompt(update, text, reply_context(msg))
+    log_history("you", f"[sent voice note: {kept.name}]")
+    await handle_prompt(update, voice_prompt(text, kept), reply_context(msg), said=text, files=[kept.name])
+
+
+def keep_voice_note(name: str | None, suffix: str) -> Path:
+    """Where a voice note's audio is kept: Home's files, named for when it came (or its own name), never over another."""
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    base = Path(name).name if name else f"voice-{time.strftime('%Y%m%d-%H%M%S')}{suffix}"
+    kept, n = INBOX_DIR / base, 1
+    while kept.exists():
+        n += 1
+        kept = INBOX_DIR / f"{Path(base).stem}-{n}{Path(base).suffix}"
+    return kept
+
+
+def voice_prompt(text: str, kept: Path) -> str:
+    """What they said, plus where the recording is, for when the sound itself is what they want (a voiceover)."""
+    return f"{text}\n\n(They said this in a voice note; the recording is kept at {kept}.)"
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
