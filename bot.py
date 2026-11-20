@@ -2064,16 +2064,30 @@ def refresh_default_jobs() -> None:
     """A shipped job whose prompt they never changed gets the current wording."""
     try:
         jobs = json.loads(JOBS_FILE.read_text())
+        changed = False
         for j in jobs:
             if j.get("name") != "nightly-review":
                 continue
             for old in OLD_NIGHTLY_TAILS:
                 if str(j.get("prompt", "")).endswith(old):
                     j["prompt"] = j["prompt"][: -len(old)] + NEW_NIGHTLY_TAIL
-                    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+                    changed = True
                     break
+            # The shipped 21:00 review missed whatever was said after it; at midnight it reads the whole day.
+            if j.get("time") == "21:00" and OLD_NIGHTLY_HEAD in str(j.get("prompt", "")):
+                j["prompt"] = j["prompt"].replace(OLD_NIGHTLY_HEAD, NEW_NIGHTLY_HEAD)
+                j["time"] = "00:00"
+                changed = True
+        if changed:
+            JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
     except Exception as e:
         log.warning("couldn't refresh %s: %s", JOBS_FILE, e)
+
+
+# The shipped review ran at 21:00 and read "today", so anything said after 9 pm never reached memory. It now runs
+# at 00:00 and reads yesterday's file, the whole day. Moved only when both time and wording are still the shipped ones.
+OLD_NIGHTLY_HEAD = "Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin)."
+NEW_NIGHTLY_HEAD = "Read yesterday's transcript in ~/.ken/history/ (the file named for yesterday's date: you run just after midnight, so that's the whole day that just ended)."
 
 
 # Earlier endings of the shipped nightly review, newest last. A prompt that still ends with one was never edited by
@@ -2194,6 +2208,42 @@ def apply_onboarding(facts: dict) -> dict:
     return {"covered": covered}
 
 
+# The fast reel render keeps the graphics it drew (ProRes, about 1 MB a frame: 1.7 GB for one reel full of them) so the
+# day's edits only redraw what changed. They're only a speed-up, never their files, so they go on their own at the
+# start of each new day, without asking: the next edit of a reel draws its graphics again and is fast after that.
+REEL_CACHES_KEY = "(reel caches cleared)"  # in the job state, beside the jobs' own last-run days
+
+
+def clear_reel_caches(work: Path | None = None) -> int:
+    """Empties <reel>/.layers/graphics in every reel folder of the workspace; returns the bytes freed. Captions,
+    pieces, footage and finished videos stay."""
+    freed = 0
+    work = work or WORKSPACE
+    for folder in [*work.glob("*/.layers/graphics"), *work.glob("*/*/.layers/graphics")]:
+        for f in folder.iterdir() if folder.is_dir() else ():
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                freed += size
+            except OSError as e:
+                log.warning("couldn't clear %s: %s", f, e)
+    return freed
+
+
+def clear_reel_caches_daily(state: dict, now: time.struct_time, work: Path | None = None) -> bool:
+    """Once per local day, at the first minute Ken is awake in it. The first time ever only notes the day, so a
+    Ken that just got this doesn't lose the files of a reel being edited right then. Returns whether state changed."""
+    today = time.strftime("%Y-%m-%d", now)
+    if state.get(REEL_CACHES_KEY) == today:
+        return False
+    if REEL_CACHES_KEY in state:
+        freed = clear_reel_caches(work)
+        if freed:
+            log.info("cleared %.1f GB of reel render caches", freed / 1e9)
+    state[REEL_CACHES_KEY] = today
+    return True
+
+
 async def scheduler() -> None:
     while True:
         try:
@@ -2205,7 +2255,7 @@ async def scheduler() -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
-            if note_new_jobs(jobs, now, state):
+            if note_new_jobs(jobs, now, state) | clear_reel_caches_daily(state, now):
                 JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
