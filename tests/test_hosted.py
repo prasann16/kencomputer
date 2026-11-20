@@ -566,7 +566,10 @@ async def test_keep_awake_checks_in(monkeypatch):
     monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "secret")
     with pytest.raises(SystemExit):
         await bot.keep_awake()
-    assert posts[0][0] == "Bearer secret" and set(posts[0][1]) == {"busy", "next_job", "rev", "started", "talked"}
+    assert posts[0][0] == "Bearer secret" and {"busy", "next_job", "rev", "started", "talked"} <= set(posts[0][1])
+    assert set(posts[0][1]) - {"busy", "next_job", "rev", "started", "talked"} <= {"disk_used", "disk_total", "mem_used", "mem_total"}
+    # The computer's disk and memory, for the owner's fleet page.
+    assert 0 < posts[0][1]["disk_used"] <= posts[0][1]["disk_total"]
     assert posts[0][1]["started"] == bot.STARTED_AT and posts[0][1]["talked"] == bot.BORN_FLAG.exists()
     # How Ken thinks, once chosen on its first screen (the host's funnel counts it once).
     class Claude:
@@ -578,6 +581,79 @@ async def test_keep_awake_checks_in(monkeypatch):
     assert posts[1][1]["ai"] == "credits"
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "http://insecure.example")
     assert await bot.keep_awake() is None
+
+
+def test_computer_stats(monkeypatch):
+    import bot
+    import usage
+    monkeypatch.setattr(usage, "memory", lambda: {"total": 8_000, "available": 3_000})
+    stats = bot.computer_stats()
+    assert stats["mem_used"] == 5_000 and stats["mem_total"] == 8_000
+    assert 0 < stats["disk_used"] <= stats["disk_total"]
+    # A reading that fails is left out, so the check-in still goes.
+    monkeypatch.setattr(usage, "memory", lambda: {})
+    monkeypatch.setattr(bot.shutil, "disk_usage", lambda path: (_ for _ in ()).throw(OSError("gone")))
+    assert bot.computer_stats() == {}
+
+
+def test_the_hosts_answer_moves_the_apps_server_without_a_restart(monkeypatch):
+    """Moving someone to Ken's own Composio (or back) reaches Ken in its check-in answer: new sessions use it."""
+    import apps
+    import bot
+    monkeypatch.setenv("AGENT37_COMPOSIO_MCP_URL", "https://api.agent37.example/mcp")
+    monkeypatch.setenv("AGENT37_MANAGED_TOKEN", "a37-tok")
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.example/mcp")
+    monkeypatch.setenv("KEN_APPS_MCP_TOKEN", "a37-tok")
+    monkeypatch.delenv("KEN_APPS", raising=False)
+    apps.use_apps_server({"ok": True})  # a host that doesn't say: nothing changes
+    assert bot.apps_mcp()["apps"]["url"] == "https://api.agent37.example/mcp"
+    apps.use_apps_server({"apps_via": "ken", "apps_mcp": {"url": "https://host.example/box/apps-mcp", "token": "checkin"}})
+    assert bot.apps_mcp() == {"apps": {"type": "http", "url": "https://host.example/box/apps-mcp", "headers": {"Authorization": "Bearer checkin"}}}
+    apps.use_apps_server({"apps_via": "ken", "apps_mcp": {"url": "http://insecure.example", "token": "x"}})
+    assert bot.apps_mcp()["apps"]["url"] == "https://host.example/box/apps-mcp"
+    monkeypatch.delenv("AGENT37_MANAGED_TOKEN")
+    apps.use_apps_server({"apps_via": "agent37"})  # Agent37's isn't known here: left as it is
+    assert bot.apps_mcp()["apps"]["url"] == "https://host.example/box/apps-mcp"
+    monkeypatch.setenv("AGENT37_MANAGED_TOKEN", "a37-tok")
+    apps.use_apps_server({"apps_via": "agent37"})  # moved back: Agent37's own, as at boot
+    assert bot.apps_mcp()["apps"] == {"type": "http", "url": "https://api.agent37.example/mcp", "headers": {"Authorization": "Bearer a37-tok"}}
+    monkeypatch.setenv("KEN_APPS", "0")  # apps off on this computer: left off
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "")
+    apps.use_apps_server({"apps_via": "ken", "apps_mcp": {"url": "https://host.example/box/apps-mcp", "token": "checkin"}})
+    assert bot.apps_mcp() == {}
+
+
+async def test_keep_awake_takes_the_apps_server_from_the_answer(monkeypatch):
+    import apps
+    import bot
+    import httpx
+
+    def handler(request):
+        return httpx.Response(200, json={"ok": True, "apps_via": "ken", "apps_mcp": {"url": "https://host.example/box/apps-mcp", "token": "secret"}})
+    transport = httpx.MockTransport(handler)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw))
+    use = apps.use_apps_server
+
+    def once(answer):
+        use(answer)
+        raise SystemExit  # one check-in is enough
+    monkeypatch.setattr(apps, "use_apps_server", once)
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://host.example/box/checkin")
+    monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "secret")
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.example/mcp")
+    monkeypatch.setenv("KEN_APPS_MCP_TOKEN", "a37-tok")
+    monkeypatch.delenv("KEN_APPS", raising=False)
+    with pytest.raises(SystemExit):
+        await bot.keep_awake()
+    assert bot.apps_mcp()["apps"]["url"] == "https://host.example/box/apps-mcp"
+
+
+def test_an_idle_chat_reopens_on_a_new_apps_server(engine, monkeypatch):
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://api.agent37.example/mcp")
+    before = engine._tools_stamp(HOME)
+    monkeypatch.setenv("KEN_APPS_MCP_URL", "https://host.example/box/apps-mcp")
+    assert engine._tools_stamp(HOME) != before
 
 
 # ------------------------------------------------------------------ the box's supervisor

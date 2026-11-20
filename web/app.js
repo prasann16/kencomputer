@@ -632,6 +632,48 @@ function RunCard({ run, project, openRun, toast, showProject = true }) {
   </div>`;
 }
 
+// While background jobs run in this chat, a small pill pinned under the top bar: "⏳ 2 running · Turkish dub · 1m 20s ›".
+// Tap it for each job's latest step and a Stop. It follows the live events (/api/today is asked again on each one), and
+// is gone once nothing runs; a finished job's result still comes into the chat as before.
+const runClock = (ts) => {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
+};
+
+function RunningPill({ runs, toast }) {
+  const [open, setOpen] = useState(false), [stopping, setStopping] = useState({}), [, setNow] = useState(0);
+  const box = useRef(null), any = runs.length > 0;
+  useEffect(() => {
+    if (!any) { setOpen(false); return; }
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [any]);
+  useLayoutEffect(() => {  // at once, so a tap elsewhere right after opening still closes it
+    if (!open) return;
+    const away = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === 'Escape') setOpen(false); };
+    addEventListener('pointerdown', away); addEventListener('keydown', key);
+    return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', key); };
+  }, [open]);
+  if (!any) return null;
+  const list = [...runs].sort((a, b) => b.created - a.created), first = list[0];
+  const since = (r) => runClock(r.started || r.created);
+  const stop = async (id) => {
+    setStopping((s) => ({ ...s, [id]: true }));
+    try { await api(`/api/runs/${id}/stop`, { json: {} }); } catch (e) { setStopping((s) => ({ ...s, [id]: false })); toast(e.message); }
+  };
+  return html`<div class="running" ref=${box}>
+    <button class="running-pill" aria-expanded=${open} aria-label=${`${list.length} running. Show jobs`} onClick=${() => setOpen(!open)}>
+      <span aria-hidden="true">⏳</span>${list.length > 1 && html`<b>${list.length} running</b><span class="sep">·</span>`}<span class="ellipsis">${first.title}</span><span class="sep">·</span><span class="t">${since(first)}</span><span class="chev" aria-hidden="true">›</span>
+    </button>
+    ${open && html`<div class="running-list" role="dialog" aria-label="Running jobs">${list.map((r) => html`<div class="running-item" key=${r.id}>
+      <div class="run-text"><div class="title ellipsis">${r.title}</div><div class="run-step ellipsis" key=${r.activity}>${r.status === 'queued' ? 'Waiting for a free slot' : r.activity || 'Working'}</div></div>
+      <span class="t">${since(r)}</span>
+      <button class="btn sm" disabled=${!!stopping[r.id]} onClick=${() => stop(r.id)}>${stopping[r.id] ? 'Stopping…' : 'Stop'}</button>
+    </div>`)}</div>`}
+  </div>`;
+}
+
 function DoneItem({ run, project, openRun }) {
   const mark = run.status === 'done' ? html`<span class="ok">✓</span>` : run.status === 'stopped' ? html`<span class="meta">■</span>` : html`<span class="bad">✕</span>`;
   return html`<button class="done-item" onClick=${() => openRun(run.id)}>
@@ -834,8 +876,9 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   }
   // Scrolling up yourself always wins over following.
   const leave = () => { following.current = false; };
-  return html`<section class="conversation-body" aria-label="Conversation"
+  return html`<section class=${'conversation-body' + (runs.length ? ' has-running' : '')} aria-label="Conversation"
 >
+    <${RunningPill} runs=${runs} toast=${toast}/>
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">
@@ -1349,33 +1392,57 @@ function HostedApps() {
   const [data, setData] = useState(null), [error, setError] = useState(''), [q, setQ] = useState(''), [busy, setBusy] = useState('');
   // Each connected app's accounts, named by Ken's computer (it asks the apps themselves: /api/apps); the site's own
   // list (no names, its own ids) stands in when Ken can't be asked.
-  const [mine, setMine] = useState(null), [asking, setAsking] = useState(''), [problem, setProblem] = useState('');
+  // What was connected last time shows at once (remembered in this browser), and Ken's fresh answer replaces it quietly:
+  // nothing waits or jumps. Never seen yet: the site's list, with the account names as placeholders until Ken says.
+  const [mine, setMine] = useState(() => cached('apps-mine')), [asking, setAsking] = useState('');
+  // Whatever goes wrong here (or right, back from an app's sign-in) is a toast: seen wherever they've scrolled to.
+  const told = useRef(false);
+  useEffect(() => { if (say.get('app_problem')) notify("That didn't connect. Try again."); }, []);
+  useEffect(() => {
+    if (told.current || !data || !say.get('connected')) return;
+    told.current = true;
+    notify(`${data.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected ✓`);
+  }, [data]);
   // IMAP: any inbox with its password, for technical users; Ken's computer holds these, not the app catalog.
-  const [mail, setMail] = useState(null), [imap, setImap] = useState(false);
+  const [mail, setMail] = useState(() => cached('apps-mail')), [imap, setImap] = useState(false);
   const imapShown = !q.trim() || /imap|mail|inbox|smtp/i.test(q);
   const say = new URLSearchParams(location.search);
   const load = (query = q) => { setError(''); fetch('/account/apps.json' + (query ? '?q=' + encodeURIComponent(query) : ''), { credentials: 'same-origin' })
     .then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setError("Couldn't load your apps just now.")); };
-  const loadMine = () => api('/api/apps', { timeout: 60000 }).then((r) => setMine(r.connected)).catch(() => setMine(false));
-  useEffect(() => { load(''); loadMine(); api('/api/connections').then((r) => setMail(r.emails)).catch(() => setMail([])); }, []);
+  const loadMine = (fresh) => api('/api/apps' + (fresh ? '?fresh=1' : ''), { timeout: 60000 }).then((r) => { setMine(r.connected); keep('apps-mine', r.connected); })
+    .catch(() => setMine((m) => m || false));
+  useEffect(() => { load(''); loadMine(!!say.get('say')); api('/api/connections').then((r) => { setMail(r.emails); keep('apps-mail', r.emails); }).catch(() => setMail((m) => m || [])); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   const connect = async (slug) => {
-    setBusy(slug); setError('');
+    setBusy(slug);
     try {
       const r = await fetch('/account/apps/connect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ app: slug }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body.url) throw new Error(body.error || "Couldn't start connecting just now. Try again.");
       location.href = body.url;  // the app's own sign-in; it comes back to Settings → Apps
-    } catch (e) { setError(e.message); setBusy(''); }
+    } catch (e) { notify(e.message); setBusy(''); }
   };
   const fromSite = (data?.connected || []).map((a) => ({ slug: a.slug, name: a.name, accounts: (a.account_list || []).slice().reverse()
     .map((x, i) => ({ id: x.id, label: x.label || `Account ${i + 1}${x.connected_at ? ' · connected ' + new Date(x.connected_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`, via: 'host' })) }));
-  const connected = [...(mine ? mine.filter((a) => a.accounts?.length) : mine === false ? fromSite : []),
+  const naming = mine === null; // Ken hasn't said whose accounts these are yet (first look in this browser)
+  const connected = [...(mine ? mine.filter((a) => a.accounts?.length) : fromSite),
     ...(mail?.length ? [{ slug: 'imap', name: 'IMAP', accounts: mail.map((m) => ({ id: m.address, label: m.address, via: 'imap' })) }] : [])];
   const logo = (a, size) => a.slug === 'imap' ? html`<i class="imap-logo">${Glyph('mail')}</i>` : html`<img src=${'/app-logos/' + a.slug} alt="" width=${size} height=${size} loading="lazy"/>`;
   const add = (slug) => slug === 'imap' ? setImap(true) : connect(slug);
+  // The upgrade card (people still on Agent37's apps whom the site's rollout includes): moves them to Ken's own apps
+  // server with no restart, then the same spot lists the apps they had, to reconnect. It stays until they upgrade.
+  const upgrade = async () => {
+    setBusy('upgrade');
+    try {
+      const r = await fetch('/account/apps/upgrade.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({}) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't upgrade just now. Try again in a minute.");
+      // Ken asks the site where its apps are now (at once, not at its next check-in); an older Ken just waits for that.
+      await api('/api/apps/refresh', { json: {}, timeout: 30000 }).catch(() => {}); load(); loadMine(true);
+    } catch (e) { notify(e.message); }
+    finally { setBusy(''); }
+  };
   const disconnect = async (app, account) => {
-    setBusy(`off:${account.id}`); setProblem('');
+    setBusy(`off:${account.id}`);
     try {
       if (account.via === 'imap') {}
       else if (account.via === 'apps') await api('/api/apps/disconnect', { json: { app: app.slug, account: account.id } });
@@ -1383,24 +1450,26 @@ function HostedApps() {
         const r = await fetch('/account/apps/disconnect.json', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ id: account.id }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't disconnect that account just now.");
       }
-      if (account.via === 'imap') setMail((await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails);
-      else { await loadMine(); load(); }
+      if (account.via === 'imap') { const left = (await api(`/api/connections/email?address=${encodeURIComponent(account.id)}`, { method: 'DELETE' })).emails; setMail(left); keep('apps-mail', left); }
+      else { await loadMine(true); load(); }
       setAsking('');
-    } catch (e) { setProblem(e.message); }
+    } catch (e) { notify(e.message); }
     finally { setBusy(''); }
   };
   return html`<p class="np-help">Let Ken use Gmail, Calendar, Slack, Notion and 1,700+ more apps. Ken asks before it sends or changes anything.</p>
-    ${say.get('connected') && html`<p class="np-note">${data?.connected?.find((c) => c.slug === say.get('connected'))?.name || 'The app'} is connected.</p>`}
-    ${say.get('app_problem') && html`<p class="connect-error" role="alert">That didn't connect. Try again.</p>`}
-    ${problem && html`<p class="connect-error" role="alert">${problem}</p>`}
+    ${data?.upgrade && html`<div class="apps-upgrade"><b class="apps-upgrade-title">Upgrade your app connections</b>
+      <p class="apps-upgrade-text">Faster and more reliable, and Ken can post photos and videos for you. You'll reconnect your apps once. It takes about a minute.</p>
+      <button class="btn sm primary" disabled=${!!busy} onClick=${upgrade}>${busy === 'upgrade' ? 'Upgrading…' : 'Upgrade and reconnect'}</button></div>`}
+    ${data?.reconnect?.length > 0 && html`<div class="apps-reconnect"><p class="np-help"><b>Reconnect</b><br/>I've upgraded how I connect to your apps. Reconnect these once and everything works as before.</p>
+      <div class="apps-grid">${data.reconnect.map((a) => html`<div class="apps-row" data-name=${a.name}><img src=${a.logo} alt="" width="22" height="22" loading="lazy"/><span class="app-name">${a.name}${a.accounts?.length > 0 && html` <small>${a.accounts.join(', ')}</small>`}</span>
+        <button class="btn sm primary" disabled=${!!busy} onClick=${() => connect(a.slug)}>${busy === a.slug ? 'Opening…' : 'Reconnect'}</button></div>`)}</div></div>`}
     ${connected.length > 0 && html`<div class="app-accounts">${connected.map((a) => html`<div class="app-group">
       <div class="app-head">${logo(a, 22)}<span>${a.name}</span>${a.accounts.length > 1 && html`<small>${a.accounts.length} accounts</small>`}</div>
-      ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i><span class="app-account-name">${x.label}</span></span>${asking === x.id
+      ${a.accounts.map((x) => html`<div class="app-account"><span class="conn-on"><i></i>${naming ? html`<span class="app-account-name naming" aria-label="Loading"></span>` : html`<span class="app-account-name">${x.label}</span>`}</span>${naming ? '' : asking === x.id
         ? html`<span class="app-confirm"><button class="btn sm" disabled=${!!busy} onClick=${() => disconnect(a, x)}>${busy === 'off:' + x.id ? 'Disconnecting…' : 'Disconnect'}</button><button class="text-action" disabled=${!!busy} onClick=${() => setAsking('')}>Keep</button></span>`
         : html`<button class="text-action" disabled=${!!busy} aria-label=${`Disconnect ${a.name}: ${x.label}`} onClick=${() => setAsking(x.id)}>Disconnect</button>`}</div>`)}
       <button class="app-add" disabled=${!!busy} onClick=${() => add(a.slug)}>${busy === a.slug ? 'Opening…' : html`${Icon.plus} Add another account`}</button>
     </div>`)}</div>`}
-    ${mine === null && data?.connected?.length > 0 && html`<p class="np-note" role="status">Finding out whose accounts these are…</p>`}
     <input class="apps-search" type="text" inputmode="search" placeholder="Search 1,700+ apps" aria-label="Search apps" value=${q} onInput=${(e) => setQ(e.target.value)}/>
     ${imap && html`<div class="apps-imap"><div class="app-head">${logo({ slug: 'imap' })}<span>Connect an inbox over IMAP</span></div>
       <${EmailForm} onDone=${(r) => { setMail(r.emails); setImap(false); }} onCancel=${() => setImap(false)}/></div>`}
@@ -1708,6 +1777,19 @@ function WaitingForKen() {
   return html`<p class="connect-error" role="alert">Ken's computer isn't answering yet.</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button>`;
 }
 // What's left of the plan, as the service hosting this Ken reports it: one line each (awake time, AI, app actions).
+// What used their Ken AI credits this month, by day (the site's /account/credits.json): "Today · Dub · reel · $0.55".
+function CreditsUsed() {
+  const [used, setUsed] = useState(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => { fetch('/account/credits.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setUsed).catch(() => {}); }, []);
+  if (!used?.days?.length) return '';
+  const rows = used.days.flatMap((d) => d.entries.map((e) => ({ day: d.label, ...e })));
+  const shown = all ? rows : rows.slice(0, 6);
+  return html`<div class="credits-used"><div class="credits-used-top"><span>Used this month</span><span>${used.total}</span></div>
+    ${shown.map((e) => html`<div class="credits-used-row"><span><i>${e.day}</i> · ${e.label}</span><span>${e.usd}</span></div>`)}
+    ${rows.length > shown.length && html`<button class="text-action" onClick=${() => setAll(true)}>Show all ${rows.length}</button>`}</div>`;
+}
+
 function PlanUsage({ usage, accountUrl }) {
   // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
   // Hosted Ken: Plan & billing is its own small page on the site (plans, added credits, card and invoices), one tap back.
@@ -1716,6 +1798,7 @@ function PlanUsage({ usage, accountUrl }) {
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
+    ${HOSTED && html`<${CreditsUsed}/>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add Ken AI credits</a>`}
     ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;
@@ -2029,7 +2112,7 @@ function App() {
   openReport = () => setReporting(true);
   const [docFile, setDocFile] = useState(null);
   showDoc = setDocFile;
-  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), 6000 + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
+  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);
     setOutbox((all) => all.filter((m) => !received.current.has(m.client_id)));

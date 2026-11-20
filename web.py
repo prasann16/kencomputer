@@ -36,6 +36,9 @@ MAX_UPLOAD = 200 * 1024 * 1024
 # 100 MB. Each piece is appended to <chat files>/.uploads/<id>.part, and the last one moves it into place.
 MAX_PIECED = 4 * 1024 ** 3
 PIECE_DIR = ".uploads"
+# Hosted Settings → Apps: the connected apps, named, kept a minute (apps_list), so a second look is instant.
+APPS_KEEP_S = 60
+_APPS_KEPT: dict = {}
 
 
 def load_token(home: Path) -> str:
@@ -477,6 +480,7 @@ class WebApp:
 
     async def app_connected(self, request):
         """Hosted Ken: its host says an app was just connected through a link Ken gave (see engine.app_connected)."""
+        _APPS_KEPT.clear()  # what's connected may change: Settings asks afresh
         import apps
         if not apps.hosted():
             return _json({"error": "not found"}, 404)
@@ -488,6 +492,28 @@ class WebApp:
         if not re.fullmatch(r"[a-z0-9_-]{1,60}", slug):
             return _json({"error": "invalid"}, 400)
         return _json({"ok": True, "chat": await self.engine.app_connected(slug, name[:80])})
+
+    async def apps_reconnect(self, request):
+        """Hosted Ken: its host moved their apps to Ken's own Composio; one note in the chat asking them to reconnect
+        the apps they had. {"id": "...", "apps": [{"slug", "name", "url"}]}, each url the host's Connect link."""
+        _APPS_KEPT.clear()  # what's connected may change: Settings asks afresh
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            data = await request.json()
+            note_id = str(data["id"])
+            given = [(str(a["slug"]), str(a.get("name") or a["slug"]), str(a["url"])) for a in data["apps"]][:30]
+        except Exception:
+            return _json({"error": "invalid"}, 400)
+        ok = re.fullmatch(r"[A-Za-z0-9_-]{1,80}", note_id) and given and all(
+            re.fullmatch(r"[a-z0-9_-]{1,60}", slug) and re.fullmatch(rf"https://[A-Za-z0-9.-]+(:\d+)?/account/apps/connect/{slug}", url)
+            for slug, _, url in given)
+        if not ok:
+            return _json({"error": "invalid"}, 400)
+        names = [{"slug": slug, "name": re.sub(r"[\[\]()\n]", "", name)[:80] or slug, "url": url} for slug, name, url in given]
+        self.engine.apps_reconnect(note_id, names)
+        return _json({"ok": True})
 
     async def credits_low(self, request):
         """Hosted Ken: its host says most of the Ken AI credits are used (once per threshold): a note in the chat."""
@@ -611,20 +637,41 @@ class WebApp:
         return _json({"ok": True, **result})
 
     async def apps_list(self, request):
-        """Hosted Ken's Settings: the apps connected on the host's Apps page."""
+        """Hosted Ken's Settings: the apps connected on the host's Apps page. The answer is kept a minute
+        (_APPS_KEPT), so opening Settings again doesn't ask the apps again; any change here (connect, disconnect, a
+        move) drops it, and ?fresh=1 skips it (back from connecting one)."""
         import apps
         if not apps.hosted():
             return _json({"error": "not found"}, 404)
+        kept = _APPS_KEPT.get("answer")
+        if kept and time.monotonic() - kept[0] < APPS_KEEP_S and not request.query.get("fresh"):
+            return _json(kept[1])
         try:
             data = await asyncio.to_thread(apps.fetch)
         except Exception:
             return _json({"error": "Couldn't check your apps just now."}, 502)
         # Each app's accounts, named (apps.with_accounts): the apps tools are asked here, never in the browser.
         connected = await asyncio.to_thread(apps.with_accounts, data.get("connected", []))
-        return _json({"connected": connected, "apps_url": data.get("apps_url", "")})
+        answer = {"connected": connected, "apps_url": data.get("apps_url", "")}
+        _APPS_KEPT["answer"] = (time.monotonic(), answer)
+        return _json(answer)
+
+    async def apps_refresh(self, request):
+        """Hosted Ken's Settings → Apps, right after they moved to Ken's own apps server: ask the host where the apps
+        are now (never taken from the browser), so it takes at once rather than at the next minute's check-in."""
+        _APPS_KEPT.clear()  # what's connected may change: Settings asks afresh
+        import apps
+        if not apps.hosted():
+            return _json({"error": "not found"}, 404)
+        try:
+            await asyncio.to_thread(apps.refresh_server)
+        except Exception:
+            return _json({"error": "Couldn't check just now."}, 502)
+        return _json({"ok": True, "apps": apps.mcp_ready()})
 
     async def apps_disconnect(self, request):
         """Hosted Ken's Settings → Apps: disconnect one account ({"app", "account"}: the apps tools' id from /api/apps)."""
+        _APPS_KEPT.clear()  # what's connected may change: Settings asks afresh
         import apps
         if not apps.hosted() or not apps.mcp_ready():
             return _json({"error": "not found"}, 404)
@@ -1354,6 +1401,7 @@ class WebApp:
         r.add_post("/api/telegram/update", self.telegram_update)
         r.add_post("/api/apps/connected", self.app_connected)
         r.add_post("/api/credits/low", self.credits_low)
+        r.add_post("/api/apps/reconnect", self.apps_reconnect)
         r.add_get("/api/telegram-downloads/{key}", self.telegram_download)
         r.add_get("/api/telegram-files/{token}", self.big_file)
         r.add_post("/api/telegram-files/{token}", self.big_file)
@@ -1362,6 +1410,7 @@ class WebApp:
         r.add_post("/api/telegram-files/{token}/uploads/{uid}/done", self.big_file_upload)
         r.add_get("/api/apps", self.apps_list)
         r.add_post("/api/apps/disconnect", self.apps_disconnect)
+        r.add_post("/api/apps/refresh", self.apps_refresh)
         r.add_post("/api/phone/handoff", self.phone_handoff)
         r.add_post("/api/phone/handoff/confirm", self.phone_handoff)
         r.add_delete("/api/phone/handoff", self.phone_handoff)

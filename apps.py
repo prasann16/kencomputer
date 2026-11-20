@@ -3,6 +3,8 @@
 The host knows which apps are connected and makes one-tap Connect links; this computer only asks it, with the
 same token it checks in with (KEN_KEEPALIVE_TOKEN), so no app or provider key is ever here. Ken runs
 `ken --apps` (what's connected) and `ken --apps notion` (is Notion connected, and if not, the link to connect it).
+On a host that runs the apps tools itself (KEN_APPS_MCP_URL is its /box/apps-mcp), `ken --apps-file <path> <TOOL>`
+hands a file on this computer to a tool that takes one (a video to post, a picture, an attachment).
 
 More than one account of an app (two Gmails): the apps tools pick one per call with `account` on each
 COMPOSIO_MULTI_EXECUTE_TOOL item, by the id the apps tools themselves list (COMPOSIO_MANAGE_CONNECTIONS). The host's
@@ -13,10 +15,13 @@ adds when each was connected. An account that can't be named is "Account 2 · co
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
+import mimetypes
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -25,11 +30,15 @@ TIMEOUT = 15
 MCP_TIMEOUT = 30
 # The call that says whose account it is, for the apps where we know it. Others are named by alias or number.
 PROFILE = {
-    "gmail": "GMAIL_GET_PROFILE",
-    "github": "GITHUB_GET_THE_AUTHENTICATED_USER",
-    "notion": "NOTION_GET_ABOUT_ME",
+    "gmail": ("GMAIL_GET_PROFILE", {}),
+    "github": ("GITHUB_GET_THE_AUTHENTICATED_USER", {}),
+    "notion": ("NOTION_GET_ABOUT_ME", {}),
+    "googlecalendar": ("GOOGLECALENDAR_GET_CURRENT_USER", {}),  # email
+    "instagram": ("INSTAGRAM_GET_USER_INFO", {}),  # username
+    "youtube": ("YOUTUBE_LIST_CHANNELS", {"mine": True, "part": "snippet"}),  # customUrl, the @handle
+    "linkedin": ("LINKEDIN_GET_MY_INFO", {}),  # localizedFirstName + localizedLastName
 }
-NAME_KEYS = ("emailAddress", "email", "user_email", "login", "username", "name")
+NAME_KEYS = ("emailAddress", "email", "user_email", "login", "username", "customUrl", "name")
 RETRY_UNNAMED_S = 7 * 86400  # an account that couldn't be named is asked again after a week (each try is an app action)
 
 
@@ -40,6 +49,35 @@ def hosted() -> bool:
 def _url(app: str = "") -> str:
     base = os.environ["KEN_KEEPALIVE_URL"].rsplit("/box/", 1)[0]
     return f"{base}/box/apps" + (f"?app={urllib.parse.quote(app)}" if app else "")
+
+
+def use_apps_server(answer: dict) -> bool:
+    """Where the host says this computer's apps are (its own Composio, or Agent37's), from its check-in answer or
+    refresh_server(): a move between them takes without a restart. Running replies and jobs carry on with the server
+    they started with; new ones (and idle chats, which reopen: engine._tools_stamp) use this one. The boot settings
+    stay the fallback. True when it changed."""
+    via = answer.get("apps_via") if isinstance(answer, dict) else None
+    if via not in ("ken", "agent37") or os.environ.get("KEN_APPS", "1") != "1":
+        return False  # a host that doesn't say, or apps turned off on this computer
+    if via == "ken":
+        server = answer.get("apps_mcp")
+        url, token = (str(server.get("url", "")), str(server.get("token", ""))) if isinstance(server, dict) else ("", "")
+    else:  # Agent37's own apps server, as ken-supervise picks it at boot
+        url, token = os.environ.get("AGENT37_COMPOSIO_MCP_URL", ""), os.environ.get("AGENT37_MANAGED_TOKEN", "")
+    if not url.startswith("https://") or not token:
+        return False  # never leaves Ken with no apps server over a half answer
+    if (os.environ.get("KEN_APPS_MCP_URL", ""), os.environ.get("KEN_APPS_MCP_TOKEN", "")) == (url, token):
+        return False
+    os.environ["KEN_APPS_MCP_URL"], os.environ["KEN_APPS_MCP_TOKEN"] = url, token
+    return True
+
+
+def refresh_server() -> bool:
+    """Ask the host where the apps are now (its /box/apps-server), right after they move themselves in Settings → Apps."""
+    req = urllib.request.Request(_url().replace("/box/apps", "/box/apps-server"),
+                                 headers={"Authorization": f"Bearer {os.environ['KEN_KEEPALIVE_TOKEN']}", "User-Agent": "Ken"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return use_apps_server(json.loads(r.read()))
 
 
 def fetch(app: str = "") -> dict:
@@ -111,12 +149,16 @@ def mcp_accounts(slugs: list[str]) -> dict[str, list[dict]]:
 
 def profile_name(slug: str, account: str) -> str | None:
     """Whose account it is (an address, a login), from the app's own profile call with that account."""
-    tool = PROFILE.get(slug)
-    if not tool:
+    if slug not in PROFILE:
         return None
+    tool, arguments = PROFILE[slug]
     answer = mcp_call("COMPOSIO_MULTI_EXECUTE_TOOL", {
-        "tools": [{"tool_slug": tool, "arguments": {}, "account": account}],
+        "tools": [{"tool_slug": tool, "arguments": arguments, "account": account}],
         "thought": "Find out whose account this is, so Settings and Ken can tell their accounts apart."})
+    for d in _walk(answer):  # LinkedIn: a person's name in two parts
+        first, last = d.get("localizedFirstName"), d.get("localizedLastName")
+        if isinstance(first, str) and first.strip():
+            return f"{first.strip()} {last.strip() if isinstance(last, str) else ''}".strip()[:120]
     for key in NAME_KEYS:  # the most telling kind of name first, wherever the answer puts it
         for d in _walk(answer):
             v = d.get(key)
@@ -248,6 +290,65 @@ def describe(data: dict, app: str = "") -> str:
             lines.append("When they've connected it you'll be told; then carry on with what they asked.")
     lines.append(f"Every app: {data.get('apps_url', '')}")
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ files for the apps tools (Ken's own Composio)
+
+def files_ready() -> bool:
+    """The apps tools go through the host (its /box/apps-mcp), which can stage files for them."""
+    return hosted() and "/box/apps-mcp" in os.environ.get("KEN_APPS_MCP_URL", "")
+
+
+def stage_file(path: str, tool: str, app: str = "") -> dict:
+    """Put a file on this computer where the apps tools can read it: the host asks Composio for an upload address,
+    the file goes straight there, and what comes back ({"name", "mimetype", "s3key"}) is the tool's file argument."""
+    file = Path(path).expanduser()
+    size = file.stat().st_size
+    mimetype = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+    md5 = hashlib.md5()
+    with file.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            md5.update(chunk)
+    body = json.dumps({"tool": tool.upper(), "app": app or tool.split("_", 1)[0].lower(), "name": file.name,
+                       "mimetype": mimetype, "md5": md5.hexdigest(), "size": size}).encode()
+    req = urllib.request.Request(_url().replace("/box/apps", "/box/apps-file"), data=body, method="POST", headers={
+        "Authorization": f"Bearer {os.environ['KEN_KEEPALIVE_TOKEN']}", "Content-Type": "application/json", "User-Agent": "Ken"})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            staged = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            raise McpError(json.loads(e.read()).get("error") or "the host refused") from None
+        except ValueError:
+            raise McpError("the host refused") from None
+    with file.open("rb") as f:  # straight to Composio's storage, not through the host
+        put = urllib.request.Request(staged["upload_url"], data=f, method="PUT",
+                                     headers={**(staged.get("upload_headers") or {}), "Content-Length": str(size), "User-Agent": "Ken"})
+        with urllib.request.urlopen(put, timeout=600) as r:
+            r.read()
+    return staged["file"]
+
+
+def file_main(argv: list[str]) -> int:
+    """`ken --apps-file <path> <TOOL_SLUG>`: prints the file argument to pass to that apps tool."""
+    if len(argv) < 2:
+        print("Usage: --apps-file <path to the file> <the apps tool's slug, e.g. YOUTUBE_UPLOAD_VIDEO>")
+        return 1
+    if not files_ready():
+        print("Files can't be handed to the apps tools on this computer yet. Tell them plainly that the post or "
+              "email can't carry this file for now.")
+        return 1
+    try:
+        staged = stage_file(argv[0], argv[1], argv[2] if len(argv) > 2 else "")
+    except FileNotFoundError:
+        print(f"There's no file at {argv[0]}.")
+        return 1
+    except Exception as e:  # noqa: BLE001 - say it plainly; Ken tells them
+        print(f"Couldn't hand the file to the apps tools just now ({str(e)[:200]}). Try once more; if it still fails, tell them plainly.")
+        return 1
+    print(json.dumps(staged))
+    print(f"Pass that, exactly as printed, as the file argument of {argv[1].upper()} (the one its schema says takes a file).")
+    return 0
 
 
 def main(argv: list[str]) -> int:

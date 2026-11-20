@@ -101,7 +101,9 @@ Pick the words to keep as numbered ranges, in the order they were said, and cut:
 
 It finds where their voice really starts and stops, so no word gets clipped, and holds a second after the last
 word so the ending settles. It writes `cut.mp4` (vertical 1080x1920) and `props.json` with every kept word timed on
-the new video, and prints the reel's script with `/` at each cut.
+the new video, and prints the reel's script with `/` at each cut. Footage filmed in HDR (iPhones do by default) is
+converted to normal colours here, and so are clips a graphic shows when you check stills or render: never convert
+colours yourself (frames grabbed straight from an HDR source look pale; the reel won't).
 
 **Read that script as a viewer would.** Does it follow what they said, start on a line that says something, and
 end on a strong one? Does every sentence finish? Does anything refer to something you cut ("like I said", "that
@@ -196,10 +198,10 @@ The first time, this sets up Remotion (a one-time download, a few minutes): tell
 
     <ken> --video-render videos/<short-name>
 
-makes `reel.mp4`, ready to post. Remotion draws only the captions and graphics, and keeps each by what's in it;
-ffmpeg lays them over the footage in one pass. The first render takes a few minutes, so run it as a background
-job; a fix later redraws only what changed and takes a minute or two. A style change (caption font or colour)
-redraws everything, so settle those with stills first. `--plan` says how much a change would redraw without
+makes `reel.mp4`, ready to post. Remotion draws only the captions and graphics, ffmpeg lays them over the footage,
+and every piece is kept by what's in it. The first render takes a few minutes, so run it as a background job; a fix
+later redraws and re-encodes only the seconds it changes (a new ending takes well under a minute). A style change
+(caption font or colour) redraws everything, so settle those with stills first. `--plan` says how much a change would redraw without
 rendering. The render checks its own result and, if that fails, draws the whole reel in Chrome instead (slower,
 always right). Then:
 
@@ -222,6 +224,8 @@ download it to keep it."
 
 "Make the captions bigger", "change the graphic at 0:40", "drop that bit": open the reel's folder and change only
 what they asked in `props.json`, or cut again with the changed ranges (it keeps your word fixes and emphasis, and
-everything else in `props.json`; move graphics after a change by the same amount). Check stills of only what
-changed, render, check the strip once.
+everything else in `props.json`; move graphics after a change by the same amount). Cut again only when the words
+change; it re-encodes only the parts that changed. To hold the ending longer (room for a call to action), raise
+`durationSeconds`: the last frame holds. Never make a new video file by hand: the whole reel renders again. Check
+stills of only what changed, render, check the strip once.
 Note every correction in their style note, since it probably applies to future reels too.

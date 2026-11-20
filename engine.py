@@ -239,12 +239,48 @@ def _unlink(p: Path) -> None:
         os.rmdir(p)
 
 
+# Ken's own skills that the host switches on per person (kencomputer.dev: VIDEO_KIT_ROLLOUT, TREG_ROLLOUT). Off, Ken
+# doesn't have them at all: not linked, so it can't see, use or mention them. The host says which are on in every
+# check-in answer ("kits"), kept in <home>/kits-on.json (save_kits). The video kit also runs on their own ElevenLabs
+# key when they've added one (their account, their choice).
+HOST_KITS = ("video-kit", "live-data")
+
+
+def kits_on(home: Path) -> dict:
+    try:
+        d = json.loads((home / "kits-on.json").read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def kit_on(home: Path, name: str) -> bool:
+    if kits_on(home).get(name) is True:
+        return True
+    return name == "video-kit" and bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
+
+
+def save_kits(home: Path, kits) -> bool:
+    """The host's word on which kits are on, from a check-in answer. True when it changed (the skills are gathered
+    again). An answer without it (an older host) changes nothing."""
+    if not isinstance(kits, dict):
+        return False
+    now = {k: kits.get(k) is True for k in HOST_KITS}
+    if kits_on(home) == now:
+        return False
+    try:
+        (home / "kits-on.json").write_text(json.dumps(now))
+    except OSError:
+        return False
+    return True
+
+
 def gather_skills(home: Path, others: dict[str, list[Path]]) -> Path:
     """<home>/.skills-in-use: a link to each skill the brains should see. Ken's own skills, then the
     ones from the person's other AI apps that aren't switched off. A name Ken already has stays Ken's."""
     use = home / ".skills-in-use"
     use.mkdir(parents=True, exist_ok=True)
-    want = {f.name: f for f in _skill_folders(home / "skills")}
+    want = {f.name: f for f in _skill_folders(home / "skills") if f.name not in HOST_KITS or kit_on(home, f.name)}
     off = skills_off(home)
     for sid, _, f in other_skills(others):
         if sid not in off and f.name not in want:
@@ -542,6 +578,18 @@ class Engine:
                 "or ChatGPT, or pick a plan with more Ken AI credits.")
         return self.log_message(HOME, "ken", text, action="credits", note=True)
 
+    def apps_reconnect(self, note_id: str, apps: list[dict]) -> dict:
+        """Hosted Ken: its host moved their apps to Ken's own Composio, so the apps they had need connecting again. One
+        message in Home's chat with a one-tap Connect link for each; it reaches the app, the phone and Telegram like any
+        message Ken starts. Said once per `note_id`, however often the host asks."""
+        for m in reversed(self.messages(HOME, limit=200)):
+            if m.get("note_id") == note_id:
+                return m
+        links = " · ".join(f"[{a['name']}]({a['url']})" for a in apps)
+        text = ("I've upgraded how I connect to your apps. Reconnect them once and everything works as before. "
+                f"Tap each one: {links}")
+        return self.log_message(HOME, "ken", text, via="background", action="apps_reconnect", note_id=note_id)
+
     async def app_connected(self, slug: str, name: str) -> str | None:
         """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
         recent Ken reply with that link, in the last hour) carries on with what they asked. Returns that chat."""
@@ -550,7 +598,8 @@ class Engine:
         best = None
         for pid in [HOME, *[a["id"] for a in self.list_agents()]]:
             for m in reversed(self.messages(pid, limit=20)):
-                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since:
+                # Not the note asking them to reconnect after the move (apps_reconnect): no chat asked for anything.
+                if m["role"] != "you" and link in (m.get("text") or "") and m["ts"] >= since and m.get("action") != "apps_reconnect":
                     if best is None or m["ts"] > best[1]:
                         best = (pid, m["ts"])
                     break
@@ -753,7 +802,7 @@ class Engine:
         ref = ref.strip().strip("`").removeprefix("file://")
         p = Path(os.path.expanduser(ref))
         tries = [p] if p.is_absolute() else [self.home_cwd / p, self.home / p]
-        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.agents_dir]
+        roots = [self.home_cwd, self.files_dir(HOME), self.home / "outbox", self.home / "sent", self.agents_dir]  # sent: until moved
         user, ken = Path.home().resolve(), self.home.resolve()
         for t in tries:
             try:
@@ -769,6 +818,22 @@ class Engine:
                     r.is_relative_to(t) and not any(part.startswith(".") for part in r.relative_to(t).parts)
                     for t in _temp_roots()):
                 return r
+        # A file an older message named in the outbox, kept in the workspace's sent-files since no Telegram was there to
+        # send it (bot.tidy_outbox; ~/.ken/sent before that): the same file, so their old Download button still opens it.
+        outbox = (self.home / "outbox").resolve()
+        for t in tries:
+            try:
+                rel = t.absolute().relative_to(outbox) if t.is_absolute() else None
+            except ValueError:
+                rel = None
+            if rel is None and t.is_absolute():
+                try:
+                    rel = t.parent.resolve().joinpath(t.name).relative_to(outbox)
+                except (ValueError, OSError):
+                    rel = None
+            for kept in ((self.home_cwd / "sent-files" / rel), (self.home / "sent" / rel)) if rel else ():
+                if kept.is_file():
+                    return kept.resolve()
         raise KeyError(ref)
 
     async def _readable_picture(self, pid: str, name: str) -> str:
@@ -866,7 +931,7 @@ class Engine:
         """What Ken can use beyond what's connected in Settings: extra tools and its keys."""
         extra = ", ".join(self.tools_config(pid)["mcp"]) or "none yet"
         background = "" if pid != HOME else (
-            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than a minute or two (editing a video, "
+            "BACKGROUND JOBS: the chat must stay free. Anything that will take more than about 30 seconds (editing a video, "
             "long research, building something) goes to a background job right away, before you start on it, never here "
             "where it would keep them waiting. Before handing it off, take a quick look and tell them in a few short lines "
             "what you found, what you'll do and roughly how long it'll take (no need to wait for a yes unless something's "
@@ -986,7 +1051,8 @@ class Engine:
 
     def _tools_stamp(self, pid: str) -> tuple:
         """Changes when its tools, keys or skills do, so an open chat reopens with them."""
-        out = [self.backend(pid)]
+        # The apps server too (hosted Ken: bot.use_apps_server moves it without a restart).
+        out = [self.backend(pid), os.environ.get("KEN_APPS_MCP_URL", "")]
         others = [d for dirs in self.other_skills.values() for d in dirs]
         for f in (self._tools_file(pid), self.keys_dir(pid) / "keys.json", self.keys_dir(pid) / "files", self.home / "skills",
                   self.home / "skills-off.json", *others):
@@ -2175,7 +2241,7 @@ class Engine:
                 note = (f'\n\n=== You are a background job: "{run["title"]}" ===\nKen handed you this job so the chat stays '
                         "free; the brief is the message below. Do the work yourself, start to finish. Nobody is watching, so "
                         "don't ask questions: make sensible choices and say what you chose. Don't start other background jobs, "
-                        "don't message them and don't use the outbox; Ken tells them the result. Things that need their OK "
+                        "don't message them or send them files; Ken tells them the result and sends what you made. Things that need their OK "
                         "(sending, posting, spending) you prepare and leave for Ken to ask about. Save what you make in your "
                         "working folder. End with a short report for Ken: what you did, what you chose, and the full path "
                         "of every file you made.")

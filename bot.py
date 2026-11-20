@@ -22,6 +22,28 @@ if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-render"], ["-
     video_kit.main(sys.argv[1:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))))
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--eleven"]:  # the video-kit skill's ElevenLabs helper, run by Ken's own Python (the app has no other)
+    import runpy
+    from pathlib import Path
+
+    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "video-kit" / "scripts" / "eleven.py"
+    sys.argv = [str(_script), *sys.argv[2:]]
+    runpy.run_path(str(_script), run_name="__main__")
+    raise SystemExit(0)
+
+if sys.argv[1:2] == ["--tools"]:  # the live-data skill's helper (treg's catalog through the host), run by Ken's own Python
+    import runpy
+    from pathlib import Path
+
+    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "live-data" / "scripts" / "tools.py"
+    sys.argv = [str(_script), *sys.argv[2:]]
+    runpy.run_path(str(_script), run_name="__main__")
+    raise SystemExit(0)
+
+if sys.argv[1:2] == ["--credits"]:  # hosted Ken: what used their Ken AI credits this month (they asked)
+    import ken_credits
+    raise SystemExit(ken_credits.main())
+
 if sys.argv[1:2] == ["--upload-link"]:  # hosted Ken: a link where they send a file at full quality (the too_big page)
     import json as _json, os as _os, secrets as _secrets, time as _time
     from pathlib import Path as _Path
@@ -77,6 +99,10 @@ if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--apps-file"]:  # hosted Ken: a file here, ready for an apps tool that takes one (apps.py)
+    import apps
+    raise SystemExit(apps.file_main(sys.argv[2:]))
+
 # Bundled in the Mac app, Python's multiprocessing helpers re-launch this same
 # executable with `-c <code>`; run that code instead of starting a second Ken.
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
@@ -85,6 +111,7 @@ if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
 
 import asyncio
 import html
+import filecmp
 import json
 import logging
 import os
@@ -244,6 +271,13 @@ HOSTED_APPS_PROMPT = (
 )
 
 
+# Ken's own Composio: a file on this computer goes to an apps tool through the host first (apps.py stage_file).
+APPS_FILES_PROMPT = (
+    f"For a post, upload or email with a picture, video or attachment, run `{KEN_CMD} --apps-file <path> <TOOL_SLUG>` "
+    "and pass what it prints as that tool's file argument."
+)
+
+
 def media_mcp(backend="claude") -> dict:
     """`transcribe_media`: a timed transcript and subtitles for a video or podcast, on this computer."""
     if not voice_available():
@@ -279,7 +313,7 @@ def video_prompt() -> str:
         "(the file's full path and what they asked) and tell them it's running. Unless they ask for a length, a reel is about 60 seconds: keep what "
         "they meant to say, in their order, minus warm-up, retakes, tangents, repeats and dead air. Reels are vertical 1080x1920. "
         "Watch your own output before sending: grab a few frames "
-        "with ffmpeg and look at them. Then copy the mp4 to the outbox."
+        "with ffmpeg and look at them. Then send it to them as any file (SENDING FILES)."
     )
 
 
@@ -431,6 +465,94 @@ def no_paths(text: str) -> str:
     return _PATH_IN_TEXT.sub(swap, text)
 
 
+def outbox_unsent() -> bool:
+    """Nobody is linked on Telegram, so nothing will ever send the outbox. A bot key alone isn't enough: a hosted
+    computer has the shared bot's key whether or not they linked their Telegram (ALLOWED_USER_ID is the link)."""
+    return not ALLOWED_USER_ID
+
+
+def keep_in_workspace() -> int:
+    """Files once kept in ~/.ken/sent move into the workspace (SENT_DIR), so everything Ken keeps is in one place.
+    Moved, never deleted: one identical to what's already there just goes (it's the same file), a different one by
+    the same name stays where it is. Returns how many moved."""
+    moved = 0
+    if not LEGACY_SENT_DIR.is_dir():
+        return moved
+    for path in sorted(LEGACY_SENT_DIR.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            dest = SENT_DIR / path.relative_to(LEGACY_SENT_DIR)
+            if dest.exists():
+                if filecmp.cmp(path, dest, shallow=False):
+                    path.unlink()
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), dest)
+            moved += 1
+        except OSError as e:
+            log.warning("keeping %s in the workspace: %s", path.name, e)
+    for d in sorted((p for p in LEGACY_SENT_DIR.rglob("*") if p.is_dir()), reverse=True) + [LEGACY_SENT_DIR]:
+        try:
+            d.rmdir()  # only empty ones
+        except OSError:
+            pass
+    return moved
+
+
+def tidy_outbox(home_cwd: Path | None = None) -> dict:
+    """With no Telegram linked, nothing ever empties the outbox, so files put there for it stay forever (a second copy
+    of each reel). Each one moves to SENT_DIR, never deleted: one that's an exact copy of a file in their workspace or
+    files becomes a hard link to it there (the same file, no space twice), anything else is moved as it is. An old chat
+    message's outbox path still opens it (engine.shared_file looks in SENT_DIR). Runs at every start without Telegram."""
+    out = {"linked": 0, "moved": 0}
+    if not OUTBOX_DIR.is_dir():
+        return out
+    work = home_cwd or (KEN_HOME / "work")
+    sizes: dict[int, list[Path]] | None = None
+    for path in sorted(OUTBOX_DIR.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            rel = path.relative_to(OUTBOX_DIR)
+            kept = SENT_DIR / rel
+            if kept.exists():
+                if filecmp.cmp(path, kept, shallow=False):
+                    path.unlink()  # already kept, the same file
+                    out["linked"] += 1
+                continue  # a different file by that name: left where it is, never overwritten
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            if sizes is None:  # what's in their workspace and files, by size, to find an original
+                sizes = {}
+                for root in (work, INBOX_DIR):
+                    for f in (root.rglob("*") if root.is_dir() else []):
+                        try:
+                            if f.is_file() and not f.is_symlink():
+                                sizes.setdefault(f.stat().st_size, []).append(f)
+                        except OSError:
+                            pass
+            size = path.stat().st_size
+            original = next((f for f in sizes.get(size, []) if f.stat().st_ino != path.stat().st_ino
+                             and filecmp.cmp(path, f, shallow=False)), None)
+            if original:
+                os.link(original, kept)
+                path.unlink()
+                out["linked"] += 1
+            else:
+                shutil.move(str(path), kept)
+                out["moved"] += 1
+        except OSError as e:
+            log.warning("outbox tidy: %s: %s", path.name, e)
+    for d in sorted((p for p in OUTBOX_DIR.rglob("*") if p.is_dir()), reverse=True):
+        try:
+            d.rmdir()  # only empty ones
+        except OSError:
+            pass
+    if out["linked"] or out["moved"]:
+        log.info("outbox tidied (no Telegram): %s linked to their originals, %s moved to %s", out["linked"], out["moved"], SENT_DIR)
+    return out
+
+
 async def flush_outbox(bot, chat_id: int, quiet: bool = False) -> None:
     """Anything the assistant drops in ~/.ken/outbox is delivered to the chat (`quiet`: no buzz)."""
     try:
@@ -545,16 +667,20 @@ WORK_RULES = (
     "with what it is and two or three concrete things you could do with it for them (a talking video: a ~60-second reel "
     "with captions and graphics, short clips, a post from what they said; a PDF: a summary, the key numbers, a reply), "
     "and wait for them to pick. When they've said what they want, just do it (long work as a background job). "
-    f"SENDING FILES: to give the human a file — a chart, PDF, screenshot, export, anything "
-    f"you made or found — copy it into {OUTBOX_DIR} (create the folder if needed). It is "
-    "delivered to their phone automatically when Ken on your phone is connected, and removed "
-    "from the outbox; images arrive as photos, videos as playable videos (converted and shrunk to fit "
-    "Telegram's 50MB automatically), everything else as documents. Copy, don't "
-    "move, if the original matters. Say what you're sending in your reply — the file arrives "
-    "right after it (one too big for Telegram comes as a download link). Never write out where a file is saved. "
-    "When they wrote from the app, give the file's full path alone in backticks: the app shows it as a player or "
-    "a file with a Download button, by name, never the path. "
+    "SENDING FILES: to give the human a file (a chart, PDF, screenshot, export, a video, anything you made or "
+    "found), give its full path alone in backticks in your reply: the app shows it as a player or a file with a "
+    "Download button, by name, never the path. Say what you're sending; never talk about folders or how a file "
+    "reaches them. "
 )
+# Only where Ken on their phone (Telegram) is linked (where_you_are): the outbox is how files reach the chat there.
+TELEGRAM_FILES = (
+    f"FILES ON TELEGRAM: Telegram can't show a path, so also copy each file you send into {OUTBOX_DIR} (create the "
+    "folder if needed; copy, don't move). Right after your reply it's sent to their Telegram (images as photos, "
+    "videos as playable videos shrunk to fit, everything else as documents; one too big comes as a download link) "
+    "and removed from there. That folder is plumbing: never mention it to them, just say what you're sending."
+)
+SENT_DIR = WORKSPACE / "sent-files"  # outbox files kept when no Telegram will ever send them (tidy_outbox)
+LEGACY_SENT_DIR = KEN_HOME / "sent"  # where tidy_outbox first kept them, for a day: moved into SENT_DIR at start
 SECRETS_RULE = (
     "SECRETS: when you need a login or API key, ask them to add it in the app's Brain, under Accounts & "
     "passwords (the Brain tab at the top), never as a text file and never in chat. Keys added there reach you as environment "
@@ -581,8 +707,7 @@ HOSTED_PROMPT = (
     "this computer sleeps; it wakes for their messages and for your scheduled jobs. "
     "THE KEN APP: they may talk to you in the Ken phone app instead of Telegram (messages from it say they're "
     "from the app). It shows any file you name by its full path in your reply, and plays videos and pictures "
-    "right in the chat, so name the full path of anything you made for them (a reel, a PDF), as well as putting "
-    "it in the outbox for Telegram."
+    "right in the chat, so name the full path of anything you made for them (a reel, a PDF)."
 )
 
 HEADLESS_BROWSER_PROMPT = (
@@ -914,7 +1039,8 @@ def where_you_are(f: dict | None = None) -> str:
                      "place in one line.")
     if kind in ("cloud", "server") and included_ai_key():
         lines.append(f"When they ask to switch AI (Ken AI credits, or their own Claude or ChatGPT), run `{KEN_CMD} --use "
-                     "credits` (or `claude`, or `codex` for ChatGPT) and tell them what it prints.")
+                     "credits` (or `claude`, or `codex` for ChatGPT) and tell them what it prints. When they ask what "
+                     f"used their Ken AI credits, run `{KEN_CMD} --credits` and sum it up in a few lines.")
     if f["voice"]:
         lines.append("Voice notes are transcribed automatically, so expect typos and read for intent.")
     if kind == "cloud":
@@ -923,6 +1049,8 @@ def where_you_are(f: dict | None = None) -> str:
                      "header \"Authorization: Bearer $(cat ~/.ken/web-token)\". Files you make live here: name the full "
                      "path of anything you made for them so they can open it in the app. If you're asked how much of "
                      "their plan is left, tell them it's under Settings.")
+    if f["telegram"] or kind == "server":
+        lines.append(TELEGRAM_FILES)
     return "=== Where you are ===\n" + "\n".join(lines) + "\n=== end where you are ==="
 
 
@@ -961,6 +1089,8 @@ def build_system() -> str:
     if apps_mcp():
         import apps
         system += "\n\n" + (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT)
+        if apps.files_ready():
+            system += " " + APPS_FILES_PROMPT
     if video_prompt():
         system += "\n\n" + video_prompt()
     connected = CONNECTIONS.prompt()
@@ -1934,16 +2064,30 @@ def refresh_default_jobs() -> None:
     """A shipped job whose prompt they never changed gets the current wording."""
     try:
         jobs = json.loads(JOBS_FILE.read_text())
+        changed = False
         for j in jobs:
             if j.get("name") != "nightly-review":
                 continue
             for old in OLD_NIGHTLY_TAILS:
                 if str(j.get("prompt", "")).endswith(old):
                     j["prompt"] = j["prompt"][: -len(old)] + NEW_NIGHTLY_TAIL
-                    JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
+                    changed = True
                     break
+            # The shipped 21:00 review missed whatever was said after it; at midnight it reads the whole day.
+            if j.get("time") == "21:00" and OLD_NIGHTLY_HEAD in str(j.get("prompt", "")):
+                j["prompt"] = j["prompt"].replace(OLD_NIGHTLY_HEAD, NEW_NIGHTLY_HEAD)
+                j["time"] = "00:00"
+                changed = True
+        if changed:
+            JOBS_FILE.write_text(json.dumps(jobs, indent=1) + "\n")
     except Exception as e:
         log.warning("couldn't refresh %s: %s", JOBS_FILE, e)
+
+
+# The shipped review ran at 21:00 and read "today", so anything said after 9 pm never reached memory. It now runs
+# at 00:00 and reads yesterday's file, the whole day. Moved only when both time and wording are still the shipped ones.
+OLD_NIGHTLY_HEAD = "Read today's transcript in ~/.ken/history/ (the file named for today's date; check yesterday's too if today's is thin)."
+NEW_NIGHTLY_HEAD = "Read yesterday's transcript in ~/.ken/history/ (the file named for yesterday's date: you run just after midnight, so that's the whole day that just ended)."
 
 
 # Earlier endings of the shipped nightly review, newest last. A prompt that still ends with one was never edited by
@@ -1953,10 +2097,11 @@ OLD_NIGHTLY_TAILS = (
     "Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\"",
     "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, leftover uploads, caches), list the biggest few with sizes. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
     "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files you made are taking more than 1 GB and look done with (old renders, drafts, caches), list the biggest few with sizes. Never offer browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never offer their own uploads in ~/.ken/inbox. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
+    "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to.",
 )
 # They decide what goes, their uploads included; the one thing never listed is a browser profile, which holds their
 # sign-ins (clearing one signs them out of their sites).
-NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder and du on the folders you write to (videos, renders, downloads, uploads, temp and cache files). If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
+NEW_NIGHTLY_TAIL = "(4) check disk space: run df on the home folder, then ONE du over every folder where files are kept, together so a file kept in two places counts once: your workspace ~/.ken/work (videos, renders, documents, sent-files), their uploads in ~/.ken/inbox, any agents' folders in ~/.ken/agents, ~/.ken/outbox, temp files in /tmp and caches like ~/.cache and ~/.npm. If the disk is over 80% full, or files are taking more than 1 GB and look done with, list the biggest few, uploads included, each labeled with what it is and its size (like \"your original clips for the Albanian food reel, 1.8 GB, still on your phone\") and whether it's still being worked on. A file kept in two places (the same file, linked) frees nothing until both go, so count and offer it once. Never list browser profiles (~/.ken/signin-browser, /tmp/puppeteer_dev_chrome_profile-*, any Chrome or Chromium profile folder): clearing one signs them out of their sites. Never delete anything yourself here: only ask. Then send ONE short line saying what you filed, like \"Filed 2 notes: your work, Porto.\" If the day was genuinely empty, say \"Nothing new to file today.\" If (4) found something, add one more line asking first, like \"Your disk is 85% full. Old video renders take 3.2 GB. Want me to clear them?\", and delete only what they say yes to."
 
 
 def migrate_jobs() -> None:
@@ -2063,6 +2208,42 @@ def apply_onboarding(facts: dict) -> dict:
     return {"covered": covered}
 
 
+# The fast reel render keeps the graphics it drew (ProRes, about 1 MB a frame: 1.7 GB for one reel full of them) so the
+# day's edits only redraw what changed. They're only a speed-up, never their files, so they go on their own at the
+# start of each new day, without asking: the next edit of a reel draws its graphics again and is fast after that.
+REEL_CACHES_KEY = "(reel caches cleared)"  # in the job state, beside the jobs' own last-run days
+
+
+def clear_reel_caches(work: Path | None = None) -> int:
+    """Empties <reel>/.layers/graphics in every reel folder of the workspace; returns the bytes freed. Captions,
+    pieces, footage and finished videos stay."""
+    freed = 0
+    work = work or WORKSPACE
+    for folder in [*work.glob("*/.layers/graphics"), *work.glob("*/*/.layers/graphics")]:
+        for f in folder.iterdir() if folder.is_dir() else ():
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                freed += size
+            except OSError as e:
+                log.warning("couldn't clear %s: %s", f, e)
+    return freed
+
+
+def clear_reel_caches_daily(state: dict, now: time.struct_time, work: Path | None = None) -> bool:
+    """Once per local day, at the first minute Ken is awake in it. The first time ever only notes the day, so a
+    Ken that just got this doesn't lose the files of a reel being edited right then. Returns whether state changed."""
+    today = time.strftime("%Y-%m-%d", now)
+    if state.get(REEL_CACHES_KEY) == today:
+        return False
+    if REEL_CACHES_KEY in state:
+        freed = clear_reel_caches(work)
+        if freed:
+            log.info("cleared %.1f GB of reel render caches", freed / 1e9)
+    state[REEL_CACHES_KEY] = today
+    return True
+
+
 async def scheduler() -> None:
     while True:
         try:
@@ -2074,7 +2255,7 @@ async def scheduler() -> None:
                 state = json.loads(JOB_STATE_FILE.read_text())
             except Exception:
                 pass
-            if note_new_jobs(jobs, now, state):
+            if note_new_jobs(jobs, now, state) | clear_reel_caches_daily(state, now):
                 JOB_STATE_FILE.write_text(json.dumps(state))
             for job in jobs:
                 if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
@@ -2128,6 +2309,25 @@ def upcoming_job() -> float | None:
     return next_job_time(all_jobs(), state, time.time())
 
 
+def computer_stats() -> dict:
+    """The computer's disk (the one Ken's home is on, as the disk watch reads it) and memory, used and total, in bytes,
+    for the owner's fleet page. A reading that fails is left out; the check-in still goes."""
+    out = {}
+    try:
+        d = shutil.disk_usage(KEN_HOME)
+        out.update(disk_used=d.total - d.free, disk_total=d.total)
+    except OSError:
+        pass
+    try:
+        from usage import memory
+        m = memory()
+        if m.get("total"):
+            out.update(mem_used=max(0, m["total"] - m.get("available", 0)), mem_total=m["total"])
+    except Exception:
+        pass
+    return out
+
+
 async def keep_awake() -> None:
     """A computer in the cloud sleeps when nobody's using it, and work running inside it doesn't count as use. Every
     minute, tell the host (KEN_KEEPALIVE_URL) whether Ken is in the middle of something, so it keeps the computer up
@@ -2141,9 +2341,19 @@ async def keep_awake() -> None:
                 busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
-                await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
-                                             "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {})},
-                                  headers={"Authorization": f"Bearer {token}"})
+                stats = await asyncio.to_thread(computer_stats)  # disk and memory, for the owner's fleet page
+                r = await client.post(url, json={"busy": busy, "next_job": upcoming_job(), "rev": RUNNING_REV[:12], "started": STARTED_AT,
+                                                 "talked": BORN_FLAG.exists(), **({"ai": ai} if ai else {}), **stats},
+                                      headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    import apps
+                    answer = r.json()
+                    if apps.use_apps_server(answer):
+                        log.info("apps server moved: %s", os.environ.get("KEN_APPS_MCP_URL", ""))
+                    import engine as engine_mod
+                    if engine_mod.save_kits(ENGINE.home, answer.get("kits")):  # a kit switched on or off for them
+                        ENGINE.sync_skills()
+                        log.info("kits now: %s", engine_mod.kits_on(ENGINE.home))
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)
             await asyncio.sleep(60)
@@ -3151,6 +3361,9 @@ async def run() -> None:
             PHONE.keep_starting(token)
         else:
             log.info("ken is running; Ken on your phone isn't connected (Settings → Phone)")
+        await asyncio.to_thread(keep_in_workspace)
+        if outbox_unsent():
+            await asyncio.to_thread(tidy_outbox)  # nothing will send what's in the outbox: keep it in the workspace
         await ENGINE.resume_interrupted()
         await stop.wait()
     finally:
