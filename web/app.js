@@ -1685,7 +1685,18 @@ const fullName = (e) => { const el = e.currentTarget; el.parentElement.classList
 
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
-  useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
+  // Who's signed in, from the site (Sign out and Delete account need it). A failed or slow answer (Ken's computer waking,
+  // a blip) is asked again twice, a little later each time, so those rows don't go missing until Settings reopens.
+  useEffect(() => {
+    if (!HOSTED) return;
+    let gone = false;
+    const ask = (tries) => fetch('/account/me.json', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((m) => { if (!gone) setMe(m); })
+      .catch(() => { if (!gone && tries < 2) setTimeout(() => ask(tries + 1), tries ? 4000 : 1500); });
+    ask(0);
+    return () => { gone = true; };
+  }, []);
   const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
   useEffect(() => {
     const changed = () => setAppearance(window.kenTheme.preference);
