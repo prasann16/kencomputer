@@ -1793,6 +1793,19 @@ function CreditsUsed() {
     ${rows.length > shown.length && html`<button class="text-action" onClick=${() => setAll(true)}>Show all ${rows.length}</button>`}</div>`;
 }
 
+// Their invite link, from the site (/account/invite.json): a friend gets a month of Ken Plus free, and they get a month
+// off once the friend pays. Only for people paying through Stripe; an older site (404) shows nothing.
+function InviteFriend() {
+  const [invite, setInvite] = useState(null), [copied, setCopied] = useState(false);
+  useEffect(() => { fetch('/account/invite.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setInvite).catch(() => {}); }, []);
+  if (!invite?.link) return '';
+  const copy = () => navigator.clipboard?.writeText(invite.link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+  return html`<div class="invite-friend"><b>Invite a friend</b>
+    <p class="np-note">They get a month of Ken Plus free. When they start paying, you get a month off (up to ${invite.max} friends)${invite.given ? ` · ${invite.given} so far` : ''}.</p>
+    <div class="invite-row"><input class="invite-link" type="text" readonly value=${invite.link} aria-label="Your invite link" onFocus=${(e) => e.target.select()}/>
+    <button class="btn" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button></div></div>`;
+}
+
 function PlanUsage({ usage, accountUrl }) {
   // Hosted Ken: straight to Stripe's billing page (plan, card, invoices), whose Return comes back to Ken.
   // Hosted Ken: Plan & billing is its own small page on the site (plans, added credits, card and invoices), one tap back.
@@ -1802,6 +1815,7 @@ function PlanUsage({ usage, accountUrl }) {
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
     ${HOSTED && html`<${CreditsUsed}/>`}
+    ${HOSTED && html`<${InviteFriend}/>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add Ken AI credits</a>`}
     ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;
