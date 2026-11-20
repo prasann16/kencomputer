@@ -16,7 +16,6 @@ import logging
 import os
 import secrets
 import re
-import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -1265,22 +1264,26 @@ class WebApp:
         data = await request.read()
         if not data:
             return _json({"error": "no audio"}, 400)
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
-            f.write(data)
-            path = f.name
+        # The recording is kept in Home's files (a voice note is often the voiceover itself), not only its words.
+        folder = self.engine.files_dir(HOME)
+        folder.mkdir(parents=True, exist_ok=True)
+        suffix = ".m4a" if "mp4" in (request.content_type or "") or "m4a" in (request.content_type or "") else ".webm"
+        kept, n = folder / f"voice-{time.strftime('%Y%m%d-%H%M%S')}{suffix}", 1
+        while kept.exists():
+            n += 1
+            kept = folder / f"voice-{time.strftime('%Y%m%d-%H%M%S')}-{n}{suffix}"
+        kept.write_bytes(data)
         try:
-            text = await asyncio.to_thread(self.transcribe, path)
+            text = await asyncio.to_thread(self.transcribe, str(kept))
         except (TimeoutError, RuntimeError) as exc:
             log.warning("Voice failed: %s", exc)
             return _json({"error": str(exc)}, 503)
         except Exception:
             log.exception("Voice transcription failed")
             return _json({"error": "Could not transcribe this recording. Try again."}, 500)
-        finally:
-            os.unlink(path)
         if not text or not text.strip():
             return _json({"error": "Couldn’t make out the words. Your recording is saved; try again."}, 422)
-        return _json({"text": text.strip()})
+        return _json({"text": text.strip(), "audio": kept.name})
 
     async def events(self, request):
         ws = web.WebSocketResponse(heartbeat=25)
