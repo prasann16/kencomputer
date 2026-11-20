@@ -72,9 +72,12 @@ async function api(path, opts = {}) {
   const data = await r.json().catch(() => ({}));
   // A code from the host (e.g. "container_unreachable" while Ken's computer wakes) is never shown as is.
   const said = typeof data.error === 'string' && !/^[a-z0-9_.-]+$/.test(data.error) ? data.error : '';
-  if (!r.ok) throw new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText));
+  if (!r.ok) throw Object.assign(new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText)), { status: r.status });
   return data;
 }
+// The web app can be newer than the Ken behind it (hosted Ken serves one app to every computer): a feature that Ken
+// doesn't have yet answers 404 or 405, and the app quietly leaves it out.
+const notYet = (e) => e.status === 404 || e.status === 405;
 
 // Files the user attached; they show in their message, not as Ken's file cards.
 const ATTACHED = new Set();
@@ -162,6 +165,7 @@ const ago = (ts) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 };
+const shortDay = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
@@ -876,12 +880,34 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   }
   // Scrolling up yourself always wins over following.
   const leave = () => { following.current = false; };
+  // A cleared chat keeps everything before: "Earlier messages" at the top loads a page at a time above the new thread,
+  // and the view stays where it was (the page grows upward, not the conversation jumping).
+  const [earlier, setEarlier] = useState({ messages: [], more: true, loading: false }), keepFromEnd = useRef(0);
+  const loadEarlier = async () => {
+    if (earlier.loading) return;
+    following.current = false;
+    setEarlier((e) => ({ ...e, loading: true }));
+    try {
+      const before = earlier.messages[0]?.id;
+      const page = await api(`/api/chats/${pid}/earlier?limit=50${before ? '&before=' + before : ''}`);
+      const box = thread.current;
+      keepFromEnd.current = box ? box.scrollHeight - box.scrollTop : 0;
+      setEarlier((e) => ({ messages: [...page.messages, ...e.messages], more: page.more, loading: false }));
+    } catch (e) { if (!notYet(e)) toast(e.message); setEarlier((x) => ({ ...x, loading: false, more: x.more && !notYet(e) })); }
+  };
+  useLayoutEffect(() => {
+    const box = thread.current;
+    if (box && keepFromEnd.current) { box.scrollTop = box.scrollHeight - keepFromEnd.current; keepFromEnd.current = 0; }
+  }, [earlier.messages]);
   return html`<section class=${'conversation-body' + (runs.length ? ' has-running' : '')} aria-label="Conversation"
 >
     <${RunningPill} runs=${runs} toast=${toast}/>
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">
+        ${clearedAt > 0 && earlier.more && html`<button class="earlier-link" disabled=${earlier.loading} onClick=${loadEarlier}>Earlier messages</button>`}
+        ${earlier.messages.map((m) => html`<div key=${'e' + m.id}><${Safe} where="message"><${Message} m=${m}/><//></div>`)}
+        ${earlier.messages.length > 0 && html`<div class="thread-divider">New thread · ${shortDay(clearedAt)}</div>`}
         ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
           : html`<div class="chat-skeleton" role="status" aria-label="Loading your conversation"><i class="you"></i><i class="ken"></i><i class="ken short"></i><i class="you short"></i><i class="ken"></i></div>`)}
         ${chat && !messages.length && !busy && chat.cleared_at && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>

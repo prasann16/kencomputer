@@ -92,6 +92,10 @@
 .file-link code { text-decoration: inherit; }
 .msg blockquote { margin: var(--s2) 0; padding-left: var(--s3); border-left: 3px solid var(--line-strong); }
 .msg-media { margin-top: var(--s3); }
+/* A cleared chat: earlier messages load above, one quiet line marks where the new thread starts. */
+.earlier-link { align-self: center; padding: 2px var(--s2); border: 0; background: none; color: var(--faint); font-size: var(--text-sm); }
+.earlier-link:hover { color: var(--ink); }
+.thread-divider { align-self: center; color: var(--faint); font-size: var(--text-xs); }
 .msg-media video, .msg-media img { display: block; max-width: min(100%, 360px); max-height: 480px; border-radius: var(--r-md); background: #000; }
 .msg-media audio { display: block; width: min(100%, 360px); }
 .msg-media .media-save { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s2); font-size: 0.875rem; color: var(--muted); text-decoration: none; }

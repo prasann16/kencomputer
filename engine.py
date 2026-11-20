@@ -2727,6 +2727,18 @@ class Engine:
             "approvals": [a for a in self.pending_approvals() if a["project"] == pid],
         }
 
+    def earlier_messages(self, pid: str, before: int | None = None, limit: int = 50) -> dict:
+        """A page of the messages before the current thread (or before `before`), oldest first, and whether there's
+        more. Nothing in a chat is ever deleted (Clear only moves where the thread starts), so they can look back."""
+        limit = max(1, min(int(limit), 200))
+        cutoff = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0) + 1
+        if before:
+            cutoff = min(cutoff, int(before))
+        rows = self.db.execute("SELECT * FROM events WHERE type='message' AND project=? AND id<? ORDER BY id DESC LIMIT ?",
+                               (pid, cutoff, limit + 1)).fetchall()
+        rows = [{"id": r["id"], "ts": r["ts"], "project": r["project"], **json.loads(r["data"])} for r in rows]
+        return {"messages": rows[:limit][::-1], "more": len(rows) > limit}
+
     def chat_view(self, pid: str) -> dict:
         name = "Ken" if pid == HOME else self.get_agent(pid)["name"]
         boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}")
