@@ -175,3 +175,9 @@ def test_a_reel_missing_kit_files_gets_them_back_and_keeps_its_own(tmp_path, mon
     v._project(tmp_path, tmp_path / "reel", lambda *_: None)
     assert (tmp_path / "reel" / "src" / "index.ts").exists() and (tmp_path / "reel" / "src" / "Reel.tsx").exists()
     assert (graphics / "index.ts").read_text() == "// Ken's own registry" and (graphics / "mine.tsx").exists()
+
+
+def test_webpack_cache_is_off():
+    """Its name includes outDir, which changes with every bundle, so it was never read and only filled the disk."""
+    src = (KIT / "lib.mjs").read_text()
+    assert "enableCaching: false" in src and 'rmSync(resolve("node_modules/.cache/webpack")' in src

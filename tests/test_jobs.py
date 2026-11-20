@@ -223,3 +223,18 @@ def test_untouched_nightly_review_gets_the_disk_check():
 def test_shipped_nightly_review_ends_with_the_current_wording():
     shipped = json.loads((bot.SOURCE / "jobs.default.json").read_text())
     assert next(j for j in shipped if j["name"] == "nightly-review")["prompt"].endswith(bot.NEW_NIGHTLY_TAIL)
+
+
+def test_untouched_nightly_review_moves_to_midnight_and_reads_yesterday():
+    """The 21:00 review missed what was said after it; untouched, it moves to 00:00 and reads the whole day before."""
+    shipped = next(j for j in json.loads((bot.SOURCE / "jobs.default.json").read_text()) if j["name"] == "nightly-review")
+    assert shipped["time"] == "00:00" and bot.NEW_NIGHTLY_HEAD in shipped["prompt"]
+    before = {**shipped, "time": "21:00", "prompt": shipped["prompt"].replace(bot.NEW_NIGHTLY_HEAD, bot.OLD_NIGHTLY_HEAD)}
+    bot.JOBS_FILE.write_text(json.dumps([before]))
+    bot.refresh_default_jobs()
+    assert json.loads(bot.JOBS_FILE.read_text()) == [shipped]
+    # A time or wording they chose themselves is left alone.
+    for mine in ({**before, "time": "22:30"}, {**before, "prompt": "My own review."}):
+        bot.JOBS_FILE.write_text(json.dumps([mine]))
+        bot.refresh_default_jobs()
+        assert json.loads(bot.JOBS_FILE.read_text()) == [mine]
