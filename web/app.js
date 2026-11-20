@@ -165,7 +165,6 @@ const ago = (ts) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 };
-const shortDay = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
@@ -880,34 +879,12 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   }
   // Scrolling up yourself always wins over following.
   const leave = () => { following.current = false; };
-  // A cleared chat keeps everything before: "Earlier messages" at the top loads a page at a time above the new thread,
-  // and the view stays where it was (the page grows upward, not the conversation jumping).
-  const [earlier, setEarlier] = useState({ messages: [], more: true, loading: false }), keepFromEnd = useRef(0);
-  const loadEarlier = async () => {
-    if (earlier.loading) return;
-    following.current = false;
-    setEarlier((e) => ({ ...e, loading: true }));
-    try {
-      const before = earlier.messages[0]?.id;
-      const page = await api(`/api/chats/${pid}/earlier?limit=50${before ? '&before=' + before : ''}`);
-      const box = thread.current;
-      keepFromEnd.current = box ? box.scrollHeight - box.scrollTop : 0;
-      setEarlier((e) => ({ messages: [...page.messages, ...e.messages], more: page.more, loading: false }));
-    } catch (e) { if (!notYet(e)) toast(e.message); setEarlier((x) => ({ ...x, loading: false, more: x.more && !notYet(e) })); }
-  };
-  useLayoutEffect(() => {
-    const box = thread.current;
-    if (box && keepFromEnd.current) { box.scrollTop = box.scrollHeight - keepFromEnd.current; keepFromEnd.current = 0; }
-  }, [earlier.messages]);
   return html`<section class=${'conversation-body' + (runs.length ? ' has-running' : '')} aria-label="Conversation"
 >
     <${RunningPill} runs=${runs} toast=${toast}/>
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">
-        ${clearedAt > 0 && earlier.more && html`<button class="earlier-link" disabled=${earlier.loading} onClick=${loadEarlier}>Earlier messages</button>`}
-        ${earlier.messages.map((m) => html`<div key=${'e' + m.id}><${Safe} where="message"><${Message} m=${m}/><//></div>`)}
-        ${earlier.messages.length > 0 && html`<div class="thread-divider">New thread · ${shortDay(clearedAt)}</div>`}
         ${!chat && (loadError ? html`<p class="quiet-copy" role="alert">Couldn’t load your conversation. ${loadError} <button class="text-action" onClick=${onReload}>Try again</button></p>`
           : html`<div class="chat-skeleton" role="status" aria-label="Loading your conversation"><i class="you"></i><i class="ken"></i><i class="ken short"></i><i class="you short"></i><i class="ken"></i></div>`)}
         ${chat && !messages.length && !busy && chat.cleared_at && html`<div class="chat-empty"><p>What can Ken take off your plate?</p>
@@ -2115,6 +2092,7 @@ function App() {
   const inFlight = useRef(new Set());
   const generation = useRef(0);
   const [toastMsg, setToastMsg] = useState('');
+  const [toastAction, setToastAction] = useState(null);  // one small button in the toast (Undo after Clear); any other toast drops it
   const [online, setOnline] = useState(false);
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
@@ -2132,13 +2110,13 @@ function App() {
   const pidRef = useRef(pid); pidRef.current = pid;
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
   useEffect(()=>{warm(pid);},[pid]);
-  const toast = useCallback((m) => setToastMsg(m), []);
+  const toast = useCallback((m, action = null) => { setToastMsg(m); setToastAction(action); }, []);
   notify = toast;
   const [reporting, setReporting] = useState(false);
   openReport = () => setReporting(true);
   const [docFile, setDocFile] = useState(null);
   showDoc = setDocFile;
-  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
+  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(toastAction ? 10000 : 6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);
     setOutbox((all) => all.filter((m) => !received.current.has(m.client_id)));
@@ -2357,10 +2335,18 @@ function App() {
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
       setStream((s) => ({ ...s, [pid]: '' })); setActivity((a) => ({ ...a, [pid]: '' }));
-      toast(result.saving ? 'Cleared. Ken’s saving what mattered to memory.' : 'Cleared. Your memory and files are kept.');
+      toast('Thread cleared', { label: 'Undo', run: () => unclearThread(pid) });
       warm(pid);
     } catch (e) { toast(e.message); }
     finally { setClearing(false); }
+  };
+  // Undo the latest Clear: the old messages come back on screen (nothing was deleted).
+  const unclearThread = async (target) => {
+    generation.current++;
+    try {
+      const result = await api(`/api/chats/${target}/unclear`, { json: {} });
+      if (pidRef.current === target) setChat({ pid: target, ...result });
+    } catch (e) { toast(notYet(e) ? 'This Ken can’t undo a Clear yet. It can after its next update.' : e.message); }
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
@@ -2390,7 +2376,7 @@ function App() {
     ${projectDialog?.kind==='remove' && html`<${Safe} where="RemoveProject"><${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/><//>`}
     ${newProject && html`<${Safe} where="NewAgent"><${NewAgent} setup=${setup} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/><//>`}
     ${reporting && html`<${Safe} where="ReportProblem"><${ReportProblem} onClose=${() => setReporting(false)}/><//>`}
-    ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
+    ${toastMsg && html`<div class="toast" role="status">${toastMsg}${toastAction && html` · <button class="toast-action" onClick=${() => { setToastMsg(''); toastAction.run(); }}>${toastAction.label}</button>`}</div>`}
   </div>`;
 }
 // Hover cards for [data-tip]: one element on top of the page, shown after a short pause.

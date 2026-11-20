@@ -1094,13 +1094,13 @@ class WebApp:
             path = await self._preview(path)
         return self._serve(path)
 
-    async def earlier(self, request):
+    async def unclear(self, request):
         pid = self._pid(request)
         try:
-            before, limit = int(request.query.get("before") or 0), int(request.query.get("limit") or 50)
-        except ValueError:
-            raise web.HTTPBadRequest(text="before and limit are numbers")
-        return _json(self.engine.earlier_messages(pid, before or None, limit))
+            await self.engine.unclear_chat(pid)
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 409)
+        return _json(self.engine.chat_view(pid))
 
     async def reset(self, request):
         pid = self._pid(request)
@@ -1366,7 +1366,7 @@ class WebApp:
         r.add_get("/api/file", self.shared_file)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
-        r.add_get("/api/chats/{pid}/earlier", self.earlier)
+        r.add_post("/api/chats/{pid}/unclear", self.unclear)
         r.add_get("/api/today", self.today)
         r.add_get("/api/agents/{pid}", self.agent)
         r.add_patch("/api/agents/{pid}", self.update_agent)
