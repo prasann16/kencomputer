@@ -525,16 +525,29 @@ def _sdr_clips(folder: Path, props: dict, say=print) -> None:
         tmp.replace(path)
 
 
+# The fast way keeps what it drew so the next edit only redraws what changed: its graphics are ProRes, about 1 MB a
+# frame, so a reel full of graphics leaves a couple of GB. A disk without this much free would fill mid-render.
+FAST_NEEDS_FREE = 3 * 1024**3
+
+
+def _room_for_fast(folder: Path) -> bool:
+    try:
+        return shutil.disk_usage(folder).free >= FAST_NEEDS_FREE
+    except OSError:
+        return True
+
+
 def render(home: Path, folder: Path, say=print, plan: bool = False) -> Path:
     """reel.mp4, ready to post. The fast way checks its own result; if that fails, or the reel has whip pans
-    (chapters), which only the slow way does, Chrome draws the whole reel instead: slower, always right."""
+    (chapters), which only the slow way does, or the disk has no room for what the fast way keeps, Chrome draws
+    the whole reel instead: slower, always right, and it keeps nothing."""
     props = _props(folder)
     if not plan:
         _sdr_clips(folder, props, say)
     _project(home, folder, say)
     out = folder / "reel.mp4"
     extra = ["--plan"] if plan else []
-    if props.get("chapters"):
+    if props.get("chapters") or not _room_for_fast(folder):
         code = _node(home, folder, ["render.mjs", str(folder), str(out), *extra])
     else:
         code = _node(home, folder, ["compose.mjs", str(folder), str(out), *extra])

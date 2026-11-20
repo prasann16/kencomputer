@@ -79,7 +79,11 @@ export async function cachedBundle(work, props, { video = true } = {}) {
     mkdirSync(join(pub, f, ".."), { recursive: true });
     linkSync(join(work, f), join(pub, f));
   }
-  await bundle({ entryPoint: resolve("src/index.ts"), publicDir: pub, outDir: out });
+  // Webpack's own cache is named after the whole build setup, outDir included, which changes with every key above, so
+  // it was never read again: about 200 MB per bundle left in the kit's node_modules/.cache. The bundle above is the
+  // cache; webpack's is off, and what earlier bundles left there goes.
+  rmSync(resolve("node_modules/.cache/webpack"), { recursive: true, force: true });
+  await bundle({ entryPoint: resolve("src/index.ts"), publicDir: pub, outDir: out, enableCaching: false });
   rmSync(pub, { recursive: true, force: true });
   return out;
 }

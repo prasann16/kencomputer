@@ -82,9 +82,22 @@ def test_render_falls_back_to_chrome_when_the_fast_way_fails(tmp_path, monkeypat
     (tmp_path / "props.json").write_text(json.dumps({"durationSeconds": 5}))
     calls = []
     monkeypatch.setattr(v, "_project", lambda *a, **k: None)
+    monkeypatch.setattr(v, "_room_for_fast", lambda folder: True)
     monkeypatch.setattr(v, "_node", lambda home, folder, args: calls.append(args[0]) or (1 if args[0] == "compose.mjs" else 0))
     v.render(tmp_path, tmp_path, say=lambda *_: None)
     assert calls == ["compose.mjs", "render.mjs"]
+
+
+def test_a_disk_without_room_renders_the_plain_way(tmp_path, monkeypatch):
+    """The fast way keeps a couple of GB per reel; with less than that free, Chrome draws it all and keeps nothing."""
+    (tmp_path / "props.json").write_text(json.dumps({"durationSeconds": 5}))
+    monkeypatch.setattr(v, "_project", lambda *a, **k: None)
+    for free, expected in ((v.FAST_NEEDS_FREE - 1, ["render.mjs"]), (v.FAST_NEEDS_FREE, ["compose.mjs"])):
+        calls = []
+        monkeypatch.setattr(v, "_node", lambda home, folder, args: calls.append(args[0]) or 0)
+        monkeypatch.setattr(v.shutil, "disk_usage", lambda p: type("U", (), {"free": free})())
+        v.render(tmp_path, tmp_path, say=lambda *_: None)
+        assert calls == expected
 
 
 def test_whip_pans_go_straight_to_chrome(tmp_path, monkeypatch):
@@ -175,3 +188,9 @@ def test_a_reel_missing_kit_files_gets_them_back_and_keeps_its_own(tmp_path, mon
     v._project(tmp_path, tmp_path / "reel", lambda *_: None)
     assert (tmp_path / "reel" / "src" / "index.ts").exists() and (tmp_path / "reel" / "src" / "Reel.tsx").exists()
     assert (graphics / "index.ts").read_text() == "// Ken's own registry" and (graphics / "mine.tsx").exists()
+
+
+def test_webpack_cache_is_off():
+    """Its name includes outDir, which changes with every bundle, so it was never read and only filled the disk."""
+    src = (KIT / "lib.mjs").read_text()
+    assert "enableCaching: false" in src and 'rmSync(resolve("node_modules/.cache/webpack")' in src
