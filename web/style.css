@@ -323,13 +323,6 @@
 .about-item b { font-weight: 600; white-space: nowrap; }
 .about-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .about-item:hover b { text-decoration: underline; text-underline-offset: 4px; }
-/* Looking back (Brain › Files, Conversations): quiet lists by day; a day's chat reads as the chat does. */
-.history-kinds { margin-bottom: var(--s3); }
-.history-day { margin: var(--s5) 0 var(--s1); color: var(--faint); font: 500 var(--text-sm)/1.4 var(--sans); }
-.history-file .about-item b { min-width: 0; font-weight: 500; white-space: normal; overflow-wrap: anywhere; }
-.history-file .about-item span:last-child { margin-left: auto; flex-shrink: 0; font-size: var(--text-sm); }
-.history-file .msg-media { margin: 0 0 var(--s3); }
-.history-thread { gap: var(--s6); margin-top: var(--s3); }
 textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-sm)/1.6 var(--mono); }
 .knows-inner > .np-input + .about-editor, .modal .np-input + .about-editor { margin-top: var(--s2); }
 .skill-row { display: flex; align-items: flex-start; gap: var(--s4); padding: 14px 0; border-bottom: 1px solid var(--line); }

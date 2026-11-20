@@ -25,7 +25,7 @@ from typing import Callable
 from aiohttp import WSMsgType, web
 
 import runtimes
-from engine import HOME, NAMED_RE, Engine
+from engine import HOME, Engine
 
 log = logging.getLogger("ken")
 
@@ -995,13 +995,15 @@ class WebApp:
         return self._serve(path, download="download" in request.query)
 
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+    # Where a reply names a file: `in code`, a [link](target), or a bare path (the same places the apps look).
+    NAMED_RE = re.compile(r"`([^`\n]+)`|\]\(<?([^()<>\n]+?)>?\)|((?:~|/)[^\s`'\"()<>\]]+)")
 
     async def _start_warming(self, app) -> None:
         self._warmer = asyncio.create_task(self._warm_previews())
 
     def _videos_named(self, text: str) -> list[Path]:
         found: list[Path] = []
-        for m in NAMED_RE.finditer(text or ""):
+        for m in self.NAMED_RE.finditer(text or ""):
             ref = next(g for g in m.groups() if g).strip().rstrip(".,;:!?")
             if Path(ref).suffix.lower() not in self.PREVIEW_SUFFIXES:
                 continue
@@ -1092,22 +1094,6 @@ class WebApp:
             path = await self._preview(path)
         return self._serve(path)
 
-    async def reset(self, request):
-        pid = self._pid(request)
-        try:
-            saving = await self.engine.reset_chat(pid, clear=True)
-        except ValueError as exc:
-            return _json({"error": str(exc)}, 409)
-        return _json({**self.engine.chat_view(pid), "saving": saving})
-
-    async def unclear(self, request):
-        pid = self._pid(request)
-        try:
-            await self.engine.unclear_chat(pid)
-        except ValueError as exc:
-            return _json({"error": str(exc)}, 409)
-        return _json(self.engine.chat_view(pid))
-
     async def earlier(self, request):
         pid = self._pid(request)
         try:
@@ -1116,30 +1102,13 @@ class WebApp:
             raise web.HTTPBadRequest(text="before and limit are numbers")
         return _json(self.engine.earlier_messages(pid, before or None, limit))
 
-    def _query_pid(self, request) -> str:
-        """The chat a history question is about (?pid=, Home if none)."""
-        pid = request.query.get("pid") or HOME
-        if pid != HOME:
-            try:
-                self.engine.get_agent(pid)
-            except KeyError:
-                raise web.HTTPNotFound(text="no such chat")
-        return pid
-
-    async def chat_files(self, request):
-        kind = request.query.get("kind") or "all"
-        if kind not in ("all", *self.engine.FILE_KINDS):
-            raise web.HTTPBadRequest(text="unknown kind")
-        return _json({"files": self.engine.chat_files(self._query_pid(request), kind)})
-
-    async def days(self, request):
-        return _json({"days": self.engine.days(self._query_pid(request))})
-
-    async def day(self, request):
+    async def reset(self, request):
+        pid = self._pid(request)
         try:
-            return _json({"messages": self.engine.day_messages(self._query_pid(request), request.match_info["date"])})
+            saving = await self.engine.reset_chat(pid, clear=True)
         except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc))
+            return _json({"error": str(exc)}, 409)
+        return _json({**self.engine.chat_view(pid), "saving": saving})
 
     def _agent(self, request) -> str:
         pid = request.match_info["pid"]
@@ -1397,11 +1366,7 @@ class WebApp:
         r.add_get("/api/file", self.shared_file)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
-        r.add_post("/api/chats/{pid}/unclear", self.unclear)
         r.add_get("/api/chats/{pid}/earlier", self.earlier)
-        r.add_get("/api/files", self.chat_files)
-        r.add_get("/api/days", self.days)
-        r.add_get("/api/days/{date}", self.day)
         r.add_get("/api/today", self.today)
         r.add_get("/api/agents/{pid}", self.agent)
         r.add_patch("/api/agents/{pid}", self.update_agent)

@@ -1903,54 +1903,11 @@ const EXAMPLES = ['Turn my video into reels', 'Find a laptop under $1,000', 'Sen
 const someExamples = () => [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
 const TOOL_NAMES = { browser: 'Chrome', email: 'Email', calendar: 'Calendar' };
 
-// Looking back, in the Brain: every file that passed through the chat, and each day's conversation. Nothing in a chat is
-// ever deleted (Clear only starts a new thread), so everything is here.
-const dayName = (date) => {
-  const [y, m, d] = date.split('-').map(Number), day = new Date(y, m - 1, d), today = new Date();
-  const back = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - day) / 86400000);
-  return back === 0 ? 'Today' : back === 1 ? 'Yesterday'
-    : day.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', ...(y !== today.getFullYear() && { year: 'numeric' }) });
-};
-const localDate = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const FILE_KINDS = [['all', 'All'], ['video', 'Videos'], ['doc', 'Docs'], ['picture', 'Pictures']];
-const FILE_ICON = { video: '🎬', picture: '🖼️', doc: '📄', audio: '🎵' };
-function ChatFiles({ pid }) {
-  const [kind, setKind] = useState('all'), [files, setFiles] = useState(null), [error, setError] = useState(''), [shown, setShown] = useState(null);
-  useEffect(() => { setFiles(null); api(`/api/files?kind=${kind}&pid=${pid}`).then((r) => setFiles(r.files)).catch((e) => setError(e.message)); }, [kind]);
-  // A video, picture or sound plays right here, with Download, as in the chat; anything else opens the way chat files do.
-  const open = (f) => (['video', 'picture', 'audio'].includes(f.kind) ? setShown(shown === f.path ? null : f.path) : openFile(f.path));
-  const days = [];
-  for (const f of files || []) { const date = localDate(f.ts), last = days[days.length - 1]; if (last && last.date === date) last.files.push(f); else days.push({ date, files: [f] }); }
-  return html`<div class="segmented history-kinds" role="radiogroup" aria-label="Show">${FILE_KINDS.map(([k, label]) => html`<button role="radio" aria-checked=${kind === k} onClick=${() => setKind(k)}>${label}</button>`)}</div>
-    ${error ? html`<p class="connect-error" role="alert">${error}</p>` : !files ? html`<p class="np-help">Loading…</p>`
-      : !files.length ? html`<p class="np-note">Nothing here yet. Files you send Ken, and files Ken makes for you, show up here.</p>`
-      : days.map((d) => html`<h3 class="history-day">${dayName(d.date)}</h3>${d.files.map((f) => html`<div class="history-file" key=${f.path}>
-          <button class="about-item" onClick=${() => open(f)}><span aria-hidden="true">${FILE_ICON[f.kind] || '📦'}</span><b>${f.name}</b><span>${bytes(f.size)}${f.from === 'you' ? ' · from you' : ''}</span></button>
-          ${shown === f.path && html`<${Media} path=${f.path}/>`}</div>`)}`)}`;
-}
-function Conversations({ pid }) {
-  const [days, setDays] = useState(null), [day, setDay] = useState(null), [error, setError] = useState('');
-  useEffect(() => { api(`/api/days?pid=${pid}`).then((r) => setDays(r.days)).catch((e) => setError(e.message)); }, []);
-  const show = (date) => { setDay({ date, messages: null }); api(`/api/days/${date}?pid=${pid}`).then((r) => setDay({ date, messages: r.messages })).catch((e) => setError(e.message)); };
-  if (error) return html`<p class="connect-error" role="alert">${error}</p>`;
-  if (day) return html`<button class="text-action brain-back" onClick=${() => setDay(null)}>‹ All days</button><h3 class="history-day">${dayName(day.date)}</h3>
-    ${!day.messages ? html`<p class="np-help">Loading…</p>` : html`<div class="thread history-thread">${day.messages.map((m) => html`<div key=${m.id}><${Safe} where="message"><${Message} m=${m}/><//></div>`)}</div>`}`;
-  if (!days) return html`<p class="np-help">Loading…</p>`;
-  return days.length ? days.map((d) => html`<button class="about-item" onClick=${() => show(d.date)}><b>${dayName(d.date)}</b><span>${d.summary || `${d.count} messages`}</span></button>`)
-    : html`<p class="np-note">No conversations yet.</p>`;
-}
-
 // Ken's Brain: who it is (SOUL.md), its memory notes, tools, keys, jobs and files. A calm overview
 // of one line each; open a line to see and edit that part.
 function About({ pid, onClose, onPreview, page, onAddTool }) {
   const [a, setA] = useState(null), [conn, setConn] = useState(null), [jobs, setJobs] = useState([]), [section, setSection] = useState(null);
   const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [skill, setSkill] = useState(null);
-  // Files and Conversations show only when this Ken has them (an older Ken answers 404); any other failure still shows the card.
-  const [has, setHas] = useState({});
-  useEffect(() => {
-    for (const [key, path] of [['files', `/api/files?kind=all&pid=${pid}`], ['conversations', `/api/days?pid=${pid}`]])
-      api(path).then(() => true, (e) => !notYet(e)).then((yes) => setHas((h) => ({ ...h, [key]: yes })));
-  }, []);
   const load = () => {
     api(`/api/about/${pid}`).then(setA).catch((e) => setError(e.message));
     api('/api/connections').then(setConn).catch(() => {});
@@ -2007,8 +1964,6 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
         <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
         ${a.skills.filter((s) => !s.app).map((s) => html`<div class="skill-row"><button class="skill-open" onClick=${() => api(`/api/skills/${encodeURIComponent(s.id)}`).then(setSkill).catch((e) => setError(e.message))}><b>${s.name}</b><span>${s.about}</span></button><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
     jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
-    has.files && { key: 'files', title: 'Files', summary: 'Videos, docs and pictures from your chats', body: html`<${ChatFiles} pid=${pid}/>` },
-    has.conversations && { key: 'conversations', title: 'Conversations', summary: 'Every chat, day by day', body: html`<${Conversations} pid=${pid}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
@@ -2160,7 +2115,6 @@ function App() {
   const inFlight = useRef(new Set());
   const generation = useRef(0);
   const [toastMsg, setToastMsg] = useState('');
-  const [toastAction, setToastAction] = useState(null);  // one small button in the toast (Undo after Clear); any other toast drops it
   const [online, setOnline] = useState(false);
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
@@ -2178,7 +2132,7 @@ function App() {
   const pidRef = useRef(pid); pidRef.current = pid;
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
   useEffect(()=>{warm(pid);},[pid]);
-  const toast = useCallback((m, action = null) => { setToastMsg(m); setToastAction(action); }, []);
+  const toast = useCallback((m) => setToastMsg(m), []);
   notify = toast;
   const [reporting, setReporting] = useState(false);
   openReport = () => setReporting(true);
@@ -2403,18 +2357,10 @@ function App() {
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
       setStream((s) => ({ ...s, [pid]: '' })); setActivity((a) => ({ ...a, [pid]: '' }));
-      toast('Thread cleared', { label: 'Undo', run: () => unclearThread(pid) });
+      toast(result.saving ? 'Cleared. Ken’s saving what mattered to memory.' : 'Cleared. Your memory and files are kept.');
       warm(pid);
     } catch (e) { toast(e.message); }
     finally { setClearing(false); }
-  };
-  // Undo the latest Clear: the old messages come back on screen (nothing was deleted).
-  const unclearThread = async (target) => {
-    generation.current++;
-    try {
-      const result = await api(`/api/chats/${target}/unclear`, { json: {} });
-      if (pidRef.current === target) setChat({ pid: target, ...result });
-    } catch (e) { toast(notYet(e) ? 'This Ken can’t undo a Clear yet. It can after its next update.' : e.message); }
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
@@ -2444,7 +2390,7 @@ function App() {
     ${projectDialog?.kind==='remove' && html`<${Safe} where="RemoveProject"><${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/><//>`}
     ${newProject && html`<${Safe} where="NewAgent"><${NewAgent} setup=${setup} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/><//>`}
     ${reporting && html`<${Safe} where="ReportProblem"><${ReportProblem} onClose=${() => setReporting(false)}/><//>`}
-    ${toastMsg && html`<div class="toast" role="status">${toastMsg}${toastAction && html` · <button class="toast-action" onClick=${() => { setToastMsg(''); toastAction.run(); }}>${toastAction.label}</button>`}</div>`}
+    ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
   </div>`;
 }
 // Hover cards for [data-tip]: one element on top of the page, shown after a short pause.

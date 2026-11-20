@@ -215,7 +215,6 @@ select.np-input { appearance: none; -webkit-appearance: none; padding-right: 36p
 .modal-x:hover { background: var(--well); color: var(--ink); }
 .toast { position: fixed; left: 50%; bottom: 110px; z-index: 40; transform: translateX(-50%); max-width: min(480px, calc(100% - 32px)); padding: var(--s3) var(--s5);
   border-radius: var(--r-card); background: var(--primary); color: var(--primary-ink); box-shadow: var(--float); font-size: var(--text-ui); line-height: 1.45; white-space: pre-line; }
-.toast-action { padding: 0; border: 0; background: none; color: inherit; font: 600 var(--text-ui) var(--sans); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 #page-error { position: fixed; left: 50%; bottom: 24px; z-index: 200; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); padding: var(--s3) var(--s3) var(--s3) var(--s5);
   border-radius: var(--r-card); background: var(--primary); color: var(--primary-ink); box-shadow: var(--float); font: var(--text-ui)/1.4 var(--sans); }
 #page-error button { margin-left: var(--s2); padding: 6px 14px; border: 0; border-radius: var(--r-pill); background: var(--primary-ink); color: var(--primary); font: 500 var(--text-sm) var(--sans); }
