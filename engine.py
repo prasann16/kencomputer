@@ -1978,13 +1978,16 @@ class Engine:
         async with lock:
             # Archive by boundary, rather than deleting messages, transcripts or memory.
             if clear:
-                after = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0)
+                previous = json.loads(self.kv_get(f"thread:{pid}") or "{}")
+                after = previous.get("after", 0)
                 thread = [m for m in self.messages(pid) if m["id"] > after]
                 if any(m["role"] == "you" and str(m.get("text", "")).strip() for m in thread):
                     self._bg.append(asyncio.create_task(self._save_thread(pid, thread)))
                     saving = True
                 boundary = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE project=?", (pid,)).fetchone()[0]
-                self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time()}))
+                # Where the thread started before, so this Clear can be undone (unclear_chat).
+                self.kv_set(f"thread:{pid}", json.dumps({"after": boundary, "cleared_at": time.time(),
+                                                          "before": {"after": after, "cleared_at": previous.get("cleared_at", 0)}}))
             s = self.chats.pop(pid, None)
             self.db.execute("DELETE FROM kv WHERE k IN (?, ?)", (f"session:{pid}", f"session:codex:{pid}"))
             self.db.execute("DELETE FROM kv WHERE k=?", (f"brain:{pid}",))
@@ -1996,6 +1999,20 @@ class Engine:
     # A conversation that has grown heavy, or a session the AI stopped answering, starts over: what mattered goes into
     # memory (as Clear does), the AI gets a fresh session, and the next message carries the last few for context. The
     # chat on screen doesn't change.
+    async def unclear_chat(self, pid: str) -> None:
+        """Undo the latest Clear: the thread starts where it did before. The AI got a fresh session on Clear, so the
+        next message carries the last few for context, as after a roll-over."""
+        lock = self.chat_locks.setdefault(pid, asyncio.Lock())
+        if lock.locked():
+            raise ValueError("Ken is still working. Stop or finish the reply first.")
+        async with lock:
+            before = json.loads(self.kv_get(f"thread:{pid}") or "{}").get("before")
+            if before is None:
+                raise ValueError("There's nothing to undo.")
+            self.kv_set(f"thread:{pid}", json.dumps(before))
+            self.kv_set(f"primer:{pid}", "1")
+            self.broadcast("chat.reset", pid)
+
     def _roll_over(self, pid: str, session=None) -> None:
         after = max(json.loads(self.kv_get(f"thread:{pid}") or "{}").get("after", 0), int(self.kv_get(f"rolled:{pid}") or 0))
         thread = [m for m in self.messages(pid) if m["id"] > after]

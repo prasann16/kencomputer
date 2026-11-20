@@ -72,9 +72,12 @@ async function api(path, opts = {}) {
   const data = await r.json().catch(() => ({}));
   // A code from the host (e.g. "container_unreachable" while Ken's computer wakes) is never shown as is.
   const said = typeof data.error === 'string' && !/^[a-z0-9_.-]+$/.test(data.error) ? data.error : '';
-  if (!r.ok) throw new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText));
+  if (!r.ok) throw Object.assign(new Error(said || (r.status >= 500 ? 'Ken is waking up. Try again in a moment.' : r.statusText)), { status: r.status });
   return data;
 }
+// The web app can be newer than the Ken behind it (hosted Ken serves one app to every computer): a feature that Ken
+// doesn't have yet answers 404 or 405, and the app quietly leaves it out.
+const notYet = (e) => e.status === 404 || e.status === 405;
 
 // Files the user attached; they show in their message, not as Ken's file cards.
 const ATTACHED = new Set();
@@ -2089,6 +2092,7 @@ function App() {
   const inFlight = useRef(new Set());
   const generation = useRef(0);
   const [toastMsg, setToastMsg] = useState('');
+  const [toastAction, setToastAction] = useState(null);  // one small button in the toast (Undo after Clear); any other toast drops it
   const [online, setOnline] = useState(false);
   // Only mention the connection if it stays down; quick reconnects pass unnoticed.
   const [offline, setOffline] = useState(false);
@@ -2106,13 +2110,13 @@ function App() {
   const pidRef = useRef(pid); pidRef.current = pid;
   const warm = (target) => api(`/api/chats/${target}/warm`, {json:{}}).catch(()=>{});
   useEffect(()=>{warm(pid);},[pid]);
-  const toast = useCallback((m) => setToastMsg(m), []);
+  const toast = useCallback((m, action = null) => { setToastMsg(m); setToastAction(action); }, []);
   notify = toast;
   const [reporting, setReporting] = useState(false);
   openReport = () => setReporting(true);
   const [docFile, setDocFile] = useState(null);
   showDoc = setDocFile;
-  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
+  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(''), Math.max(toastAction ? 10000 : 6000, String(toastMsg).length * 70) + 2000 * (String(toastMsg).split('\n').length - 1)); return () => clearTimeout(t); }, [toastMsg]);
   const remember = (messages) => {
     for (const m of messages) if (m.client_id) received.current.add(m.client_id);
     setOutbox((all) => all.filter((m) => !received.current.has(m.client_id)));
@@ -2331,10 +2335,18 @@ function App() {
       setOutbox((all) => all.filter((m) => m.project !== pid));
       if (pidRef.current === pid) setChat({ pid, ...result });
       setStream((s) => ({ ...s, [pid]: '' })); setActivity((a) => ({ ...a, [pid]: '' }));
-      toast(result.saving ? 'Cleared. Ken’s saving what mattered to memory.' : 'Cleared. Your memory and files are kept.');
+      toast('Thread cleared', { label: 'Undo', run: () => unclearThread(pid) });
       warm(pid);
     } catch (e) { toast(e.message); }
     finally { setClearing(false); }
+  };
+  // Undo the latest Clear: the old messages come back on screen (nothing was deleted).
+  const unclearThread = async (target) => {
+    generation.current++;
+    try {
+      const result = await api(`/api/chats/${target}/unclear`, { json: {} });
+      if (pidRef.current === target) setChat({ pid: target, ...result });
+    } catch (e) { toast(notYet(e) ? 'This Ken can’t undo a Clear yet. It can after its next update.' : e.message); }
   };
   const projects = today ? today.agents : [];
   const current = chats.find((c) => c.id === pid);
@@ -2364,7 +2376,7 @@ function App() {
     ${projectDialog?.kind==='remove' && html`<${Safe} where="RemoveProject"><${RemoveProject} project=${projectDialog.project} onClose=${()=>setProjectDialog(null)} onDone=${()=>{const gone=projectDialog.project.id;setProjectDialog(null);refreshChats();if(gone===pid)location.hash='#/';}}/><//>`}
     ${newProject && html`<${Safe} where="NewAgent"><${NewAgent} setup=${setup} onClose=${()=>setNewProject(false)} onCreated=${(p)=>{setNewProject(false);api('/api/chats').then(setChats).catch(()=>{});location.hash='#/p/'+p.id;}}/><//>`}
     ${reporting && html`<${Safe} where="ReportProblem"><${ReportProblem} onClose=${() => setReporting(false)}/><//>`}
-    ${toastMsg && html`<div class="toast" role="status">${toastMsg}</div>`}
+    ${toastMsg && html`<div class="toast" role="status">${toastMsg}${toastAction && html` · <button class="toast-action" onClick=${() => { setToastMsg(''); toastAction.run(); }}>${toastAction.label}</button>`}</div>`}
   </div>`;
 }
 // Hover cards for [data-tip]: one element on top of the page, shown after a short pause.
