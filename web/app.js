@@ -1722,6 +1722,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
   ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
+  ${HOSTED && current === 'plan' && html`<${InviteFriend}/>`}
   ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not or when you pick them.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
     <div class="conn-list ai-uses">${(() => {
       // Claude and ChatGPT only ever mean their own subscription; Ken AI credits are their own row (hosted only).
@@ -1800,10 +1801,11 @@ function InviteFriend() {
   useEffect(() => { fetch('/account/invite.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setInvite).catch(() => {}); }, []);
   if (!invite?.link) return '';
   const copy = () => navigator.clipboard?.writeText(invite.link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
-  return html`<div class="invite-friend"><b>Invite a friend</b>
-    <p class="np-note">They get a month of Ken Plus free. When they start paying, you get a month off (up to ${invite.max} friends)${invite.given ? ` · ${invite.given} so far` : ''}.</p>
-    <div class="invite-row"><input class="invite-link" type="text" readonly value=${invite.link} aria-label="Your invite link" onFocus=${(e) => e.target.select()}/>
-    <button class="btn" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button></div></div>`;
+  return html`<div class="tool-list invite-card"><div class="conn"><div class="conn-row">
+    <span class="conn-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 21V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/></svg></span>
+    <div class="conn-text"><b>Invite a friend</b><span>They get a month of Ken Plus free. When they start paying, you get a month off (up to ${invite.max} friends)${invite.given ? ` · ${invite.given} so far` : ''}.</span></div>
+    <div class="conn-right"><button class="btn sm light" onClick=${copy}>${copied ? 'Copied' : 'Copy link'}</button></div></div>
+    <div class="invite-row"><input class="invite-link" type="text" readonly value=${invite.link} aria-label="Your invite link" onFocus=${(e) => e.target.select()}/></div></div></div>`;
 }
 
 function PlanUsage({ usage, accountUrl }) {
@@ -1815,7 +1817,6 @@ function PlanUsage({ usage, accountUrl }) {
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
     ${HOSTED && html`<${CreditsUsed}/>`}
-    ${HOSTED && html`<${InviteFriend}/>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add Ken AI credits</a>`}
     ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;

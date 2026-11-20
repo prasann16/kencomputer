@@ -408,10 +408,9 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .credits-used-top, .credits-used-row { display: flex; justify-content: space-between; gap: var(--s3); }
 .credits-used-top { margin-bottom: 2px; font-weight: 600; }
 .credits-used-row { color: var(--muted); }
-/* Settings → Plan: their invite link, whole, with Copy beside it. */
-.invite-friend { display: flex; flex-direction: column; gap: 6px; margin-top: var(--s5); font-size: var(--text-md); }
-.invite-friend .np-note { margin: 0; }
-.invite-row { display: flex; gap: var(--s2); }
+/* Settings → Plan: Invite a friend, its own card under the plan; the link in full under the words. */
+.invite-card { margin-top: var(--s4); }
+.invite-row { display: flex; margin: var(--s3) 0 0 50px; }
 .invite-link { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: transparent; color: var(--ink); font: inherit; }
 .credits-used-row i { font-style: normal; color: var(--ink); }
 .credits-used-row span:last-child { flex: none; }
