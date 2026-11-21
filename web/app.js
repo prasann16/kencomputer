@@ -1152,12 +1152,12 @@ function ModelPicker({ model, catalog, disabled, onChange }) {
   </select>`;
 }
 
-// Ken on the phone, from the chat header: a quiet phone that opens Settings → Telegram (Phone on the Mac); filled once
-// it's linked. linked: true / false, or null while unknown (then it isn't shown).
+// Ken on the phone, from Ken's chat header: "Use on phone" until they have the app or Telegram, then gone (Settings →
+// Phone manages it). linked: true / false, or null while unknown (then it isn't shown). Not on a phone-size screen.
 function PhoneButton({ linked, onOpen }) {
-  const label = linked ? 'Phone connected' : 'Connect your phone';
-  return html`<button class=${'phone-link' + (linked ? ' on' : '')} aria-label=${label} title=${linked ? `${label}. Talk to Ken there too.` : 'Talk to Ken from your phone'} onClick=${onOpen}>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
+  if (linked !== false) return null;
+  return html`<button class="clear-button phone-cta wide-only" title="Talk to Ken from the Ken app or Telegram" onClick=${onOpen}>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path d="M10.5 5.75h3"/><circle cx="12" cy="18" r=".6"/></svg>Use on phone</button>`;
 }
 
 function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone, pid = 'home', agentsUI }) {
@@ -2121,7 +2121,7 @@ function App() {
   // Telegram linked (Ken in the cloud: the site knows; the Mac: its phone step), for the phone in the chat header.
   const [hostedPhone, setHostedPhone] = useState(null);
   const checkPhone = () => HOSTED && fetch('/account/telegram/status.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject())
-    .then((r) => setHostedPhone(!!r.linked)).catch(() => {});
+    .then((r) => setHostedPhone(!!r.phone)).catch(() => {});
   useEffect(() => {
     if (!meta.hosted) return;  // known once Ken's meta is in
     checkPhone(); const back = () => { if (!location.hash.startsWith('#/settings')) checkPhone(); };
