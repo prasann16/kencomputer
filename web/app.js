@@ -1866,10 +1866,10 @@ function PlanUsage({ usage, accountUrl }) {
   return html`<div class="plan-usage">${usage.plan && html`<b>${usage.plan}</b>`}
     ${usage.lines.filter((l) => !(usage.added && l.label === 'Added credits')).map((l) => { const v = share(l); return html`<div class=${'meter' + (l.low ? ' low' : '')}><div class="meter-top"><span>${l.label}</span><span>${l.left}${l.of ? ` of ${l.of}` : ''} left</span></div>${v !== null && html`<div class="bar"><i style=${{ width: Math.round(v * 100) + '%' }}></i></div>`}</div>`; })}
     ${usage.added && html`<p class="plan-added">+ ${usage.added} added credits</p>`}
-    ${HOSTED && html`<${CreditsUsed}/>`}
     ${usage.note && html`<p class="np-note">${usage.note}</p>`}
     <div class="plan-actions">${usage.topup_url && html`<a class="btn primary" href=${usage.topup_url}>Add Ken AI credits</a>`}
-    ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div></div>`;
+    ${manage && html`<a class="btn" href=${manage}>Plan & billing</a>`}</div>
+    ${HOSTED && html`<${CreditsUsed}/>`}</div>`;  // what used the credits, day by day: last, as it grows
 }
 const HELP_EMAIL = 'help@kencomputer.dev';  // "Anything urgent? Email …" under Send feedback
 const FOUNDER_TELEGRAM = 'prasann16';  // "Message the founder on Telegram" under Send feedback; empty hides it
