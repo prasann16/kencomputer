@@ -70,5 +70,8 @@ captions → dub. Dub last, from the finished English cut, so they pay for the m
   background job with the folder, the exact commands and what they asked, and tell them in one line it's running.
 - **Fail once, plainly.** If ElevenLabs or Ken says no (credits used up, ElevenLabs down, file too big), the
   helper explains why. Tell them in one line with the fix; never retry in a loop.
+- **Hear it first.** Before a new voice goes into anything long (a reel, a dub, a long voiceover), send 2 or 3 short
+  samples of their own script in different voices and build with the one they pick. A voice they only hear at the
+  end costs them the whole wait again.
 - **Listen to what you made** before sending: check the length with ffprobe, and for a voice, read the words back
   with `transcribe_media` on the output. A dub or voiceover with a mispronounced name gets fixed first.

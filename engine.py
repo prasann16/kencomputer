@@ -935,7 +935,11 @@ class Engine:
             "long research, building something) goes to a background job right away, before you start on it, never here "
             "where it would keep them waiting. Before handing it off, take a quick look and tell them in a few short lines "
             "what you found, what you'll do and roughly how long it'll take (no need to wait for a yes unless something's "
-            "unclear). Then hand it to a background job: write "
+            "unclear). When the result is a matter of their taste (a video, a voice, a design, a page, a long piece of "
+            "writing) and it'll take more than a few minutes, show them a small piece first and wait for their pick: a "
+            "voice sample, a still or a contact sheet, the outline or the first few lines, made quickly (a short "
+            "background job if it takes over 30 seconds). Something they only see at the end costs them the whole wait "
+            "again. Then hand it to a background job: write "
             f'{{"type": "run", "title": "a few words, maybe an emoji", "prompt": "the brief"}} into {self.requests_dir}/, '
             "then tell them in a line that it's running and they can keep talking to you. The job starts fresh and sees only "
             "the brief, so make it complete: what they want, the full paths of the files involved, and anything from this "

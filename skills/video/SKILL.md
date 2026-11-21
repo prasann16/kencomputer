@@ -32,6 +32,10 @@ rendered on a guess. In the chat:
 4. **Tell them the plan** in a few short lines, in your own words: the main moves, not every cut and graphic
    (`plan.md` keeps the detail). Ask if you should go ahead. **Then stop and wait.** Don't cut, design or render
    anything before their yes.
+   **Show a bit, not just words**, where words can't show it: a reel with a voiceover or a new voice gets 2 or 3
+   short samples (a line or two of the real script, each a different voice, made with the video-kit skill) sent with
+   the plan, and footage you chose for them gets one contact sheet of the shots you'd use. They pick with their yes.
+   A voice or a look they only meet in the finished reel costs them a whole new render to change.
 5. On their yes (with any changes written into `plan.md`), hand the whole job off as a background job: the folder,
    what they asked, `plan.md`. Tell them in one short line roughly how long it'll take. The job follows `plan.md`: steps 2
    to 5 carry it out, and anything it couldn't do as planned goes in its message at the end.
