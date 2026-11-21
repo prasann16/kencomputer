@@ -40,7 +40,8 @@
 .chat-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .chat-title small { color: var(--faint); font-size: var(--text-sm); }
 .chat-tools { display: flex; align-items: center; gap: var(--s1); flex-shrink: 0; margin-left: auto; }
-.chat-top .top-tabs { margin-left: calc(-1 * var(--s2)); }
+a.clear-button { text-decoration: none; }
+.chat-top > .clear-button { margin-left: calc(-1 * var(--s4)); }
 .chat-tools .chat-tools { margin: 0; }
 @media (min-width: 761px) { .narrow-only { display: none !important; } }
 .pop { position: relative; }
