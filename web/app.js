@@ -1939,14 +1939,13 @@ const EXAMPLES = ['Turn my video into reels', 'Find a laptop under $1,000', 'Sen
 const someExamples = () => [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
 const TOOL_NAMES = { browser: 'Chrome', email: 'Email', calendar: 'Calendar' };
 
-// Ken's Brain: who it is (SOUL.md), its memory notes, tools, keys, jobs and files. A calm overview
+// Ken's Brain: who it is (SOUL.md), its memory notes, keys, jobs and files. (Apps are in Settings.) A calm overview
 // of one line each; open a line to see and edit that part.
 function About({ pid, onClose, onPreview, page, onAddTool }) {
-  const [a, setA] = useState(null), [conn, setConn] = useState(null), [jobs, setJobs] = useState([]), [section, setSection] = useState(null);
+  const [a, setA] = useState(null), [jobs, setJobs] = useState([]), [section, setSection] = useState(null);
   const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [skill, setSkill] = useState(null);
   const load = () => {
     api(`/api/about/${pid}`).then(setA).catch((e) => setError(e.message));
-    api('/api/connections').then(setConn).catch(() => {});
     api('/api/jobs').then((all) => setJobs(all.filter((j) => (j.agent || 'home') === pid))).catch(() => {});
   };
   useEffect(load, []);
@@ -1982,9 +1981,6 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   if (!a) return frame(null, html`<p class="np-help">${error || 'Loading…'}</p>`);
   const plain = (t) => t.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '').replace(/[*_`#>]/g, '').trim();  // a list item reads as a sentence
   const firstLine = a.context.split('\n').filter((l) => !/^\s*#/.test(l)).map(plain).find((l) => l && !/^You are\b/.test(l) && !/^\(.*\)$/.test(l)) || 'Nothing yet';
-  const connected = conn ? { browser: conn.chrome, email: conn.emails.length > 0, calendar: conn.calendars.length > 0 } : {};
-  const on = a.builtin.filter((t) => connected[t] && a.tools.use.includes(t)).map((t) => TOOL_NAMES[t]).concat(Object.keys(a.tools.mcp));
-  const off = conn ? a.builtin.filter((t) => !connected[t]).map((t) => TOOL_NAMES[t]) : [];
   const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const parts = [
     { key: 'soul', title: pid === 'home' ? 'Who Ken is' : AGENTS_UI ? 'Goal and rules' : 'Context', summary: firstLine, body: html`
@@ -1993,8 +1989,6 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     { key: 'memory', title: pid === 'home' ? 'What Ken remembers' : 'Memory', summary: a.memory.length ? count(a.memory.length, 'note') : 'Nothing yet', body: html`
         <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ kind: 'note', isNew: true, name: '', text: '' })}>New note</button></div>
         ${a.memory.length ? a.memory.map((n) => html`<button class="about-item" onClick=${() => openNote(n.name)}><b>${n.name.replace(/\.md$/, '')}</b><span>${n.about}</span></button>`) : html`<p class="np-note">No notes yet. Ken writes them as it learns about you.</p>`}` },
-    pid !== 'home' && { key: 'tools', title: 'Tools', summary: [on.join(', ') || 'Nothing connected', off.length && off.join(', ') + ' not connected'].filter(Boolean).join(' · '), body: html`
-        <${ToolList} tools=${a.tools} onUse=${(t, yes) => save(() => api(`/api/agents/${pid}/tools`, { method: 'PUT', json: { use: yes ? [...a.tools.use, t] : a.tools.use.filter((x) => x !== t) } }))} onAddTool=${onAddTool}/>` },
     { key: 'keys', title: 'Accounts & passwords', summary: a.keys.length ? count(a.keys.length, 'key') : 'None yet', body: html`<${Keys} pid=${pid} initial=${a.keys}/>` },
     pid === 'home' && { key: 'skills', title: 'Skills', summary: a.skills.some((s) => !s.app) ? a.skills.filter((s) => !s.app).map((s) => s.name).join(', ') : 'None yet', body: html`
         <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
