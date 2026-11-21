@@ -15,27 +15,47 @@
 .proj-dot { display: inline-block; width: 8px; height: 8px; flex-shrink: 0; border-radius: 3px; }
 .proj-more { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 2px; padding: 0; border: 0; border-radius: var(--r-pill); background: none; color: var(--faint); }
 .proj-more:hover { background: var(--hover); color: var(--ink); }
-/* The header's chat switcher: Ken and their agents. */
-.switcher { position: relative; -webkit-app-region: no-drag; }
-.switcher-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; max-width: 220px; padding: 0 var(--s3); border: 0; border-radius: var(--r-pill); background: none; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
-.switcher-button:hover, .switcher-button[aria-expanded='true'] { background: var(--hover); }
-.switcher-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.switcher-button svg { flex-shrink: 0; color: var(--faint); }
-.switcher-news, .switcher-unread { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--recording); }
-.switcher-menu { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow-y: auto; padding: 6px; border-radius: var(--r-lg); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line), var(--float); }
-.switcher-menu.small { width: 200px; }
-.switcher-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: var(--r-md); background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
-.switcher-row:hover, .switcher-row.sel { background: var(--hover); }
-.switcher-row.danger { color: var(--danger); }
-.switcher-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.switcher-top { display: flex; align-items: baseline; gap: 6px; }
-.switcher-top b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.switcher-top em { color: var(--faint); font-size: var(--text-sm); font-style: normal; white-space: nowrap; }
-.switcher-top small { margin-left: auto; color: var(--faint); font-size: var(--text-sm); white-space: nowrap; }
-.switcher-last { overflow: hidden; color: var(--muted); font-size: var(--text-sm); white-space: nowrap; text-overflow: ellipsis; }
-.switcher-hint { margin: 4px 10px 8px; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; }
-.switcher-add { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 var(--r-md) var(--r-md); }
-.switcher-plus { display: grid; place-items: center; width: 8px; color: var(--muted); font-size: 18px; line-height: 1; }
+/* With agents: a list of chats beside the chat (alone on a phone), and one row on top of the chat. */
+.chat-list { display: flex; flex-direction: column; flex-shrink: 0; width: 300px; min-height: 0; background: var(--side); }
+.chat-list-head { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; height: 68px; padding: 0 var(--s3) 0 var(--s5); font-size: var(--text-lg); -webkit-app-region: drag; }
+.chat-list-head .icon-btn { margin-left: auto; -webkit-app-region: no-drag; }
+.chat-rows { display: flex; flex: 1; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: 0 var(--s2); }
+.chat-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3); border-radius: var(--r-md); color: var(--ink); text-decoration: none; }
+.chat-row:hover { background: var(--hover); }
+.chat-row.sel { background: var(--selected); }
+.chat-dot { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; }
+.chat-row-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-row-top { display: flex; align-items: baseline; gap: var(--s2); }
+.chat-row-top b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-row-top small { margin-left: auto; color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
+.chat-row-last { overflow: hidden; min-height: 1.3em; color: var(--muted); font-size: var(--text-sm); white-space: nowrap; text-overflow: ellipsis; }
+.chat-unread { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--recording); }
+.chat-list-foot { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: var(--s2) var(--s3) var(--s3); }
+.chat-top { position: relative; z-index: 10; display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; height: 68px; padding: 0 var(--s4) 0 var(--s5); -webkit-app-region: drag; }
+.chat-top > * { -webkit-app-region: no-drag; }
+.chat-back { display: none; place-items: center; width: 36px; height: 36px; margin-left: -10px; border-radius: var(--r-pill); color: var(--muted); }
+.chat-back.always { display: grid; }
+.chat-back:hover { background: var(--hover); color: var(--ink); }
+.chat-title { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; height: 38px; padding: 0 var(--s3); margin-left: calc(-1 * var(--s3)); border-radius: var(--r-pill); color: var(--ink); text-decoration: none; }
+.chat-title:hover { background: var(--hover); }
+.chat-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-title small { color: var(--faint); font-size: var(--text-sm); }
+.chat-tools { display: flex; align-items: center; gap: var(--s1); flex-shrink: 0; margin-left: auto; }
+.pop { position: relative; }
+.pop-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 220px; padding: 6px; border-radius: var(--r-lg); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line), var(--float); }
+.pop-row { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-md); background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.pop-row:hover { background: var(--hover); }
+.pop-row.danger { color: var(--danger); }
+.pop-model { padding: 0 0 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.pop-model .model-select { width: 100%; max-width: none; }
+@media (max-width: 760px) {
+  .shell.with-chats .chat-list { width: 100%; }
+  .shell.with-chats:not(.on-list) .chat-list, .shell.with-chats.on-list .main { display: none; }
+  .chat-back { display: grid; }
+  .chat-top { height: 56px; padding: 0 var(--s3) 0 var(--s4); padding-top: env(safe-area-inset-top); box-sizing: content-box; }
+  .chat-list-head { height: 56px; padding-top: env(safe-area-inset-top); box-sizing: content-box; }
+  .chat-top .ken-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}
 .agent-ideas { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 var(--s4); }
 .agent-ideas .chip { min-height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: none; color: var(--ink); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .agent-ideas .chip:hover { background: var(--hover); }
@@ -46,7 +66,7 @@
 .chat-header > .report-link { margin-left: auto; }
 .chat-header > .header-actions + .report-link { margin-left: var(--s1); }
 .chat-header > .report-link + .settings-link { margin-left: 0; } /* the flag sits just before Settings */
-.chat-header > /* The header's words (model, Clear, Settings) are quiet pills. */
+/* The header's words (model, Clear, Settings) are quiet pills. */
 .settings-link, .clear-button, .model-select { display: inline-flex; align-items: center; height: 38px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill);
   background: none; color: var(--muted); font: 500 var(--text-ui)/1 var(--sans); cursor: pointer; transition: background .15s, color .15s; }
 .settings-link:hover, .clear-button:hover, .model-select:hover { background-color: var(--well); color: var(--ink); } /* only the colour: the menu's arrow is its background image */
@@ -568,31 +588,6 @@ ol.conn-steps li { margin: 2px 0; }
   /* The model on the left, as wide as its name; phone and Clear on the right. */
   .header-actions .model-select { order: -1; margin-right: auto; max-width: 62vw; field-sizing: content; }
   .conversation-thread { padding: var(--s4) var(--s4) var(--s6); gap: var(--s6); }
-  /* With agents: the switcher and Settings on the first line, Chat | Brain and the chat's own buttons on the second. */
-  .chat-header.with-agents .switcher { order: 0; min-width: 0; }
-  .chat-header.with-agents .ken-mark { display: none; }
-  .chat-header.with-agents .switcher { margin-left: -12px; }
-  .chat-header.with-agents .switcher-button { max-width: 48vw; }
-  .chat-header.with-agents .report-link { margin-left: auto; }
-  .chat-header.with-agents > .report-link + .settings-link { margin-left: 0; }
-  .chat-header.with-agents .top-tabs { order: 3; }
-  .chat-header.with-agents .header-actions { order: 3; width: auto; flex: 1; margin: 0 -8px 0 0; justify-content: flex-end; }
-  .chat-header.with-agents .header-actions .model-select { margin-right: 0; }
-  .switcher-menu { position: fixed; top: max(60px, calc(env(safe-area-inset-top) + 52px)); left: var(--s4); right: var(--s4); width: auto; }
-  .switcher-menu.small { left: auto; width: 200px; }
-  .chat-bottom { padding: var(--s2) var(--s3); padding-bottom: max(var(--s3), env(safe-area-inset-bottom)); }
-  .msg.you .stack { max-width: 90%; }
-  .update-ready, .update-failed { margin: 0 var(--s3) var(--s2); }
-  .modal { padding: var(--s6) var(--s5); }
-  .scrim.center { padding: var(--s3); }
-  .sp-wrap { padding: 0 var(--s4) 48px; }
-  .sp-top { margin: 0 calc(-1 * var(--s4)); padding: var(--s3) var(--s4); }
-  .knows-inner { padding: var(--s4) var(--s4) 48px; }
-  .apps-grid { grid-template-columns: 1fr; }
-  .conn .conn-list, .conn-form, .conn-steps { margin-left: 0; }
-  .run { flex-wrap: wrap; }
-  .connect .btn { min-width: 0; width: 100%; max-width: 320px; }
-  .drawer header, .drawer .log { padding-left: var(--s4); padding-right: var(--s4); }
 }
 
 /* Settings tabs: one section at a time. */

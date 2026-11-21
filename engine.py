@@ -902,8 +902,10 @@ class Engine:
         return (
             f"{self.agent_base()}\n\n{runtime}\n\n=== You are {p['name']}, one of their agents ===\n"
             "They set you up in Ken for one job, described in CONTEXT.md below. Ken, their main assistant, "
-            "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents "
-            f"or Ken's memory: everything you know lives in your folder, {d}.\n"
+            "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents. "
+            f"What's known about them in general (who they are, how they write, their people and projects) is in Ken's "
+            f"memory, {self.home / 'memory'}: read a note there when it helps, never write there. It holds:\n"
+            f"{memory_listing(self.home / 'memory')}\nEverything of your own lives in your folder, {d}.\n"
             f"- CONTEXT.md: who you are, your goal, your rules (below). Read with every message; keep it current.\n"
             f"- memory/: your notes, one topic per file, its first line saying what it holds. Now:\n{memory_listing(d / 'memory')}\n"
             f"- jobs.json: your schedule, a JSON array like {{\"name\": \"daily-report\", \"time\": \"08:00\", \"days\": \"daily\", \"prompt\": \"...\"}} "
@@ -981,7 +983,10 @@ class Engine:
             "agent's files whenever you need the detail, and keep an eye on whether they're getting their jobs done. "
             f'To hand an agent work in the background, write {{"type": "run", "agent": "<id>", "title": "...", "prompt": "..."}} into {r}/. '
             'When they want a new agent, write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
-            '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there.',
+            '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there. '
+            "Agents read your memory but keep their own notes: in your nightly review, also skim each agent's memory/ and "
+            "file in your own memory anything about them in general (a move, a preference, a new person) that it lacks. "
+            "What's only about that agent's job stays with the agent.",
         ]
         running = self.list_runs(active=True)
         for a in self.list_agents():
