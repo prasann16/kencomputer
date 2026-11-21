@@ -2066,14 +2066,14 @@ function NewAgent({ onClose, onCreated, setup }) {
     try { onCreated(await api('/api/chats', { json: { name: name.trim(), context: job.trim(), path, backend, setup: true } })); } catch (e) { setError(e.message); setBusy(false); }
   };
   return html`<${Modal} title="New agent" onClose=${onClose}>
-    <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Grow MyReader: watch Stripe, find what stops people paying, and send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
+    <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Say it in your own words, or pick an idea below." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
     <div class="agent-ideas" role="group" aria-label="Ideas">${ideas.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
     ${more ? html`<label class="np-label">Name <span class="np-optional">optional</span><input class="np-input" value=${name} placeholder="It names itself" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
       <label class="np-label">Brain<select class="np-input" aria-label="Agent brain" value=${backend} onChange=${(e)=>setBackend(e.target.value)}>${[['claude','Claude'],['codex','Codex']].map(([id,label])=>html`<option value=${id}>${label}${setup?.providers?.[id]?.connected === false ? ' — connect in Settings' : ''}</option>`)}</select></label>
       <div class="np-label">Folder <span class="np-optional">optional</span>
       ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
-        : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
+        : html`<input class="np-input" value=${path} placeholder="~/Documents/my-project" onInput=${(e) => setPath(e.target.value)}/>`}
       <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
       : html`<button class="text-action" onClick=${() => setMore(true)}>Name, brain and folder…</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
