@@ -2056,28 +2056,20 @@ const AGENT_IDEAS = [
 ];
 
 function NewAgent({ onClose, onCreated, setup }) {
-  const [backend, setBackend] = useState(setup?.backend || 'claude');
-  const [name, setName] = useState(''), [job, setJob] = useState(''), [path, setPath] = useState(''), [more, setMore] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const backend = setup?.backend || 'claude';  // it thinks with what Ken thinks with; the chat's own menu changes it
+  const [name, setName] = useState(''), [job, setJob] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [idea, setIdea] = useState('');  // the name a starting idea filled in, replaced by the next idea but never over theirs
   const [ideas] = useState(() => [...AGENT_IDEAS].sort(() => Math.random() - 0.5).slice(0, 5));
-  const pick = async () => { const p = await window.kenDesktop.pickFolder(); if (p) { setPath(p); if (!name) setName(p.split('/').pop()); } };
   const useIdea = ([label, text]) => { setJob(text); if (!name || name === idea) { setName(label); setIdea(label); } };
   const ready = job.trim() && !busy && setup?.providers?.[backend]?.connected !== false;
   const create = async () => {
     setBusy(true); setError('');
-    try { onCreated(await api('/api/chats', { json: { name: name.trim(), context: job.trim(), path, backend, setup: true } })); } catch (e) { setError(e.message); setBusy(false); }
+    try { onCreated(await api('/api/chats', { json: { name: name.trim(), context: job.trim(), backend, setup: true } })); } catch (e) { setError(e.message); setBusy(false); }
   };
   return html`<${Modal} title="New agent" onClose=${onClose}>
     <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Say it in your own words, or pick an idea below." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
     <div class="agent-ideas" role="group" aria-label="Ideas">${ideas.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
-    ${more ? html`<label class="np-label">Name <span class="np-optional">optional</span><input class="np-input" value=${name} placeholder="It names itself" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
-      <label class="np-label">Brain<select class="np-input" aria-label="Agent brain" value=${backend} onChange=${(e)=>setBackend(e.target.value)}>${[['claude','Claude'],['codex','Codex']].map(([id,label])=>html`<option value=${id}>${label}${setup?.providers?.[id]?.connected === false ? ' — connect in Settings' : ''}</option>`)}</select></label>
-      <div class="np-label">Folder <span class="np-optional">optional</span>
-      ${window.kenDesktop?.pickFolder
-        ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
-        : html`<input class="np-input" value=${path} placeholder="~/Documents/my-project" onInput=${(e) => setPath(e.target.value)}/>`}
-      <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
-      : html`<button class="text-action" onClick=${() => setMore(true)}>Name, brain and folder…</button>`}
+    <label class="np-label">Name<input class="np-input" value=${name} placeholder="Optional" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
   <//>`;
