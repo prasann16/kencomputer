@@ -1,4 +1,4 @@
-# Voices: clone theirs, voiceovers, fix a word, change a voice, design one
+# Voices: clone theirs, voiceovers, find one, fix a word, change a voice, design one
 
 ## Clone their voice (once)
 
@@ -54,14 +54,34 @@ in chat: `voice-delete <id>` says what to ask; on their yes add `--confirmed`, s
 
     <ken> --eleven tts --voice <voice_id> --text-file videos/x/script.txt --out videos/x/vo.mp3
 
-- Voice: their clone, a voice they picked (`eleven.py voices --search calm`), or a designed one.
+- Voice: their clone, or a voice they picked (next section).
 - `--model eleven_multilingual_v2` (default): always for their cloned voice, in any language. Never `eleven_v3` on
-  a clone (it doesn't sound like them); v3 only for a stock voice. `eleven_flash_v2_5` is half price, for drafts.
+  a clone (it doesn't sound like them). Any other voice (library, stock, designed): `--model eleven_v3`, the most
+  human-sounding, and direct the delivery inside the script with tags where they fit the moment: `[softly]`,
+  `[whispers]`, `[pause]`, `[sighs]`, `[laughs]`, `[excited]`, `[warmly]` (v3 takes 5,000 characters a call).
+  `eleven_flash_v2_5` is half price, for drafts.
 - Hindi, Hinglish and names: write numbers and names how they're said ("twenty four seven", not "24/7"). Listen and
   fix before sending.
 - Costs about $0.08 per 1,000 characters (about a minute of speech).
 - Put it under the video: `ffmpeg -i video.mp4 -i vo.mp3 -map 0:v -map 1:a -c:v copy -shortest out.mp4`, or mix it
   with the original sound (`amix`) when it's a voiceover on top.
+
+## Find a voice (not theirs)
+
+A narrator or character voice: look in ElevenLabs' Voice Library first. Its voices are real people's, so they sound
+less generic than a designed one. Searching and the previews are free:
+
+    <ken> --eleven library --search "soft-spoken man, slow, intimate, storytelling" --gender male --age young --out-dir voice/picks
+
+Words in `--search` describe the sound and the delivery; `--gender` (male, female, neutral), `--age` (young,
+middle_aged, old), `--accent` (american, british, indian...), `--language` (en, hi...) and `--use-case`
+(narrative_story, social_media, conversational, characters_animation, advertisement) narrow it. Send them the 2 or 3
+previews (`picks[].preview`) with a few words on each, and add the one they pick:
+
+    <ken> --eleven library-add --owner <picks[].owner> --voice <picks[].voice> --name "Narrator"
+
+then speak it with the returned `voice_id` (on `eleven_v3`, above). Note it in memory for their next videos. Nothing
+fits after a couple of searches: design one (below).
 
 ## Fix a wrong word without reshooting
 
@@ -85,7 +105,7 @@ cleaner voice over a rough take. Not someone else's real voice.
 
 ## Design a new voice
 
-When they want a narrator or character voice that isn't anyone real:
+When the library had nothing that fits:
 
     <ken> --eleven design --describe "warm, calm Indian woman in her 30s, slow, documentary narrator" --out-dir voice/design
 

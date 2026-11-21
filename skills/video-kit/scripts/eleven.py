@@ -11,6 +11,9 @@ their key, or what it used of their Ken AI credits and what's left on Ken's); er
     eleven.py check                                      what's left (their Ken AI credits, or their plan's credits)
     eleven.py voices [--search calm]                     their voices (id, name, kind)
     eleven.py estimate <feature> [file] [--chars N]      what a run would cost, before spending anything
+    eleven.py library --search "calm warm male narrator" [--gender male] [--age middle_aged] [--accent british] --out-dir picks/
+                                                         real people's voices from ElevenLabs' Voice Library, previews saved (free)
+    eleven.py library-add --owner PUBLIC_OWNER_ID --voice VOICE_ID --name "Narrator"   use one they picked (free)
     eleven.py tts --voice ID (--text "..." | --text-file f) --out vo.mp3 [--model eleven_multilingual_v2]
     eleven.py clone --name "Swap" --sample a.mp3 [--sample b.mp3] --said "yes it's my voice" --own-voice
     eleven.py clone-from [file or folder ...] --out-dir voice/   their talking alone, found in what they already have
@@ -415,6 +418,36 @@ def cmd_voices(a):
     r = call("GET", "/v2/voices", query={"page_size": 100, "search": a.search})
     return done(voices=[{"id": v["voice_id"], "name": v.get("name"), "kind": v.get("category"),
                          "labels": v.get("labels")} for v in r.get("voices", [])])
+
+
+# The Voice Library: voices recorded by real people, shared on ElevenLabs. Searching and the preview clips are free;
+# a voice is added to the account (free) once they pick one, then spoken like any other voice. Voices with their own
+# higher price or live moderation are left out.
+def cmd_library(a):
+    q = {"page_size": max(1, min(a.n, 10)), "search": a.search, "gender": a.gender, "age": a.age, "accent": a.accent,
+         "language": a.language, "use_cases": a.use_case, "include_custom_rates": "false", "include_live_moderated": "false"}
+    r = call("GET", "/v1/shared-voices", query=q)
+    d = Path(a.out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    picks = []
+    for i, v in enumerate(r.get("voices", [])[:a.n], 1):
+        pick = {"name": v.get("name"), "owner": v.get("public_owner_id"), "voice": v.get("voice_id"),
+                "about": " · ".join(str(x) for x in (v.get("gender"), v.get("age"), v.get("accent"), v.get("use_case")) if x),
+                "description": (v.get("description") or "")[:200]}
+        if v.get("preview_url"):
+            try:
+                pick["preview"] = str(download(v["preview_url"], d / f"pick-{i}.mp3"))
+            except Exception:
+                pass
+        picks.append(pick)
+    if not picks:
+        raise Fail("No library voice matched. Try fewer words or filters, or design one (eleven.py design).")
+    return done(picks=picks)
+
+
+def cmd_library_add(a):
+    r = call("POST", f"/v1/voices/add/{a.owner}/{a.voice}", json_body={"new_name": a.name})
+    return done(voice_id=r.get("voice_id"), name=a.name)
 
 
 def cmd_estimate(a):
@@ -1065,6 +1098,12 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("voices"); s.add_argument("--search"); s.set_defaults(fn=cmd_voices)
     s = sub.add_parser("estimate"); s.add_argument("feature", choices=sorted(PRICE)); s.add_argument("file", nargs="?")
     s.add_argument("--seconds", type=float); s.add_argument("--chars", type=int); s.set_defaults(fn=cmd_estimate)
+
+    s = sub.add_parser("library"); s.add_argument("--search", required=True); s.add_argument("--gender"); s.add_argument("--age")
+    s.add_argument("--accent"); s.add_argument("--language"); s.add_argument("--use-case"); s.add_argument("--n", type=int, default=3)
+    s.add_argument("--out-dir", required=True); s.set_defaults(fn=cmd_library)
+    s = sub.add_parser("library-add"); s.add_argument("--owner", required=True); s.add_argument("--voice", required=True)
+    s.add_argument("--name", required=True); s.set_defaults(fn=cmd_library_add)
 
     s = sub.add_parser("tts"); s.add_argument("--voice", required=True); g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--text"); g.add_argument("--text-file"); s.add_argument("--out", required=True)
