@@ -243,6 +243,14 @@ async def test_web_auth_and_chats(engine, tmp_path, aiohttp_client):
     assert (await client.get("/api/chats/myreader/files/..%2Fproject.json")).status == 404
     assert (await client.get("/app.js")).status == 200
     assert (await client.get("/..%2Fbot.py")).status == 404
+    # An agent made from what it's for alone is "New agent" until it names itself; agents in the header are
+    # on only where ~/.ken/beta-agents exists.
+    r = await client.post("/api/chats", json={"name": "", "context": "Keep my admin on track"})
+    assert (await r.json())["name"] == "New agent"
+    assert (await client.post("/api/chats", json={"name": "", "context": ""})).status == 400
+    assert (await (await client.get("/api/meta")).json())["agents"] is False
+    (engine.home / "beta-agents").touch()
+    assert (await (await client.get("/api/meta")).json())["agents"] is True
 
 
 async def test_approve_starts_work_and_result_lands_in_chat(engine):

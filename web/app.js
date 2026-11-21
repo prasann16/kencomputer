@@ -168,7 +168,53 @@ const ago = (ts) => {
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
-const parseHash = () => ({ pid: (location.hash.match(/^#\/p\/([a-z0-9-]+)/) || [])[1] || null, brain: location.hash === '#/brain' });
+const parseHash = () => { const m = location.hash.match(/^#\/p\/([a-z0-9-]+)(\/brain)?$/); return { pid: m ? m[1] : null, brain: location.hash === '#/brain' || !!m?.[2] }; };
+const chatHref = (pid, brain = false) => (pid === 'home' ? '#/' : '#/p/' + pid) + (brain ? (pid === 'home' ? 'brain' : '/brain') : '');
+
+// A small menu that opens under its button and closes on a click anywhere else or Escape.
+function usePopover() {
+  const [open, setOpen] = useState(false), box = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => e.key === 'Escape' && setOpen(false);
+    const moved = () => setOpen(false);
+    addEventListener('pointerdown', away); addEventListener('keydown', key); addEventListener('hashchange', moved);
+    return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', key); removeEventListener('hashchange', moved); };
+  }, [open]);
+  return [open, setOpen, box];
+}
+
+// Ken and their agents, one click apart: the name in the header opens the list. Ken is their chief of staff; each
+// agent is a chat of its own, for one part of their life, with its own memory, tools and keys.
+function ChatSwitcher({ chats, pid, seenAt, onNew }) {
+  const [open, setOpen, box] = usePopover();
+  const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
+  const current = list.find((c) => c.id === pid) || list[0];
+  const unread = (c) => c.id !== pid && c.last_ts > (seenAt[c.id] || 0);
+  const elsewhere = list.some((c) => c.id !== pid && (unread(c) || c.busy));
+  const agents = list.length > 1;
+  const dot = (c) => html`<i class="proj-dot" style=${{ background: c.color || 'var(--ink)' }}></i>`;
+  return html`<div class="switcher" ref=${box}>
+    <button class="switcher-button" aria-haspopup="menu" aria-expanded=${open} title="Ken and your agents" onClick=${() => setOpen(!open)}>
+      ${dot(current)}<span class="switcher-name">${current.name}</span>${elsewhere && html`<i class="switcher-news" aria-label="Something new in another chat"></i>`}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+    ${open && html`<div class="switcher-menu" role="menu">
+      ${list.map((c) => html`<a role="menuitem" class=${'switcher-row' + (c.id === pid ? ' sel' : '')} href=${chatHref(c.id)} onClick=${() => setOpen(false)}>
+        ${dot(c)}<span class="switcher-text"><span class="switcher-top"><b>${c.name}</b>${c.id === 'home' && agents && html`<em>chief of staff</em>`}<small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
+        <span class="switcher-last">${c.last ? firstLine(c.last) : c.id === 'home' ? 'Your main chat' : 'Not used yet'}</span></span>${unread(c) && html`<i class="switcher-unread" aria-label="Unread"></i>`}</a>`)}
+      ${!agents && html`<p class="switcher-hint">Give one part of your life its own agent: a business, your brand, your admin. Each has its own chat, memory and tools, works on it every day, and Ken keeps an eye on all of them.</p>`}
+      <button role="menuitem" class="switcher-row switcher-add" onClick=${() => { setOpen(false); onNew(); }}><span class="switcher-plus" aria-hidden="true">+</span><b>New agent</b></button>
+    </div>`}</div>`;
+}
+
+// ⋯ next to an agent's name in the browser (the Mac app shows its own menu).
+function AgentMore({ onPick }) {
+  const [open, setOpen, box] = usePopover();
+  const pick = (id) => { setOpen(false); onPick(id); };
+  return html`<div class="switcher" ref=${box}><button class="proj-more" aria-label="Agent options" title="Agent options" aria-haspopup="menu" aria-expanded=${open} onClick=${() => setOpen(!open)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+    ${open && html`<div class="switcher-menu small" role="menu"><button role="menuitem" class="switcher-row" onClick=${() => pick('rename')}>Rename…</button><button role="menuitem" class="switcher-row danger" onClick=${() => pick('remove')}>Remove from Ken…</button></div>`}</div>`;
+}
 
 // Just enough markdown for chat: code blocks, tables, `code`, **bold**, links, • bullets. Never raw HTML.
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
@@ -178,7 +224,7 @@ const PATH_RE = /((?:~|\/)[^\s<>()`'"*]*\/[^\s<>()`'"*]*\.[A-Za-z0-9]{1,5})(?![\
 const isPath = (s) => /^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) && !/^\/\//.test(s);
 let notify = () => {}, showDoc = () => {};
 // Ken on a computer in the cloud, used in the browser (from /api/meta): no Mac features, and its own browser if the plan has one.
-let HOSTED = false, HOSTED_BROWSER = false;
+let HOSTED = false, HOSTED_BROWSER = false, AGENTS_UI = false;
 // Ken in the cloud: its computer sleeps after 5 quiet minutes, and awake time counts against the plan. A tab nobody
 // has touched for this long (no typing, clicking, scrolling) stops talking to it, even while it's on screen.
 const IDLE_MS = 5 * 60000;
@@ -912,7 +958,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
-      <${Safe} where="message box"><${Composer} placeholder="Tell Ken what you need…" draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
+      <${Safe} where="message box"><${Composer} placeholder=${pid === 'home' || !AGENTS_UI ? 'Tell Ken what you need…' : `Message ${projects.find((p) => p.id === pid)?.name || 'this agent'}…`} draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
         onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list, onProgress) => upload(pid, list, true, onProgress)} onStop=${stop}
         onSend=${async (text, files) => { sent(); await onSend(text, files); }} onTalk=${onTalk}/><//>
     </div>
@@ -1115,10 +1161,12 @@ function PhoneButton({ linked, onOpen }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="phone-body" x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path class="phone-ear" d="M10.5 5.75h3"/><circle class="phone-dot" cx="12" cy="18" r=".6"/></svg></button>`;
 }
 
-function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone }) {
-  return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
-      ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
+function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone, chats = [], pid = 'home', seenAt = {}, onNewAgent, agentsUI }) {
+  return html`<header class=${'chat-header' + (agentsUI ? ' with-agents' : '')}><img class="ken-mark" src="/ken.svg" alt="Ken"/>${agentsUI
+      ? html`<${ChatSwitcher} chats=${chats} pid=${pid} seenAt=${seenAt} onNew=${onNewAgent}/>${title && onProjectMenu && html`<${AgentMore} onPick=${onProjectMenu}/>`}<nav class="top-tabs" aria-label=${title ? title.name : 'Ken'}><a class=${'tab' + (!brain ? ' sel' : '')} href=${chatHref(pid)}>Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href=${chatHref(pid, true)}>Brain</a></nav>`
+      : html`<nav class="top-tabs" aria-label="Ken">${title
+      ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && window.kenDesktop?.popupMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
+      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>`}${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // Connect Claude or ChatGPT with their own subscription: the same screen in the Mac app and in the browser.
@@ -1920,7 +1968,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ ...edit, reading: false })}>Edit</button></div>
     <div class="about-context">${edit.text.trim() ? doc(edit.text) : 'Empty note.'}</div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`);
-  if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : 'Context') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
+  if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : AGENTS_UI ? 'Goal and rules' : 'Context') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
     ${edit.isNew && html`<input class="np-input" placeholder="Note name, like people" value=${edit.name} onInput=${(e) => setEdit({ ...edit, name: e.target.value })}/>`}
     <textarea class="np-input about-editor" value=${edit.text} onInput=${(e) => setEdit({ ...edit, text: e.target.value })}></textarea>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
@@ -1939,7 +1987,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   const off = conn ? a.builtin.filter((t) => !connected[t]).map((t) => TOOL_NAMES[t]) : [];
   const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const parts = [
-    { key: 'soul', title: pid === 'home' ? 'Who Ken is' : 'Context', summary: firstLine, body: html`
+    { key: 'soul', title: pid === 'home' ? 'Who Ken is' : AGENTS_UI ? 'Goal and rules' : 'Context', summary: firstLine, body: html`
         <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ kind: 'context', text: a.context })}>Edit</button></div>
         <div class="about-context">${a.context.trim() ? doc(a.context) : 'Nothing yet.'}</div>` },
     { key: 'memory', title: pid === 'home' ? 'What Ken remembers' : 'Memory', summary: a.memory.length ? count(a.memory.length, 'note') : 'Nothing yet', body: html`
@@ -1956,7 +2004,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
     ${open ? html`<div class="brain-section">${back(() => { setSection(null); load(); }, 'Brain')}<h2>${open.title}</h2>${open.body}</div>`
-      : html`${page && html`<h1>Brain</h1><p class="brain-intro">Everything Ken knows and does on its own. Ken keeps this up to date as you talk; you can change anything here.</p>`}
+      : html`${page && html`<h1>${pid === 'home' ? 'Brain' : a.name}</h1><p class="brain-intro">${pid === 'home' ? 'Everything Ken knows and does on its own. Ken keeps this up to date as you talk; you can change anything here.' : `Everything this agent knows and does on its own, separate from Ken and your other agents. It keeps this up to date as you talk; you can change anything here.`}</p>`}
         <div class="brain-cards">${parts.map((p) => html`<button class="brain-card" onClick=${() => setSection(p.key)}><b>${p.title}</b><span>${p.summary}</span><i aria-hidden="true">Open ›</i></button>`)}</div>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     ${!page && html`<div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Done</button></div>`}`);
@@ -1973,26 +2021,37 @@ function RemoveProject({ project, onClose, onDone }) {
   <//>`;
 }
 
+const AGENT_IDEAS = [
+  ['Marketing', 'Run my marketing: grow signups from X and Instagram, draft posts in my voice, and ask me before posting anything.'],
+  ['My business', 'Help me grow my business: watch sales and signups, find what holds them back, and send me a short report every morning.'],
+  ['Personal brand', 'Grow my personal brand: draft one post a day in my voice and learn what does well.'],
+  ['Life admin', 'Keep my life admin on track: bills, renewals, appointments and forms. Remind me before anything is due.'],
+  ['Dating', 'Help with my dating: improve my profile and openers. Never message anyone yourself.'],
+];
+
 function NewAgent({ onClose, onCreated, setup }) {
   const [backend, setBackend] = useState(setup?.backend || 'claude');
   const [name, setName] = useState(''), [job, setJob] = useState(''), [path, setPath] = useState(''), [more, setMore] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [idea, setIdea] = useState('');  // the name a starting idea filled in, replaced by the next idea but never over theirs
   const pick = async () => { const p = await window.kenDesktop.pickFolder(); if (p) { setPath(p); if (!name) setName(p.split('/').pop()); } };
-  const ready = name.trim() && job.trim() && !busy && setup?.providers?.[backend]?.connected;
+  const useIdea = ([label, text]) => { setJob(text); if (!name || name === idea) { setName(label); setIdea(label); } };
+  const ready = job.trim() && !busy && setup?.providers?.[backend]?.connected !== false;
   const create = async () => {
     setBusy(true); setError('');
     try { onCreated(await api('/api/chats', { json: { name: name.trim(), context: job.trim(), path, backend, setup: true } })); } catch (e) { setError(e.message); setBusy(false); }
   };
   return html`<${Modal} title="New agent" onClose=${onClose}>
-    <p class="np-help">An agent does one job for you, with its own chat, memory, schedule and tools. Tell it what you want; it sets itself up.</p>
-    <label class="np-label">Brain<select class="np-input" aria-label="Agent brain" value=${backend} onChange=${(e)=>setBackend(e.target.value)}>${[['claude','Claude'],['codex','Codex']].map(([id,label])=>html`<option value=${id}>${label}${setup?.providers?.[id]?.connected ? '' : ' — connect in Settings'}</option>`)}</select></label>
-    <label class="np-label">Name<input class="np-input" autofocus value=${name} placeholder="Myreader" onInput=${(e) => setName(e.target.value)}/></label>
-    <label class="np-label">What should it do?<textarea class="np-input" rows="4" value=${job} placeholder="Run Myreader for me: fix bugs, watch Stripe, send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
-    ${more || path ? html`<div class="np-label">Folder <span class="np-optional">optional</span>
+    <p class="np-help">An agent works on one part of your life in its own chat, with its own memory and tools. Ken keeps an eye on all of them.</p>
+    <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Grow MyReader: watch Stripe, find what stops people paying, and send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
+    <div class="agent-ideas" role="group" aria-label="Ideas">${AGENT_IDEAS.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
+    ${more ? html`<label class="np-label">Name <span class="np-optional">optional</span><input class="np-input" value=${name} placeholder="It names itself" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
+      <label class="np-label">Brain<select class="np-input" aria-label="Agent brain" value=${backend} onChange=${(e)=>setBackend(e.target.value)}>${[['claude','Claude'],['codex','Codex']].map(([id,label])=>html`<option value=${id}>${label}${setup?.providers?.[id]?.connected === false ? ' — connect in Settings' : ''}</option>`)}</select></label>
+      <div class="np-label">Folder <span class="np-optional">optional</span>
       ${window.kenDesktop?.pickFolder
         ? html`<div class="np-folder"><span title=${path}>${path ? path.replace(/^\/Users\/[^/]+/, '~').split('/').slice(-2).join('/') : 'Ken makes one for it'}</span><button class="text-action" onClick=${pick}>${path ? 'Change' : 'Choose folder…'}</button></div>`
         : html`<input class="np-input" value=${path} placeholder="~/code/myreader" onInput=${(e) => setPath(e.target.value)}/>`}
       <small class="np-note">Where its code or info is. It still lives in its own folder under Ken and goes here for the job.</small></div>`
-      : html`<button class="text-action" onClick=${() => setMore(true)}>Point it to a code or info folder…</button>`}
+      : html`<button class="text-action" onClick=${() => setMore(true)}>Name, brain and folder…</button>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
   <//>`;
@@ -2055,10 +2114,10 @@ function App() {
   const loadProjectMeta=(id)=>{ if(id==='home'){setProjectMeta(null);return;} api(`/api/agents/${id}`).then((v)=>setProjectMeta(v.agent)).catch(()=>setProjectMeta(null)); };
   const refreshChats=()=>api('/api/chats').then(setChats).catch(()=>{});
   // ⋯ and right-click on a project: a native menu in the Mac app.
-  const projectMenu=async(e,id)=>{
-    const native=window.kenDesktop; if(!native?.popupMenu)return;
+  const projectMenu=async(picked,id)=>{
+    const native=window.kenDesktop;
     const project=chats.find((c)=>c.id===id); if(!project)return;
-    const choice=await native.popupMenu([...[{id:'open',label:'Open in Finder'}],{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},...[{id:'folder',label:'Code or info folder…'}],{separator:true},{id:'remove',label:'Remove from Ken…'}]);
+    const choice=typeof picked==='string' ? picked : await native.popupMenu([...[{id:'open',label:'Open in Finder'}],{id:'keys',label:'About, keys and tools…'},{id:'rename',label:'Rename…'},...[{id:'folder',label:'Code or info folder…'}],{separator:true},{id:'remove',label:'Remove from Ken…'}]);
     if(choice==='open'){ const v=await api(`/api/agents/${id}`); native.openFolder(v.agent.workdir); }
     if(choice==='keys')setProjectDialog({kind:'keys',project});
     if(choice==='rename')setProjectDialog({kind:'rename',project});
@@ -2160,7 +2219,7 @@ function App() {
     if(extras){api('/api/today').then(setToday).catch(() => {});api('/api/library').then(setLibrary).catch(() => {});}
   }, []);
   const loadMeta = () => api('/api/meta').then((m) => {
-    HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; setMeta(m);
+    HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; AGENTS_UI = !!m.agents; setMeta(m);
     if (HOSTED) document.documentElement.dataset.hosted = '';  // Ken in the cloud (the look is the same everywhere: theme.css)
     if (HOSTED && !window.kenDesktop) checkTalk();
     // In the cloud Ken's clock starts on UTC: use this browser's time zone until they say otherwise.
@@ -2372,9 +2431,9 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' && window.kenDesktop?.popupMenu ? (e)=>projectMenu(e,pid) : null} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class="shell"><main class="main">${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(window.kenDesktop?.popupMenu ? null : picked,pid) : null} chats=${chats} pid=${pid} seenAt=${seenAt} onNewAgent=${()=>setNewProject(true)} agentsUI=${!!meta.agents} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
-    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} page pid="home" onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
+    <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} key=${pid} page pid=${pid} onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>
   </main>
     ${docFile && html`<${Safe} where="DocViewer"><${DocViewer} file=${docFile} onClose=${() => setDocFile(null)}/><//>`}
     ${runId && html`<${Safe} where="RunDrawer"><${RunDrawer} rid=${runId} projects=${projects} tick=${tick} onClose=${() => setRunId(null)} toast=${toast}/><//>`}

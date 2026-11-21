@@ -327,7 +327,9 @@ class WebApp:
                       "hosted": hosted_web(), "usage": plan_usage(request),
                       "browser": hosted_web() and os.environ.get("KEN_BROWSER") == "1",
                       "timezone": os.environ.get("TZ", ""), "account_url": os.environ.get("KEN_ACCOUNT_URL", ""),
-                      "logout_url": logout_url(), "off": self.engine.is_off()})
+                      "logout_url": logout_url(), "off": self.engine.is_off(),
+                      # Agents in the header: on only where ~/.ken/beta-agents exists, while it's tried out
+                      "agents": (self.engine.home / "beta-agents").exists()})
 
     async def power(self, request):
         """The off switch: {on: false} stops everything Ken is doing now and keeps it off; {on: true} turns it back on."""
