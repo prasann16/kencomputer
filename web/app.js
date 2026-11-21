@@ -620,7 +620,17 @@ function ApprovalCard({ a, project, toast }) {
 const elapsed = (run) => { const a = ago(run.started || run.created); return a === 'now' ? '<1m' : a; };
 const stopRun = async (id, toast) => { try { await api(`/api/runs/${id}/stop`, { json: {} }); toast('Stopping…'); } catch (e) { toast(e.message); } };
 
+// A background job in the chat, where it was started. It stays there after it ends, saying how it ended; Open shows
+// what it did. Only a running one has Stop.
+const RUN_ENDED = { done: '✓ Done', stopped: '■ Stopped', failed: '✕ Didn’t finish' };
 function RunCard({ run, project, openRun, toast, showProject = true }) {
+  if (RUN_ENDED[run.status]) return html`<div class="card run ended">
+    <div class="run-text">
+      <div class="title ellipsis">${run.title}</div>
+      <div class="run-step ellipsis">${showProject && project ? project.name + ' · ' : ''}${RUN_ENDED[run.status]} · ${ago(run.finished || run.created)}</div>
+    </div>
+    <div class="run-actions"><button class="text-action" onClick=${() => openRun(run.id)}>Open</button></div>
+  </div>`;
   const step = run.status === 'queued' ? 'Waiting for a free slot' : run.activity || 'Working';
   return html`<div class="card run">
     <span class="run-dot" aria-hidden="true"></span>
@@ -828,10 +838,11 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
   const approvals = data ? data.approvals.filter((a) => a.project === pid) : [];
   const runs = data ? data.running.filter((r) => r.project === pid) : [];
+  const ended = data ? (data.done || []).filter((r) => r.project === pid && r.created > clearedAt && !runs.some((x) => x.id === r.id)) : [];
   const timeline = [
     ...messages.map((m, i) => ({ t: m.ts, key: 'm' + (m.client_id || m.id), mine: m.role === 'you', el: html`<${Message} m=${m} label=${m.job && messages[i - 1]?.job?.at !== m.job.at}/>${m.note && m.action === 'credits' && html`<${CreditChoices} onConnect=${onConnect} usage=${usage}/>`}${m.delivery === 'failed' && !m.audio && html`<div class="delivery" role="status">Couldn’t send. <button class="text-action" onClick=${() => onSend(m.text, m.files, m.client_id).catch((e) => toast(e.message))}>Retry</button></div>`}` })),
     ...approvals.map((a) => ({ t: a.created, key: 'a' + a.id, el: html`<${ApprovalCard} a=${a} project=${byId[a.project]} toast=${toast}/>` })),
-    ...runs.map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast} showProject=${r.project !== 'home'}/>` })),
+    ...[...runs, ...ended].map((r) => ({ t: r.created, key: 'r' + r.id, el: html`<${RunCard} run=${r} project=${byId[r.project]} openRun=${openRun} toast=${toast} showProject=${r.project !== 'home'}/>` })),
     ...files.filter((f) => f.mtime > clearedAt && !ATTACHED.has(f.name) && !messages.some((m) => (m.files || []).includes(f.name))).map((f) => ({ t: f.mtime, key: 'f' + f.name, el: html`<button class="chat-file" onClick=${() => onPreview(f)}>${Icon.file}<span><b>${f.name}</b><small>${bytes(f.size)} · Open preview</small></span><span class="file-arrow">↗</span></button>` })),
   ].sort((a, b) => a.t - b.t);
   // One continuous conversation, never a blank page. Opening a chat lands on the first unread

@@ -2323,10 +2323,15 @@ class Engine:
                 except Exception:
                     pass
             row = self._run_row(rid)
+            restarted = status == "stopped" and row["status"] != "stopped" and self.stopping  # Ken shut down under it, not them
             if row["status"] == "stopped":
                 status = "stopped"
             self._set_run(rid, status=status, finished=row["finished"] if status == "stopped" and row["finished"] else time.time(),
                           summary=summary[:4000], activity="")
+            if restarted:  # say so where they asked, as a stop by them would: a job never just vanishes
+                title = self._CARRIED.sub("", run["title"])
+                self.log_message(pid, "ken", f'■ Ken restarted, which stopped the background job "{title}". Ask me to carry on and I\'ll pick up from there.',
+                                 **({"via": "background"} if pid == HOME else {"run": rid, "run_title": run["title"], "run_status": "stopped"}))
             origin = self.origins.pop(rid, None)
             carried = status != "stopped" and out_of_time and self._carry_on(run, last, origin)
             # A run that carries on isn't a failure to them: screens and the phone don't show it as one.
@@ -2630,7 +2635,8 @@ class Engine:
             "agents": projects,
             "approvals": approvals,
             "running": running,
-            "done": self.list_runs(active=False, since=time.time() - 86400, limit=12),
+            # Finished jobs stay in their chat as a card (done, stopped or didn't finish), so a job never just disappears.
+            "done": [{k: v for k, v in r.items() if k != "prompt"} for r in self.list_runs(active=False, since=time.time() - 30 * 86400, limit=50)],
             "home": self.messages(HOME, 30),
             "home_busy": self.chat_busy(HOME),
         }
