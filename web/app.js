@@ -204,11 +204,11 @@ function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport }) {
 function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connected, onClear, clearing, onPick }) {
   const [open, setOpen, box] = usePopover();
   const pick = (id) => { setOpen(false); onPick(id); };
-  return html`<div class="pop" ref=${box}><button class="proj-more" aria-label="Chat options" title="Chat options" aria-haspopup="menu" aria-expanded=${open} onClick=${() => setOpen(!open)}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+  return html`<div class=${'pop' + (onPick ? '' : ' narrow-only')} ref=${box}><button class="proj-more" aria-label="Chat options" title="Chat options" aria-haspopup="menu" aria-expanded=${open} onClick=${() => setOpen(!open)}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
     ${open && html`<div class="pop-menu" role="menu">
-      ${model && !model.credits && html`<div class="pop-model"><${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/></div>`}
-      <a role="menuitem" class="pop-row" href=${chatHref(pid, !brain)} onClick=${() => setOpen(false)}>${brain ? 'Chat' : 'Brain'}</a>
-      ${connected && !brain && html`<button role="menuitem" class="pop-row" disabled=${clearing} onClick=${() => { setOpen(false); onClear(); }}>Clear chat</button>`}
+      ${model && !model.credits && html`<div class="pop-model narrow-only"><${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/></div>`}
+      <a role="menuitem" class="pop-row narrow-only" href=${chatHref(pid, !brain)} onClick=${() => setOpen(false)}>${brain ? 'Chat' : 'Brain'}</a>
+      ${connected && !brain && html`<button role="menuitem" class="pop-row narrow-only" disabled=${clearing} onClick=${() => { setOpen(false); onClear(); }}>Clear chat</button>`}
       ${onPick && html`${window.kenDesktop?.openFolder && html`<button role="menuitem" class="pop-row" onClick=${() => pick('open')}>Open in Finder</button>`}
         <button role="menuitem" class="pop-row" onClick=${() => pick('rename')}>Rename…</button>
         <button role="menuitem" class="pop-row danger" onClick=${() => pick('remove')}>Remove…</button>`}
@@ -1162,10 +1162,12 @@ function PhoneButton({ linked, onOpen }) {
 
 function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone, pid = 'home', agentsUI }) {
   if (agentsUI) return html`<header class="chat-top">
-    <a class=${'chat-back' + (brain ? ' always' : '')} href=${brain ? chatHref(pid) : '#/chats'} aria-label=${brain ? 'Back to the chat' : 'All chats'}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></a>
-    <a class="chat-title" href=${chatHref(pid, !brain)} title=${brain ? 'Back to the chat' : 'Open its Brain'}><i class="chat-dot" style=${{ background: title?.color || 'var(--ink)' }}></i><b>${title ? title.name : 'Ken'}</b>${brain && html`<small>Brain</small>`}</a>
+    <a class="chat-back" href=${brain ? chatHref(pid) : '#/chats'} aria-label=${brain ? 'Back to the chat' : 'All chats'}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></a>
+    <a class="chat-title" href=${chatHref(pid, !brain)} title=${brain ? 'Back to the chat' : 'Open its Brain'}><i class="chat-dot" style=${{ background: title?.color || 'var(--ink)' }}></i><b>${title ? title.name : 'Ken'}</b>${brain && html`<small class="narrow-only">Brain</small>`}</a>
+    <nav class="top-tabs wide-only" aria-label=${title ? title.name : 'Ken'}><a class=${'tab' + (!brain ? ' sel' : '')} href=${chatHref(pid)}>Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href=${chatHref(pid, true)}>Brain</a></nav>
     ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}
     <div class="chat-tools">${!brain && !title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}
+      ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</span>`}
       <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/></div>
   </header>`;
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title

@@ -34,13 +34,15 @@
 .chat-top { position: relative; z-index: 10; display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; height: 68px; padding: 0 var(--s4) 0 var(--s5); -webkit-app-region: drag; }
 .chat-top > * { -webkit-app-region: no-drag; }
 .chat-back { display: none; place-items: center; width: 36px; height: 36px; margin-left: -10px; border-radius: var(--r-pill); color: var(--muted); }
-.chat-back.always { display: grid; }
 .chat-back:hover { background: var(--hover); color: var(--ink); }
 .chat-title { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; height: 38px; padding: 0 var(--s3); margin-left: calc(-1 * var(--s3)); border-radius: var(--r-pill); color: var(--ink); text-decoration: none; }
 .chat-title:hover { background: var(--hover); }
 .chat-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .chat-title small { color: var(--faint); font-size: var(--text-sm); }
 .chat-tools { display: flex; align-items: center; gap: var(--s1); flex-shrink: 0; margin-left: auto; }
+.chat-top .top-tabs { margin-left: var(--s2); }
+.chat-tools .chat-tools { margin: 0; }
+@media (min-width: 761px) { .narrow-only { display: none !important; } }
 .pop { position: relative; }
 .pop-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 220px; padding: 6px; border-radius: var(--r-lg); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line), var(--float); }
 .pop-row { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-md); background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
@@ -49,6 +51,7 @@
 .pop-model { padding: 0 0 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
 .pop-model .model-select { width: 100%; max-width: none; }
 @media (max-width: 760px) {
+  .wide-only { display: none !important; }
   .shell.with-chats .chat-list { width: 100%; }
   .shell.with-chats:not(.on-list) .chat-list, .shell.with-chats.on-list .main { display: none; }
   .chat-back { display: grid; }
@@ -340,6 +343,7 @@
 .knows-page { flex: 1; min-height: 0; overflow-y: auto; }
 .knows-inner { max-width: calc(var(--page) + 2 * var(--s6)); margin: 0 auto; padding: var(--s8) var(--s6) 64px; }
 .knows-inner h1 { margin: 0 0 var(--s2); font: 500 var(--text-2xl)/1.15 var(--sans); letter-spacing: -.03em; }
+.knows-inner h1 + .brain-cards { margin-top: var(--s6); }
 .brain-intro { margin: 0 0 var(--s7); color: var(--muted); font-size: var(--text-body); }
 .brain-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--s3); }
 .brain-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 132px; padding: var(--s5) 22px; border: 0; border-radius: var(--r-card);
