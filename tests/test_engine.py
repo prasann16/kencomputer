@@ -389,6 +389,8 @@ async def test_ken_creates_an_agent_that_sets_itself_up(engine):
         if engine.brain.asks:
             break
     assert engine.get_agent("brand")
+    made = engine.messages(HOME)[-1]  # where they asked: a line that opens the new agent
+    assert made["agent_made"] == "brand" and "Brand" in made["text"]
     ask = engine.brain.asks[0]
     assert "You were just created" in ask["prompt"] and "Grow my X following." in ask["system"]
 

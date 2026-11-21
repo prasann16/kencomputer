@@ -1951,7 +1951,8 @@ class Engine:
         """A new agent's first turn: it reads what it's for and sets itself up, in its own chat."""
         await self.send_message(pid, "", log_user=False, prompt=(
             "(You were just created; CONTEXT.md holds what they asked for. Set yourself up now: rewrite CONTEXT.md "
-            "into a clear brief of your job, goal and rules. If the job has a rhythm, put jobs in jobs.json. Write "
+            "into a clear brief of your job, goal and rules. If the job has a rhythm, propose the schedule in your message "
+            "and put it in jobs.json only once they say yes. Write "
             "tools.json with only the built-in tools you need, plus any MCP server that would help. If you're still called "
             f'"New agent", give yourself a short name (one to three words) as "name" in {self._adir(pid) / "agent.json"}. Then tell them in '
             "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
@@ -2144,6 +2145,8 @@ class Engine:
             return
         if kind in ("agent", "project"):  # "project": what agents were called before
             a = self.create_agent(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
+            # Where they asked for it, a line that opens it: an agent Ken made is one tap away, not a hunt in the list.
+            self.log_message(HOME, "ken", f'{a["name"]} now has its own chat.', agent_made=a["id"])
             self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))
             return
         if kind == "stop":
