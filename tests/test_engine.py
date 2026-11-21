@@ -358,8 +358,11 @@ def test_agent_sees_only_its_folder_and_ken_sees_every_agent(engine):
     engine.create_agent("Reader", context="Grow MyReader revenue.")
     engine.create_agent("Brand", context="Grow my X following.")
     (engine.agents_dir / "brand/jobs.json").write_text('[{"name": "daily-post", "time": "09:00"}]')
+    (engine.home / "memory").mkdir(exist_ok=True)
+    (engine.home / "memory" / "voice.md").write_text("How they write\n")
     mine = engine.system("reader")
     assert "Grow MyReader revenue." in mine and "KEN AT WORK" in mine
+    assert "voice.md — How they write" in mine and "never write there" in mine  # Ken's memory: read, never written
     assert "Brand" not in mine and "X following" not in mine and "KEN SOUL" not in mine
     brief = engine.chief_brief()
     assert "Reader (reader): Grow MyReader revenue." in brief and "jobs: daily-post" in brief
