@@ -685,7 +685,7 @@ class Engine:
     def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "", backend=None) -> dict:
         if backend is not None and (not isinstance(backend, str) or backend not in self.brains):
             raise ValueError("Choose Claude or Codex.")
-        name = name.strip()[:60]
+        name = name.strip()[:60] or ("New agent" if context.strip() else "")  # it names itself as it sets up
         if not name:
             raise ValueError("an agent needs a name")
         path = path.strip()
@@ -914,7 +914,7 @@ class Engine:
             "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "
             f"from the next message). Now: {', '.join(tools['use']) or 'no built-ins'}; extra servers: {extra}.\n"
             f"- files/: what they drop into this chat.\n"
-            f"- Keys: {self._keys_line(pid)} They add keys in this agent's Keys (the ⋯ menu next to its name). When you "
+            f"- Keys: {self._keys_line(pid)} They add keys on this agent's Brain page, under Accounts & passwords. When you "
             "need a login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole "
             "file like a service-account JSON. Never ask for a secret in this chat, never print one, never copy one "
             "anywhere else.\n"
@@ -1947,9 +1947,10 @@ class Engine:
         await self.send_message(pid, "", log_user=False, prompt=(
             "(You were just created; CONTEXT.md holds what they asked for. Set yourself up now: rewrite CONTEXT.md "
             "into a clear brief of your job, goal and rules. If the job has a rhythm, put jobs in jobs.json. Write "
-            "tools.json with only the built-in tools you need, plus any MCP server that would help. Then tell them in "
+            "tools.json with only the built-in tools you need, plus any MCP server that would help. If you're still called "
+            f'"New agent", give yourself a short name (one to three words) as "name" in {self._adir(pid) / "agent.json"}. Then tell them in '
             "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
-            "key, a link), one thing at a time. Keys go in this agent's Keys (the ⋯ menu next to its name), never in this chat.)"
+            "key, a link), one thing at a time. Keys go on this agent's Brain page, under Accounts & passwords, never in this chat.)"
         ))
 
     async def files_dropped(self, pid: str, names: list[str]) -> None:
