@@ -2019,18 +2019,45 @@ function RemoveProject({ project, onClose, onDone }) {
   <//>`;
 }
 
+// Ideas for a new agent: five at random each time, so the box shows what's possible without a wall of choices.
 const AGENT_IDEAS = [
-  ['Marketing', 'Run my marketing: grow signups from X and Instagram, draft posts in my voice, and ask me before posting anything.'],
-  ['My business', 'Help me grow my business: watch sales and signups, find what holds them back, and send me a short report every morning.'],
-  ['Personal brand', 'Grow my personal brand: draft one post a day in my voice and learn what does well.'],
-  ['Life admin', 'Keep my life admin on track: bills, renewals, appointments and forms. Remind me before anything is due.'],
-  ['Dating', 'Help with my dating: improve my profile and openers. Never message anyone yourself.'],
+  ["Marketing", "Run my marketing: grow signups from X and Instagram, draft posts in my voice, and ask me before posting anything."],
+  ["My business", "Help me grow my business: watch sales and signups, find what holds them back, and send me a short report every morning."],
+  ["Personal brand", "Grow my personal brand: draft one post a day in my voice and learn what does well."],
+  ["Life admin", "Keep my life admin on track: bills, renewals, appointments and forms. Remind me before anything is due."],
+  ["Dating", "Help with my dating: improve my profile and openers. Never message anyone yourself."],
+  ["Sales", "Follow up my sales leads: keep a list of who I'm talking to, draft the next message for each, and remind me who's gone quiet."],
+  ["Research", "Be my researcher: when I give you a topic, dig into it and send me a short brief with sources."],
+  ["Inbox", "Keep my inbox under control: every morning tell me what needs a reply, and draft the replies for me to approve."],
+  ["Job hunt", "Help me find a job: look for roles that fit me every day, tailor my CV and cover letter, and track where I've applied."],
+  ["Fitness", "Be my fitness coach: plan my week's workouts, check in each day, and adjust when I miss one."],
+  ["Meals", "Plan my meals: a week of dinners I'd like, with one shopping list every Sunday."],
+  ["Money", "Keep an eye on my money: track what I spend each month, flag subscriptions I don't use, and tell me where I can save."],
+  ["Travel", "Plan my trips: find flights and places to stay, build a day-by-day plan, and keep my bookings in one place."],
+  ["Newsletter", "Write my newsletter: draft one issue a week from what I've been working on, in my voice, for me to edit."],
+  ["YouTube", "Grow my YouTube channel: find video ideas that are working in my niche, write titles and outlines, and review what did well."],
+  ["Reels", "Make my reels: turn my talking videos into short clips with captions, and draft the post text."],
+  ["Customers", "Look after my customers: read new support messages, draft replies, and tell me about problems that keep coming up."],
+  ["Competitors", "Watch my competitors: check what they launch, post and charge each week, and tell me what matters."],
+  ["Learning", "Teach me something: build a plan for the skill I pick, give me one short lesson a day, and quiz me on Fridays."],
+  ["Language", "Help me learn a language: ten minutes of practice a day, at my level, and correct my mistakes."],
+  ["Reading", "Be my reading partner: suggest books I'd like, keep my reading list, and send me the key ideas of what I finish."],
+  ["News", "Send me a morning briefing: the few stories in my field worth knowing today, each in two lines."],
+  ["Home", "Run my home: a list of repairs and chores, who to call for each, and reminders when things are due."],
+  ["Family", "Keep my family organised: school dates, birthdays, appointments and who's picking up whom."],
+  ["Side project", "Help me ship my side project: break it into small steps, give me one to do each day, and keep me honest."],
+  ["Writing", "Be my editor: help me write a little every day, keep my drafts, and tell me plainly what to fix."],
+  ["Networking", "Keep me in touch with people: remember who I've met, remind me to follow up, and draft the message."],
+  ["Investing", "Follow my investments: track what I hold, send a weekly summary, and flag news about them. Never trade for me."],
+  ["Events", "Plan my event: guest list, venue, timeline and reminders, and draft the invites."],
+  ["Health", "Keep my health on track: appointments, medication reminders and a simple log of how I'm feeling."],
 ];
 
 function NewAgent({ onClose, onCreated, setup }) {
   const [backend, setBackend] = useState(setup?.backend || 'claude');
   const [name, setName] = useState(''), [job, setJob] = useState(''), [path, setPath] = useState(''), [more, setMore] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [idea, setIdea] = useState('');  // the name a starting idea filled in, replaced by the next idea but never over theirs
+  const [ideas] = useState(() => [...AGENT_IDEAS].sort(() => Math.random() - 0.5).slice(0, 5));
   const pick = async () => { const p = await window.kenDesktop.pickFolder(); if (p) { setPath(p); if (!name) setName(p.split('/').pop()); } };
   const useIdea = ([label, text]) => { setJob(text); if (!name || name === idea) { setName(label); setIdea(label); } };
   const ready = job.trim() && !busy && setup?.providers?.[backend]?.connected !== false;
@@ -2040,7 +2067,7 @@ function NewAgent({ onClose, onCreated, setup }) {
   };
   return html`<${Modal} title="New agent" onClose=${onClose}>
     <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Grow MyReader: watch Stripe, find what stops people paying, and send me a money report every morning." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
-    <div class="agent-ideas" role="group" aria-label="Ideas">${AGENT_IDEAS.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
+    <div class="agent-ideas" role="group" aria-label="Ideas">${ideas.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
     ${more ? html`<label class="np-label">Name <span class="np-optional">optional</span><input class="np-input" value=${name} placeholder="It names itself" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
       <label class="np-label">Brain<select class="np-input" aria-label="Agent brain" value=${backend} onChange=${(e)=>setBackend(e.target.value)}>${[['claude','Claude'],['codex','Codex']].map(([id,label])=>html`<option value=${id}>${label}${setup?.providers?.[id]?.connected === false ? ' — connect in Settings' : ''}</option>`)}</select></label>
       <div class="np-label">Folder <span class="np-optional">optional</span>
