@@ -109,6 +109,7 @@
 .txt { min-width: 0; max-width: 100%; font-size: var(--text-body); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .txt b { font-weight: 600; }
 .msg.err .txt { color: var(--danger); }
+.agent-open { display: inline-block; margin-top: var(--s1); }
 .from-run { margin-bottom: var(--s2); font: 500 var(--text-sm)/1.5 var(--sans); color: var(--muted); }
 /* Theirs: a dark bubble on the right, like the website's chats. */
 .msg.you { justify-content: flex-end; }

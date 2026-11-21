@@ -580,7 +580,7 @@ function Message({ m, label }) {
     ${label && html`<div class="job-label">${m.job.label}${m.job.time && html`<span> · ${m.job.time}</span>`}<a class="text-action" href="#/brain" title="Turn it off or change its time">Change</a></div>`}
     <div class="msg-body"><div class="txt">
     ${m.run_title && html`<div class="from-run">${m.run_status === 'done' ? '✓' : '✕'} ${m.run_title}</div>`}
-    <div ref=${body}>${content}</div>${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
+    <div ref=${body}>${content}</div>${m.agent_made && html`<a class="text-action agent-open" href=${'#/p/' + m.agent_made}>Open ›</a>`}${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
 }
 
 // Every file Ken names is in its message with a Download button; a video, picture or audio file also plays right there.
@@ -949,7 +949,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
         ${!busy && failed && (last.action === 'credits' ? html`<${CreditChoices} onConnect=${onConnect} usage=${usage}/>` : html`<div class="msg-actions">${last.action === 'retry'
           ? html`<button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>`
           : html`<button class="btn sm" onClick=${onAIAccounts}>${last.action === 'connect' ? 'Connect your Claude or ChatGPT' : `Reconnect ${last.brain === 'codex' ? 'ChatGPT' : 'Claude'}`}</button>`}</div>`)}
-        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Safe} where="live reply"><${Live} stream=${stream} activity=${activity} onStop=${stop}/><//>`
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Safe} where="live reply"><${Live} stream=${stream} activity=${AGENTS_UI && pid !== 'home' && !messages.length ? 'Setting up…' : activity} onStop=${stop}/><//>`
           : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>
     </div>
@@ -2067,9 +2067,9 @@ function NewAgent({ onClose, onCreated, setup }) {
     try { onCreated(await api('/api/chats', { json: { name: name.trim(), context: job.trim(), backend, setup: true } })); } catch (e) { setError(e.message); setBusy(false); }
   };
   return html`<${Modal} title="New agent" onClose=${onClose}>
-    <label class="np-label">What do you want help with?<textarea class="np-input" rows="4" autofocus value=${job} placeholder="Say it in your own words, or pick an idea below." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
+    <label class="np-label">Name<input class="np-input" autofocus value=${name} placeholder="Optional" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
+    <label class="np-label">What should it do?<textarea class="np-input" rows="4" value=${job} placeholder="Say it in your own words, or pick an idea below." onInput=${(e) => setJob(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ready && create()}></textarea></label>
     <div class="agent-ideas" role="group" aria-label="Ideas">${ideas.map((i) => html`<button class=${'chip' + (job === i[1] ? ' on' : '')} onClick=${() => useIdea(i)}>${i[0]}</button>`)}</div>
-    <label class="np-label">Name<input class="np-input" value=${name} placeholder="Optional" onInput=${(e) => { setName(e.target.value); setIdea(''); }}/></label>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!ready} onClick=${create}>${busy ? 'Creating…' : 'Create agent'}</button></div>
   <//>`;
