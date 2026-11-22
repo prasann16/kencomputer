@@ -16,7 +16,7 @@ import onboarding  # noqa: E402
 from brains import AIUnavailable  # noqa: E402
 from engine import HOME  # noqa: E402
 from onboarding import BrainOnboarding, Onboarding  # noqa: E402
-from test_auto_credits import ken, said  # noqa: E402,F401
+from test_auto_credits import ken, left_on_credits, said  # noqa: E402,F401
 from test_auto_credits import PlanSession as _PlanSession  # noqa: E402
 from web import WebApp, use_ai  # noqa: E402
 
@@ -134,7 +134,8 @@ async def test_on_telegram_the_limit_and_credits_out_say_what_to_reply(ken):
     assert ken.explain(limit, HOME, "telegram")[0] == (
         "You've reached your Claude plan's limit for now. It resets at 22:20. Reply 'use Ken credits' to keep going now.")
     assert ken.explain(limit, HOME, "app")[0].endswith("switch to Ken AI credits in Settings → AI.")
-    ken.plan.limited["claude"] = True
+    os.environ["KEN_USE_CREDITS"] = "1"  # they picked Ken AI credits
+    onboarding.use_included_ai()
     ken.plan.credits_out = True
     assert not await ken.send_message(HOME, "hi", via="telegram")
     assert said(ken)[-1] == "You've used your Ken AI credits. Reply 'use my Claude' to switch back to it (its limit resets at 22:20)."
@@ -175,7 +176,7 @@ async def test_out_of_credits_on_telegram_the_reply_switches_back(ken, monkeypat
 
 
 async def test_settings_says_until_when_ken_switched_to_credits_by_itself(ken, aiohttp_client):
-    """Ken's own switch at a plan's limit: /api/setup says until when (providers.claude.credits_until), only while it lasts."""
+    """A switch an older Ken made at a plan's limit: /api/setup says until when (providers.claude.credits_until), only while it lasts."""
     app = WebApp(ken, ken.home, setup=accounts(ken))
     client = await aiohttp_client(app.build())
     await client.get(f"/login?token={app.token}", allow_redirects=False)
@@ -185,7 +186,10 @@ async def test_settings_says_until_when_ken_switched_to_credits_by_itself(ken, a
 
     assert await until() is None
     ken.plan.limited["claude"] = True
-    assert await ken.send_message(HOME, "draft my post")
+    assert not await ken.send_message(HOME, "draft my post")  # at its limit: Ken doesn't switch by itself
+    assert await until() is None
+    left_on_credits(ken)  # a switch an older Ken made
+    ken.plan.resets["claude"] = "22:20"
     assert await until() == "22:20"
     ken.plan.resets.clear()
     ken.plan.limited.clear()
