@@ -422,6 +422,20 @@ async def test_ken_passes_work_to_an_agent_in_its_chat(engine):
         engine.handle_request({"type": "message", "agent": "nobody", "text": "hi"})
 
 
+def test_ken_reads_an_agents_chat(engine):
+    from engine import chat_transcript
+
+    engine.create_agent("Personal brand")
+    engine.log_message("personal-brand", "you", "Find me viral reels")
+    engine.log_message("personal-brand", "you", "Add TikTok too.", via="ken")
+    engine.log_message("personal-brand", "ken", "Found 3.")
+    out = chat_transcript(engine.home, "Personal Brand")
+    assert "Them: Find me viral reels" in out and "Ken (passing on): Add TikTok too." in out and "Personal brand: Found 3." in out
+    assert "last 1 messages" in chat_transcript(engine.home, "personal-brand", 1)
+    assert "No agent called" in chat_transcript(engine.home, "nobody")
+    assert "--chat <id>" in engine.chief_brief(read_chat="ken --chat")
+
+
 async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path):
     engine.create_agent("Reader")
     engine.create_agent("Brand")

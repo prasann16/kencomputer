@@ -95,6 +95,33 @@ def plain_text(text: str) -> str:
     return re.sub(r"\n{2,}", "\n", s).strip()
 
 
+
+def chat_transcript(home: Path, agent: str, count: int = 40) -> str:
+    """An agent's recent chat as plain lines, for Ken (`--chat <agent>`): read-only, never changes it."""
+    want = agent.strip().lower()
+    names = {}
+    for d in sorted((home / "agents").glob("*/agent.json")):
+        try:
+            names[d.parent.name] = json.loads(d.read_text()).get("name") or d.parent.name
+        except (OSError, ValueError):
+            names[d.parent.name] = d.parent.name
+    pid = next((p for p, n in names.items() if want in (p, n.lower(), slugify(n))), None)
+    if pid is None:
+        return f"No agent called {agent!r}. Their agents: " + (", ".join(f"{n} ({p})" for p, n in names.items()) or "none") + "."
+    db = sqlite3.connect(f"file:{home / 'app.db'}?mode=ro", uri=True)
+    try:
+        rows = db.execute("SELECT ts, data FROM (SELECT id, ts, data FROM events WHERE project=? AND type='message' "
+                          "ORDER BY id DESC LIMIT ?) ORDER BY id", (pid, max(1, min(count, 200)))).fetchall()
+    finally:
+        db.close()
+    lines = []
+    for ts, data in rows:
+        m = json.loads(data)
+        who = names[pid] if m.get("role") == "ken" else "Ken (passing on)" if m.get("via") == "ken" else "Them"
+        said = (m.get("text") or "").strip() or ("📎 " + ", ".join(m.get("files") or []))
+        lines.append(f"[{time.strftime('%a %d %b %H:%M', time.localtime(ts))}] {who}: {said[:4000]}")
+    return f"{names[pid]}'s chat, last {len(lines)} messages:\n" + "\n".join(lines) if lines else f"{names[pid]}'s chat is empty."
+
 class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
 
@@ -984,16 +1011,17 @@ class Engine:
             line += "files " + ", ".join(str(self.keys_dir(pid) / "files" / f) for f in files) + ". "
         return line
 
-    def chief_brief(self) -> str:
-        """What Ken, as chief of staff, knows about every agent."""
+    def chief_brief(self, read_chat: str = "") -> str:
+        """What Ken, as chief of staff, knows about every agent. `read_chat`: the command that shows an agent's chat."""
         r = self.requests_dir
         lines = [
             "=== Their agents: you are their chief of staff ===",
             "Besides this chat they have agents: each is its own chat in the app with one job, its own notes and its "
             f"own schedule, in {self.agents_dir}/<id>/ (CONTEXT.md, memory/, jobs.json, files/). You see every agent; "
             "they each see only their own folder (and read your memory). You're the one they can always just talk to:",
-            "- Asked what an agent is up to: answer from the list below, and open its files or chat history "
-            f"({self.agents_dir}/<id>/) when you need the detail.",
+            "- Asked what an agent is up to or what it found: answer from the list below; for more, "
+            + (f"run `{read_chat} <id>` (add a number for more than the last 40 messages) to read its chat, and " if read_chat else "")
+            + f"open its notes and files ({self.agents_dir}/<id>/).",
             f'- Asked to tell an agent something or give it work: write {{"type": "message", "agent": "<id>", "text": "what '
             f'they asked, in full"}} into {r}/. It lands in that agent\'s chat, which does the work there, and a line here '
             "that opens it says it was sent, so just confirm in a few words and don't do the work yourself.",
