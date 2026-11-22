@@ -182,6 +182,7 @@ class Onboarding:
                 **({"renewing": True} if self.active and self.connected() and not included else {}),
                 # Picked Ken AI credits while their own Claude stays connected: it still shows as theirs, not in use.
                 **({"use_credits": True} if included and own_claude() else {}),
+                **({"auto_credits": True} if os.environ.get("KEN_AUTO_CREDITS") == "1" else {}),
                 # Their own Claude stopped working: nothing in use until they connect again or pick Ken AI credits.
                 **({"credits_off": True} if os.environ.get("KEN_USE_CREDITS") == "0" and included_ai_key() else {}),
                 "how": ("key" if os.environ.get("ANTHROPIC_API_KEY") else "account") if own_claude()
@@ -340,6 +341,17 @@ class Onboarding:
             await self.on_connected()
         except Exception:
             log.exception("post-connect refresh failed")
+        return self.status()
+
+    def keep_going_on_credits(self, on: bool) -> dict:
+        """Settings → AI: when their own Claude or ChatGPT hits its limit, carry on with Ken AI credits until it resets
+        (KEN_AUTO_CREDITS, off unless they turn it on)."""
+        if on and not included_ai_key():
+            raise ValueError("Ken AI credits aren't part of this plan.")
+        if on:
+            save_env(self.env_file, "KEN_AUTO_CREDITS", "1")
+        else:
+            drop_env(self.env_file, "KEN_AUTO_CREDITS")
         return self.status()
 
     async def use_credits(self, on: bool) -> dict:
@@ -687,6 +699,10 @@ class BrainOnboarding:
 
     async def use_credits(self, on: bool):
         await self.providers["claude"].use_credits(on)
+        return self.status()
+
+    def keep_going_on_credits(self, on: bool):
+        self.providers["claude"].keep_going_on_credits(on)
         return self.status()
 
     def stop(self):
