@@ -1368,21 +1368,23 @@ class Engine:
 
     # -------------------------------------------------------------------- chats
 
-    async def _dead_claude(self, msg: str, action: str) -> tuple[str, str]:
+    async def _dead_claude(self, msg: str, action: str, via: str | None = None) -> tuple[str, str]:
         """Their own Claude refused: if its sign-in is dead, it's forgotten (Settings shows "Not connected" with a plain
-        Connect) and, when the plan has Ken AI credits, Ken carries on with those, so they're never stuck."""
-        from onboarding import included_ai_in_use
+        Connect). Ken never moves to Ken AI credits by itself: it says how, when the plan has them."""
+        from onboarding import included_ai_key, own_claude
 
         try:
-            if not (self.forget_dead_claude and await self.forget_dead_claude()):
-                return msg, action
+            forgotten = bool(self.forget_dead_claude and await self.forget_dead_claude())
         except Exception:
             log.exception("checking the Claude sign-in failed")
             return msg, action
-        if included_ai_in_use():
-            return ("Your Claude sign-in stopped working, so I've switched to Ken AI credits. "
-                    "Connect Claude again in Settings → AI whenever you like."), "retry"
-        return "Your Claude sign-in stopped working. Connect it again to carry on.", "reconnect"
+        if not forgotten and own_claude():  # still signed in (a blip): as it was
+            return msg, action
+        if not included_ai_key():
+            return "Your Claude sign-in stopped working. Connect it again to carry on.", "reconnect"
+        return "Your Claude sign-in stopped working. " + (
+            "Reply 'use Ken credits' to keep going now, or connect Claude again in Settings → AI." if via == "telegram"
+            else "Connect it again in Settings → AI, or switch to Ken AI credits there to keep going now."), "reconnect"
 
     def backend(self, pid: str) -> str:
         return self.kv_get(f"backend:{pid}") or self.brain.name
@@ -1720,7 +1722,7 @@ class Engine:
         msg, action = (("Ken went quiet for 45 minutes, so I stopped. Tell me to carry on and I'll pick it up.", "retry")
                        if quiet else self.explain(e, pid, via))
         if action == "reconnect" and msg.endswith("connection stopped working.") and self.backend(pid) == "claude":
-            msg, action = await self._dead_claude(msg, action)
+            msg, action = await self._dead_claude(msg, action, via)
         # The one thing to do about it shows as a button beside it in the app (a job's failure has nothing to retry).
         # Ken speaking first (its hello) that failed: there's no message of theirs to retry, so a plain "try again"
         # says nothing. But when the way forward is theirs to take (no Ken AI credits left, an account to connect),
