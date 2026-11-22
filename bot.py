@@ -113,6 +113,10 @@ if sys.argv[1:2] == ["--library"]:  # hosted Ken: their Library of photos and vi
     import library
     raise SystemExit(library.main(sys.argv[2:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))))
 
+if sys.argv[1:2] == ["--mac"]:  # hosted Ken: their linked Mac, through the site (mac_link.py)
+    import mac_link
+    raise SystemExit(mac_link.cloud_main(sys.argv[2:]))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -1136,6 +1140,8 @@ def build_system() -> str:
             log.warning("agent listing failed: %s", e)
     if library_prompt():
         system += "\n\n" + library_prompt()
+    if mac_prompt():
+        system += "\n\n" + mac_prompt()
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -2386,6 +2392,7 @@ async def keep_awake() -> None:
     """A computer in the cloud sleeps when nobody's using it, and work running inside it doesn't count as use. Every
     minute, tell the host (KEN_KEEPALIVE_URL) whether Ken is in the middle of something, so it keeps the computer up
     until the work is done, and when the next scheduled job is due, so it wakes the computer for it."""
+    global LINKED_MAC
     url, token = os.environ.get("KEN_KEEPALIVE_URL", ""), os.environ.get("KEN_KEEPALIVE_TOKEN", "")
     if not url.startswith("https://") or not token:
         return
@@ -2408,6 +2415,7 @@ async def keep_awake() -> None:
                     if engine_mod.save_kits(ENGINE.home, answer.get("kits")):  # a kit switched on or off for them
                         ENGINE.sync_skills()
                         log.info("kits now: %s", engine_mod.kits_on(ENGINE.home))
+                    LINKED_MAC = answer.get("mac") if isinstance(answer.get("mac"), dict) else None
                 if not LIBRARY_BUSY:  # new photos and videos in their Library: thumbnails, when and where
                     APP_TASKS.add(asyncio.create_task(library_pass()))
             except Exception as e:
@@ -2449,6 +2457,29 @@ def library_prompt() -> str:
         "<what's in it>`, so the next search finds it. Something you made that they'll want to keep (a finished reel): "
         f"`{KEN_CMD} --library add <file>`. Never remove anything from it; they do that in the app's Library."
     )
+
+
+LINKED_MAC: dict | None = None  # hosted Ken: their linked Ken for Mac, as the site's check-in answer last said
+
+
+def mac_prompt() -> str:
+    """Hosted Ken: what it may use on their linked Mac (mac_link.py), only what they switched on there."""
+    mac = LINKED_MAC
+    if not mac:
+        return ""
+    import mac_link
+    name, caps = str(mac.get("name") or "their Mac"), set(mac.get("caps") or [])
+    uses = []
+    if "files" in caps:
+        uses.append(f"files in folders they chose: `{KEN_CMD} --mac folders`, `--mac list <folder>`, `--mac find <words>`, "
+                    "`--mac get <file>` (copies it here; delete the copy when you're done)")
+    off = [label for k, label in mac_link.SWITCHES.items() if k not in caps]
+    return (f"THEIR MAC: {name} is linked to you (Ken for Mac). " + (
+        "While it's on, you can use: " + "; ".join(uses) + ". " if uses else "They haven't switched anything on there yet. ")
+        + "Only while it's on with Ken open; when it isn't, the command says so: tell them plainly. "
+        + (f"Switched off on the Mac: {', '.join(off)}. " if off else "")
+        + "Nothing else on the Mac can be reached. If a task needs something that's off, tell them to turn it on in "
+        "Ken for Mac → Settings → Cloud.")
 
 
 def voice_available() -> bool:
@@ -2530,7 +2561,7 @@ async def start_engine() -> WebApp | None:
     use_signed_in_account()
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding, link=MAC_LINK)
     if os.environ.get("KEN_NOTIFY_URL"):
         task = asyncio.create_task(notify_app(web_app))
         APP_TASKS.add(task)
@@ -3426,6 +3457,16 @@ class Phone:
 PHONE = Phone()
 
 
+def mac_link_here():
+    """Ken for Mac (any Ken not in the cloud): its link to their Ken in the cloud, if they make one (mac_link.py)."""
+    import apps
+    from mac_link import MacLink
+    return None if apps.hosted() else MacLink(KEN_HOME)
+
+
+MAC_LINK = mac_link_here()
+
+
 async def run() -> None:
     """Ken: the engine, the app, the schedule, and (when connected) Ken on your phone."""
     asyncio.get_running_loop().set_exception_handler(crash.loop_handler)
@@ -3445,7 +3486,7 @@ async def run() -> None:
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
                   asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
-                  asyncio.create_task(runtimes.update(signed_in()))]
+                  asyncio.create_task(runtimes.update(signed_in()))] + ([asyncio.create_task(MAC_LINK.run())] if MAC_LINK else [])
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")

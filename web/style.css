@@ -520,6 +520,7 @@ ol.conn-steps li { margin: 2px 0; }
 .tg-connect { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: var(--s6); border-radius: var(--r-card); background: var(--well); text-align: center; }
 .tg-connect .np-help { margin: 0; }
 .tg-qr { width: 200px; height: 200px; padding: var(--s2); border-radius: var(--r-md); background: #fff; }
+.mac-code { margin: 0; font-size: 1.6em; font-weight: 600; letter-spacing: .12em; font-variant-numeric: tabular-nums; user-select: all; }
 .tg-qr svg { display: block; width: 100%; height: 100%; }
 @media (hover: none) and (pointer: coarse) { .tg-qr, .tg-scan { display: none; } }
 
