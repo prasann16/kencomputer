@@ -95,6 +95,17 @@ if sys.argv[1:2] == ["--use"]:  # they asked Ken to switch AI: the same switch a
         print("Couldn't switch just now. Try once more; if it still fails, tell them plainly.")
     raise SystemExit(1)
 
+if sys.argv[1:2] == ["--chat"]:  # Ken reading one of their agents' chats (read-only)
+    import os
+    from pathlib import Path
+
+    from engine import chat_transcript
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: --chat <agent> [how many messages]")
+    print(chat_transcript(Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))), sys.argv[2],
+                          int(sys.argv[3]) if sys.argv[3:4] and sys.argv[3].isdigit() else 40))
+    raise SystemExit(0)
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -1106,7 +1117,7 @@ def build_system() -> str:
     # Ken knows their agents (and how to pass work on) once they have any, or while agents are tried out
     if ENGINE.list_agents() or (KEN_HOME / "beta-agents").exists():
         try:
-            system += "\n\n" + ENGINE.chief_brief()
+            system += "\n\n" + ENGINE.chief_brief(read_chat=f"{KEN_CMD} --chat")
         except Exception as e:
             log.warning("agent listing failed: %s", e)
     pending = unresolved_setup()
