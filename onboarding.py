@@ -117,11 +117,12 @@ def own_claude() -> bool:
 def use_included_ai() -> bool:
     """Point Claude Code at the plan's included AI when the person hasn't connected their own Claude, or picked Ken AI
     credits in Settings → AI (KEN_USE_CREDITS: their own sign-in stays saved), and back off it otherwise. Returns
-    whether the included AI is in use."""
+    whether the included AI is in use. KEN_USE_CREDITS=0: their own Claude stopped working and was forgotten; Ken AI
+    credits wait until they pick them (or connect again), never by themselves."""
     # KEN_CREDITS_FOR_NOW: Ken switched for them while their own plan is at its limit (engine.py), until it resets.
     own = own_claude() and "1" not in (os.environ.get("KEN_USE_CREDITS"), os.environ.get("KEN_CREDITS_FOR_NOW"))
     key = included_ai_key()
-    if key and not own:
+    if key and not own and os.environ.get("KEN_USE_CREDITS") != "0":
         os.environ["ANTHROPIC_BASE_URL"] = os.environ["KEN_INCLUDED_AI_URL"].rstrip("/")
         os.environ["ANTHROPIC_AUTH_TOKEN"] = key
         return True
@@ -181,6 +182,8 @@ class Onboarding:
                 **({"renewing": True} if self.active and self.connected() and not included else {}),
                 # Picked Ken AI credits while their own Claude stays connected: it still shows as theirs, not in use.
                 **({"use_credits": True} if included and own_claude() else {}),
+                # Their own Claude stopped working: nothing in use until they connect again or pick Ken AI credits.
+                **({"credits_off": True} if os.environ.get("KEN_USE_CREDITS") == "0" and included_ai_key() else {}),
                 "how": ("key" if os.environ.get("ANTHROPIC_API_KEY") else "account") if own_claude()
                        else "included" if included else "account" if self.connected() else "",
                 "phone": self.phone_step(), "voice": self.voice_status(), **({"error": self.error} if self.error else {})}
@@ -354,13 +357,17 @@ class Onboarding:
             log.exception("refresh after switching AI failed")
         return self.status()
 
-    async def disconnect(self) -> dict:
-        """Forget the Claude sign-in or key Ken saved (an included plan's AI takes over again, if there is one)."""
+    async def disconnect(self, hold_credits: bool = False) -> dict:
+        """Forget the Claude sign-in or key Ken saved (an included plan's AI takes over again, if there is one).
+        `hold_credits`: it stopped working, they didn't choose this, so Ken AI credits wait until they pick them."""
         self.stop()
         self.saved = self.error = ""
         drop_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN")
         drop_env(self.env_file, "ANTHROPIC_API_KEY")
-        drop_env(self.env_file, "KEN_USE_CREDITS")
+        if hold_credits and included_ai_key():
+            save_env(self.env_file, "KEN_USE_CREDITS", "0")
+        else:
+            drop_env(self.env_file, "KEN_USE_CREDITS")
         use_included_ai()
         try:
             await self.on_connected()
@@ -370,8 +377,8 @@ class Onboarding:
 
     async def forget_if_dead(self) -> bool:
         """Claude turned Ken away: if Anthropic says the saved sign-in no longer works, forget it, so the person sees
-        "Not connected" with a plain Connect (and Ken AI credits take over, when the plan has them). A network blip or
-        a working sign-in changes nothing. Returns whether it was forgotten."""
+        "Not connected" with a plain Connect. Ken AI credits don't take over by themselves: they pick them in Settings
+        → AI. A network blip or a working sign-in changes nothing. Returns whether it was forgotten."""
         token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
         key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not (token or key) or self.active or not await check_claude(token=token, api_key=key if not token else ""):
@@ -379,7 +386,7 @@ class Onboarding:
         log.warning("Claude sign-in no longer works; forgetting it")
         import crash
         crash.track("claude_signin_dead")
-        await self.disconnect()
+        await self.disconnect(hold_credits=True)
         return True
 
     async def submit(self, code: str) -> dict:
