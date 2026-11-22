@@ -143,6 +143,13 @@ a.clear-button { text-decoration: none; }
 .msg-media .media-save { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s2); font-size: 0.875rem; color: var(--muted); text-decoration: none; }
 .msg-media .media-save svg { width: 16px; height: 16px; }
 .msg-media .media-save:hover { color: var(--ink); }
+.file-card { display: flex; align-items: center; gap: var(--s3); max-width: min(100%, 420px); padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card); color: var(--ink); text-decoration: none; }
+.file-card:hover { border-color: var(--line-strong); }
+.file-card > svg { flex: none; width: 20px; height: 20px; color: var(--muted); }
+.file-card-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9375rem; }
+.file-card-get { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.875rem; color: var(--muted); }
+.file-card-get svg { width: 16px; height: 16px; }
+.msg-media + .msg-media { margin-top: var(--s2); }
 .img img { display: block; max-width: min(320px, 100%); max-height: 280px; border-radius: var(--r-md); }
 /* Copy: under Ken's reply, on hover with a mouse. */
 .copy-msg { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin: 4px 0 0 -6px; padding: 0; border: 0; border-radius: var(--r-pill);

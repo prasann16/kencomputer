@@ -220,7 +220,7 @@ const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"`*])/g;
 // Files Ken names open on click: [name](/path), `work/report.md`, or a full path in the text.
 const LINK_RE = /\[([^\]\n]+)\]\(<?([^()\s<>]+|[^()<>\n]+(?=>))>?\)/g;
 const PATH_RE = /((?:~|\/)[^\s<>()`'"*]*\/[^\s<>()`'"*]*\.[A-Za-z0-9]{1,5})(?![\w/])/g;
-const isPath = (s) => /^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) && !/^\/\//.test(s);
+const isPath = (s) => (/^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) || /^~?\/[^\n`]*\/[^\n`/]*\S\.[A-Za-z0-9]{1,5}$/.test(s)) && !/^\/\//.test(s);
 let notify = () => {}, showDoc = () => {};
 // Ken on a computer in the cloud, used in the browser (from /api/meta): no Mac features, and its own browser if the plan has one.
 let HOSTED = false, HOSTED_BROWSER = false, AGENTS_UI = false;
@@ -552,8 +552,8 @@ function CopyButton({ from }) {
 function Message({ m, label }) {
   const body = useRef(null);
   const files = m.files || [];
-  const content = useMemo(() => md(m.text), [m.text]);
   const media = useMemo(() => (m.role === 'you' ? [] : mediaIn(m.text)), [m.text, m.role]);
+  const content = useMemo(() => md(m.role === 'you' ? m.text : withoutFileLines(m.text, media)), [m.text, m.role, media]);
   const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
   if (m.role === 'you') {
     return html`<div class="msg you"><div class="stack">
@@ -595,6 +595,14 @@ function mediaIn(text) {
   for (const [p] of String(text || '').replace(/`[^`\n]+`/g, '').matchAll(PATH_RE)) add(p);
   return found.slice(0, 6);
 }
+// A line that only names a file shown below as a card (`/home/…/report.pdf`) says nothing to them: it goes.
+function withoutFileLines(text, shown) {
+  if (!shown.length) return text;
+  return String(text || '').split('\n').filter((line) => {
+    const p = line.trim().replace(/^[-*•]\s+/, '').replace(/^`([^`]+)`$/, '$1').trim();
+    return !shown.includes(p);
+  }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 function Media({ path }) {
   const [gone, setGone] = useState(false);
   if (gone) return null;
@@ -604,8 +612,8 @@ function Media({ path }) {
     ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
     : isAudio(name) ? html`<audio src=${url} controls preload="metadata" onError=${() => setGone(true)}></audio>`
     : /\.(png|jpe?g|gif|webp)$/i.test(name) ? html`<img src=${url} alt=${name} loading="lazy" onError=${() => setGone(true)}/>`
-    : ''}
-    <a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download${isAudio(name) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i.test(name) ? '' : ' ' + name}</a></div>`;
+    : html`<a class="file-card" href=${url + '&download'} download=${name} title="Download">${Icon.file}<span class="file-card-name">${name}</span><span class="file-card-get">${Glyph('download')} Download</span></a>`}
+    ${(isAudio(name) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|webp)$/i.test(name)) && html`<a class="media-save" href=${url + '&download'} download=${name}>${Glyph('download')} Download</a>`}</div>`;
 }
 
 // Text arrives in bursts; reveal it at a steady pace that catches up with each burst.
