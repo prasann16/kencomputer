@@ -159,8 +159,8 @@ async def test_scheduled_and_background_jobs_at_the_limit_are_not_run_on_credits
 @pytest.mark.parametrize("via, told", [
     ("app", "Your Claude sign-in stopped working. Connect it again in Settings → AI, or switch to Ken AI credits there "
             "to keep going now."),
-    ("telegram", "Your Claude sign-in stopped working. Reply 'use Ken credits' to keep going now, or connect Claude "
-                 "again in Settings → AI.")])
+    ("telegram", "Your Claude sign-in stopped working. Connect it again in Settings → AI on kencomputer.dev, or switch "
+                 "to Ken AI credits there to keep going now.")])
 async def test_a_dead_claude_sign_in_says_how_to_keep_going_and_stays_off_credits(ken, monkeypatch, via, told):
     async def forget():
         monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")

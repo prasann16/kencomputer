@@ -136,6 +136,11 @@ def explain_failure(e: BaseException, brain: str) -> tuple[str, str]:
     return "Something went wrong on Ken's side.", "retry"
 
 
+def settings_ai(via: str | None = None) -> str:
+    """Where they switch AI: Settings → AI, which from Telegram is on the site."""
+    return "Settings → AI on kencomputer.dev" if via == "telegram" else "Settings → AI"
+
+
 def friendly_error(e: BaseException, brain: str) -> str:
     """What to tell the person when a reply fails (see explain_failure)."""
     return explain_failure(e, brain)[0]
@@ -1382,9 +1387,8 @@ class Engine:
             return msg, action
         if not included_ai_key():
             return "Your Claude sign-in stopped working. Connect it again to carry on.", "reconnect"
-        return "Your Claude sign-in stopped working. " + (
-            "Reply 'use Ken credits' to keep going now, or connect Claude again in Settings → AI." if via == "telegram"
-            else "Connect it again in Settings → AI, or switch to Ken AI credits there to keep going now."), "reconnect"
+        return ("Your Claude sign-in stopped working. Connect it again in " + settings_ai(via)
+                + ", or switch to Ken AI credits there to keep going now."), "reconnect"
 
     def backend(self, pid: str) -> str:
         return self.kv_get(f"backend:{pid}") or self.brain.name
@@ -2396,7 +2400,7 @@ class Engine:
     def explain(self, e: BaseException, pid: str, via: str | None = None) -> tuple[str, str]:
         """explain_failure, plus what Ken already knows: when their own plan is at its limit right now, that's the reason
         (Claude's usage readings say so even when the error itself only says it failed), with when it opens again.
-        `via`: on Telegram there's no Settings, so the way to switch AI is a reply (bot.py answers it, no AI needed)."""
+        `via`: on Telegram there's no Settings, so it says where Settings is (the site)."""
         from onboarding import included_ai_key
 
         from onboarding import included_ai_in_use
@@ -2410,16 +2414,13 @@ class Engine:
                 return f"You've used your Ken AI credits, so I switched back to your own {name}.", "retry"
             at = self.limit_resets(own) if self.limit_resets else ""
             resets = f" (its limit resets at {at})" if at else ""
-            if via == "telegram":
-                return f"You've used your Ken AI credits. Reply 'use my {name}' to switch back to it{resets}.", action
-            return f"You've used your Ken AI credits. Switch back to your own {name} in Settings → AI{resets}.", action
+            return f"You've used your Ken AI credits. Switch back to your own {name} in {settings_ai(via)}{resets}.", action
         at = self.limit_resets(self.backend(pid)) if self.limit_resets and not on_credits else ""
         if at and action == "retry" and "can't use that model" not in msg:
             name = "ChatGPT" if self.backend(pid) == "codex" else "Claude"
             msg = f"You've reached your {name} plan's limit for now. It resets at {at}."
         if "plan's limit" in msg and included_ai_key():  # their plan has Ken AI credits: a way to keep going now
-            msg += (" Reply 'use Ken credits' to keep going now." if via == "telegram"
-                    else " To keep going now, switch to Ken AI credits in Settings → AI.")
+            msg += f" To keep going now, switch to Ken AI credits in {settings_ai(via)}."
         return msg, action
 
     async def stop_run(self, rid: str, by: str = "") -> None:
