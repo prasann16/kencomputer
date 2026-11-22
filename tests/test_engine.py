@@ -227,6 +227,14 @@ async def test_chat_list_and_reset(engine):
     assert engine.kv_get("session:p") is None
 
 
+def test_chat_list_preview_is_plain():
+    from engine import plain_text
+
+    md = "## Today\n**Calendar:** nothing today.\n\n**Inbox**\n- one from `Sam` about [the deal](https://x.y)\n|a|b|\n|---|---|"
+    assert plain_text(md) == "Today\nCalendar: nothing today.\nInbox\n• one from Sam about the deal\n|a|b|"
+    assert plain_text("2 * 3 * 4 and *really* ~~no~~") == "2 * 3 * 4 and really no"
+
+
 async def test_web_auth_and_chats(engine, tmp_path, aiohttp_client):
     from web import WebApp
 
