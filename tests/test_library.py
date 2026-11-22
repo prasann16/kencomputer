@@ -72,3 +72,13 @@ def test_process_reads_a_photo_and_sends_back_its_thumbnail_and_details(monkeypa
     assert sent[1][0] == "meta" and sent[1][1]["place"] == "Lisbon, Portugal" and sent[1][1]["taken_at"] == 1
     assert not list(tmp_path.iterdir())  # nothing left behind on this computer
     json.dumps(sent[1][1])
+
+
+def test_show_puts_them_in_the_chat_ken_is_in(monkeypatch, tmp_path, capsys):
+    a = "c" * 16
+    monkeypatch.setenv("KEN_CHAT", "brand")
+    monkeypatch.setattr(library, "call", lambda path, body=None, **kw: {"items": [{"id": a, "kind": "video", "name": "IMG_2.MOV", "place": "Lisbon, Portugal"}]})
+    assert library.main(["show", a, "d" * 16], tmp_path) == 0
+    req = json.loads(next((tmp_path / "requests").glob("*.json")).read_text())
+    assert req == {"type": "library_show", "agent": "brand", "items": [{"id": a, "kind": "video", "name": "IMG_2.MOV", "place": "Lisbon, Portugal"}]}
+    assert "Showing 1" in capsys.readouterr().out

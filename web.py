@@ -807,7 +807,9 @@ class WebApp:
         b = await self._body(request)
         text = str(b.get("text", "")).strip()
         files = [str(f) for f in b.get("files", []) if isinstance(f, str)]
-        if not text and not files:
+        from engine import clean_library
+        library = clean_library(b.get("library"))
+        if not text and not files and not library:
             return _json({"error": "empty message"}, 400)
         client_id = b.get("client_id", "")
         if not isinstance(client_id, str) or len(client_id) > 100:
@@ -822,6 +824,8 @@ class WebApp:
                 return _json({"ok": True, "message": {"id": row["id"], "ts": row["ts"], "project": pid, **json.loads(row["data"])}})
         voice = b.get("voice")
         extra = {"client_id": client_id} if client_id else {}
+        if library:
+            extra["library"] = library
         if voice is not None:
             if not text:
                 return _json({"error": "No words were detected. Your recording has not been sent to Ken."}, 422)
@@ -835,7 +839,7 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, via="app", **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True, library=library))
         return _json({"ok": True, "message": message})
 
     async def retry(self, request):
