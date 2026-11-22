@@ -132,13 +132,14 @@ async def test_on_telegram_the_limit_and_credits_out_say_what_to_reply(ken):
     ken.plan.resets["claude"] = "22:20"
     limit = AIUnavailable(429, "rate_limit")
     assert ken.explain(limit, HOME, "telegram")[0] == (
-        "You've reached your Claude plan's limit for now. It resets at 22:20. Reply 'use Ken credits' to keep going now.")
+        "You've reached your Claude plan's limit for now. It resets at 22:20. To keep going now, switch to Ken AI credits in "
+        "Settings → AI on kencomputer.dev.")
     assert ken.explain(limit, HOME, "app")[0].endswith("switch to Ken AI credits in Settings → AI.")
     os.environ["KEN_USE_CREDITS"] = "1"  # they picked Ken AI credits
     onboarding.use_included_ai()
     ken.plan.credits_out = True
     assert not await ken.send_message(HOME, "hi", via="telegram")
-    assert said(ken)[-1] == "You've used your Ken AI credits. Reply 'use my Claude' to switch back to it (its limit resets at 22:20)."
+    assert said(ken)[-1] == "You've used your Ken AI credits. Switch back to your own Claude in Settings → AI on kencomputer.dev (its limit resets at 22:20)."
 
 
 def test_only_the_replies_offered_are_answered_without_the_ai(monkeypatch):
@@ -161,7 +162,7 @@ async def test_out_of_credits_on_telegram_the_reply_switches_back(ken, monkeypat
     onboarding.use_included_ai()
     ken.plan.credits_out = True
     assert not await ken.send_message(HOME, "hi", via="telegram")
-    assert said(ken)[-1] == "You've used your Ken AI credits. Reply 'use my Claude' to switch back to it."
+    assert said(ken)[-1] == "You've used your Ken AI credits. Switch back to your own Claude in Settings → AI on kencomputer.dev."
     replies = []
 
     class Message:
