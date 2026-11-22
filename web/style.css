@@ -711,8 +711,15 @@ ol.conn-steps li { margin: 2px 0; }
 .library-check svg { width: 14px; height: 14px; }
 .library-item:hover .library-check, .library-item.picked .library-check, .library:has(.picked) .library-check { opacity: 1; }
 .library-item.picked .library-check { background: var(--ink); border-color: var(--ink); }
-.library-bar { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--s3); padding: 10px 12px 10px 18px; border-radius: var(--r-pill); background: var(--card); border: 1px solid var(--line); box-shadow: var(--float); z-index: 20; }
-.library-bar .btn svg { width: 16px; height: 16px; }
+.library-bar { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--s2); padding: 8px 8px 8px 20px; border-radius: 18px; background: var(--ink); color: var(--bg); box-shadow: var(--float); z-index: 20; max-width: calc(100vw - 32px); }
+.library-bar > span { margin-right: var(--s3); font-weight: 500; }
+.library-bar-btn { border: 0; border-radius: var(--r-pill); padding: 9px 16px; font: inherit; font-weight: 600; font-size: var(--text-sm); color: inherit; background: color-mix(in srgb, var(--bg) 14%, transparent); cursor: pointer; white-space: nowrap; }
+.library-bar-btn.strong { background: var(--bg); color: var(--ink); }
+.library-filters { margin-top: var(--s4); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.library-filters button { flex: none; white-space: nowrap; }
+.library-file { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 100%; padding: 10px; box-sizing: border-box; color: var(--muted); text-align: center; }
+.library-file svg { width: 26px; height: 26px; }
+.library-file small { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .library-view { margin: auto; max-width: min(92vw, 900px); background: var(--card); border-radius: var(--r-lg); overflow: hidden; }
 .library-view img, .library-view video { display: block; max-width: 100%; max-height: 74vh; margin: 0 auto; background: #000; }
 .library-view figcaption { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); }
@@ -728,13 +735,12 @@ ol.conn-steps li { margin: 2px 0; }
   .library-head .library-add .btn { height: 40px; padding: 0 16px; }
   .library-bar { left: var(--s4); right: var(--s4); transform: none; bottom: calc(16px + env(safe-area-inset-bottom)); gap: var(--s2); padding: 8px 8px 8px 16px; }
   .library-bar span { flex: 1; white-space: nowrap; }
-  .library-bar .clear-button { display: none; }
+  .library-bar > span { margin-right: 0; }
   .library-title h1 { font-size: 1.5rem; }
   .library-grid { grid-template-columns: repeat(3, 1fr); gap: 3px; }
   .library-check { opacity: 0; width: 22px; height: 22px; pointer-events: none; }
   .library.selecting .library-check { opacity: 1; pointer-events: auto; }
 }
-.library-bar .btn.danger { color: var(--danger); }
 
 .library-sending { position: relative; margin-top: var(--s4); padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--text-sm); overflow: hidden; max-width: 520px; }
 .library-sending span { display: block; color: var(--muted); }
@@ -742,3 +748,25 @@ ol.conn-steps li { margin: 2px 0; }
 .library-pending { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 100%; color: var(--faint); }
 .library-pending svg { width: 22px; height: 22px; }
 .library-pending small { font-size: 12px; }
+
+/* The rail: Chats and Library down the left edge; along the bottom on a phone (on the list and the Library only). */
+.rail { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; width: 76px; padding: 16px 0 14px; border-right: 1px solid var(--line); background: var(--side); box-sizing: border-box; -webkit-app-region: drag; }
+.rail-mark { width: 30px; height: 30px; margin-bottom: 14px; }
+.rail-item { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 60px; padding: 8px 0 6px; border-radius: 12px; color: var(--muted); font-size: 11.5px; font-weight: 500; -webkit-app-region: no-drag; }
+.rail-item:hover { color: var(--ink); }
+.rail-item.on { background: var(--well); color: var(--ink); }
+.rail-item svg { width: 23px; height: 23px; }
+.rail-item:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.rail-settings { margin-top: auto; }
+@media (min-width: 761px) { .shell.with-rail .chat-list-foot .settings-link { visibility: hidden; } .shell.with-rail .chat-list-head .ken-mark { display: none; } }
+@media (max-width: 760px) {
+  .shell.with-rail { flex-direction: column; }
+  .shell.with-rail .rail { order: 2; flex-direction: row; justify-content: space-around; width: 100%; height: auto; padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line); background: var(--bg); }
+  .shell.with-rail .rail-mark, .shell.with-rail .rail-settings { display: none; }
+  .shell.with-rail .rail-item { width: 96px; background: none; }
+  .shell.with-rail .rail-item.on { color: var(--ink); }
+  .shell.with-rail .rail-item:not(.on) { color: var(--faint); }
+  .shell.with-rail:not(.on-list):not(.on-library) .rail { display: none; }
+  .shell.with-rail .chat-list, .shell.with-rail .main { flex: 1; min-height: 0; }
+  .shell.with-rail.on-library .library-bar { bottom: calc(76px + env(safe-area-inset-bottom)); }
+}
