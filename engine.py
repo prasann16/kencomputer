@@ -83,6 +83,17 @@ ROOM_CHECK = 5
 RUN_LIMIT = 60 * 60
 
 
+def plain_text(text: str) -> str:
+    """Ken's markdown as plain words, for a one-line preview (the chat list): no **, `, # or [label](link)."""
+    lines = [re.sub(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", "", re.sub(r"^\s*[-*•]\s+", "• ", re.sub(r"^\s*#+\s*", "", line)))
+             for line in text.split("\n")]
+    s = re.sub(r"!?\[([^\]]+)\]\([^)\s]+\)", r"\1", "\n".join(lines))
+    s = re.sub(r"(\*\*|__)(.+?)\1", r"\2", s)
+    s = re.sub(r"(^|[^\w*])\*(?!\s)([^*\n]+?)\*(?!\w)", r"\1\2", s)
+    s = re.sub(r"`+([^`]*)`+", r"\1", s)
+    s = re.sub(r"~~(.+?)~~", r"\1", s)
+    return re.sub(r"\n{2,}", "\n", s).strip()
+
 
 class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
@@ -2629,7 +2640,7 @@ class Engine:
             last = self.messages(pid, 1)
             preview = ""
             if last:
-                preview = last[0]["text"] or ("📎 " + ", ".join(last[0].get("files") or []))
+                preview = plain_text(last[0]["text"] or "") or ("📎 " + ", ".join(last[0].get("files") or []))
             out.append({"id": pid, "name": name, "color": color, "last": preview[:120],
                         "last_ts": last[0]["ts"] if last else 0, "busy": self.chat_busy(pid)})
         return out
