@@ -403,6 +403,25 @@ async def test_ken_creates_an_agent_that_sets_itself_up(engine):
     assert "You were just created" in ask["prompt"] and "Grow my X following." in ask["system"]
 
 
+async def test_ken_passes_work_to_an_agent_in_its_chat(engine):
+    engine.create_agent("Brand", context="Grow my X following.")
+    engine.log_message("brand", "ken", "**Done:** posted the thread.")
+    brief = engine.chief_brief()
+    assert 'last said: "Done: posted the thread."' in brief and '"type": "message"' in brief
+    engine.handle_request({"type": "message", "agent": "Brand", "text": "Add TikTok too."})
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if engine.brain.asks:
+            break
+    passed = next(m for m in engine.messages("brand") if m.get("via") == "ken")
+    assert passed["role"] == "you" and passed["text"] == "Add TikTok too."
+    sent = next(m for m in engine.messages(HOME) if m.get("agent_made"))  # in Ken's chat: a line that opens the agent
+    assert sent["agent_made"] == "brand" and sent["text"] == "Sent to Brand."
+    assert "From Ken" in engine.brain.asks[0]["prompt"] and "Add TikTok too." in engine.brain.asks[0]["prompt"]
+    with pytest.raises(ValueError):
+        engine.handle_request({"type": "message", "agent": "nobody", "text": "hi"})
+
+
 async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path):
     engine.create_agent("Reader")
     engine.create_agent("Brand")

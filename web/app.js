@@ -566,6 +566,7 @@ function Message({ m, label }) {
       })}
       ${m.text && !recording && html`<div class="bubble" ref=${body}>${content}</div>`}
       ${m.via === 'telegram' && html`<div class="msg-from">📱 from Telegram</div>`}
+      ${m.via === 'ken' && html`<div class="msg-from">Passed on by Ken</div>`}
       ${m.via === 'voice' && !m.call && m.role === 'you' && html`<div class="msg-from">🎙️ said on a voice call</div>`}
     </div></div>`;
   }
