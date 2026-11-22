@@ -989,30 +989,45 @@ class Engine:
         r = self.requests_dir
         lines = [
             "=== Their agents: you are their chief of staff ===",
-            f"Each agent is a chat with one job and its own folder, {self.agents_dir}/<id>/ (CONTEXT.md, memory/, "
-            "jobs.json, tools.json, files/). An agent sees only its own folder; you see all of them, so open an "
-            "agent's files whenever you need the detail, and keep an eye on whether they're getting their jobs done. "
-            f'To hand an agent work in the background, write {{"type": "run", "agent": "<id>", "title": "...", "prompt": "..."}} into {r}/. '
-            'When they want a new agent, write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
-            '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there. '
-            "Agents read your memory but keep their own notes: in your nightly review, also skim each agent's memory/ and "
-            "file in your own memory anything about them in general (a move, a preference, a new person) that it lacks. "
-            "What's only about that agent's job stays with the agent.",
+            "Besides this chat they have agents: each is its own chat in the app with one job, its own notes and its "
+            f"own schedule, in {self.agents_dir}/<id>/ (CONTEXT.md, memory/, jobs.json, files/). You see every agent; "
+            "they each see only their own folder (and read your memory). You're the one they can always just talk to:",
+            "- Asked what an agent is up to: answer from the list below, and open its files or chat history "
+            f"({self.agents_dir}/<id>/) when you need the detail.",
+            f'- Asked to tell an agent something or give it work: write {{"type": "message", "agent": "<id>", "text": "what '
+            f'they asked, in full"}} into {r}/. It lands in that agent\'s chat, which does the work there, and a line here '
+            "that opens it says it was sent, so just confirm in a few words and don't do the work yourself.",
+            '- Asked for a new agent: write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
+            '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there.',
+            "- When they ask you for something that's clearly an agent's job, do it, then offer once in a line to have "
+            "that agent take it from now on. Never move anything without their yes, and don't offer the same thing twice.",
+            "- An agent's routine work stays in its own chat: don't relay it here. In the morning brief, add one line "
+            "for an agent only when it finished something or is waiting on them.",
+            "- Agents keep their own notes: in your nightly review, also skim each agent's memory/ and file in your own "
+            "memory anything about them in general (a move, a preference, a new person) that it lacks. What's only "
+            "about that agent's job stays with the agent.",
+            "Their agents now:",
         ]
         running = self.list_runs(active=True)
+        approvals = self.pending_approvals()
         for a in self.list_agents():
             pid = a["id"]
             about = next((ln.strip() for ln in self.get_context(pid).splitlines() if ln.strip() and not ln.startswith("#")), "")
             jobs = [j.get("name", "?") for j in self.agent_jobs(pid)]
             last = self._last_message_ts(pid)
             busy = sum(1 for x in running if x["project"] == pid) + (1 if self.chat_busy(pid) else 0)
+            waiting = sum(1 for x in approvals if x["project"] == pid)
+            said = self.messages(pid, 1)
+            said = plain_text(said[0]["text"] or "").replace("\n", " ")[:160] if said and said[0]["role"] == "ken" else ""
             lines.append(
                 f"- {a['name']} ({pid}): {about[:200] or 'no context yet'}"
                 + (f" · last active {time.strftime('%a %d %b %H:%M', time.localtime(last))}" if last else " · not used yet")
                 + (f" · {busy} working now" if busy else "")
                 + (f" · jobs: {', '.join(jobs)}" if jobs else "")
+                + (f" · {waiting} waiting for their OK" if waiting else "")
+                + (f' · last said: "{said}"' if said else "")
             )
-        if len(lines) == 2:
+        if not self.list_agents():
             lines.append("They have no agents yet.")
         return "\n".join(lines)
 
@@ -2162,6 +2177,17 @@ class Engine:
             return
         if kind == "stop":
             self._bg.append(asyncio.create_task(self.stop_run(str(req.get("run", "")), by="Ken")))
+            return
+        if kind == "message":  # Ken passing something on: it lands in the agent's chat, and a line here opens it
+            aid = self.find_agent(str(req.get("agent", "")))
+            text = str(req.get("text", "")).strip()
+            if not aid or not text:
+                raise ValueError("a message needs an agent and some text")
+            name = self.get_agent(aid)["name"]
+            self.log_message(aid, "you", text, via="ken")
+            self.log_message(HOME, "ken", f"Sent to {name}.", agent_made=aid)
+            self._bg.append(asyncio.create_task(self.send_message(aid, text, log_user=False, prompt=(
+                f"(From Ken, their chief of staff, passing on what they asked in Ken's chat:)\n{text}"))))
             return
         pid = str(req.get("agent", req.get("project", ""))) or HOME
         if kind == "run" and pid.lower() == "ken":
