@@ -120,6 +120,13 @@ if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
     exec(sys.argv[sys.argv.index("-c") + 1])
     raise SystemExit(0)
 
+# A command this version doesn't have (Ken trying one from a newer version before it updated): say so and stop,
+# never start a second Ken. Ken itself starts with no options.
+_unknown = [a for a in sys.argv[1:] if a.startswith("--") and not a.startswith("--multiprocessing")]
+if _unknown:
+    print(f"This Ken doesn't have {_unknown[0]} (yet). Nothing was started.")
+    raise SystemExit(2)
+
 import asyncio
 import html
 import filecmp
