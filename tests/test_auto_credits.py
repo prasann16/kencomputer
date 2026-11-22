@@ -154,3 +154,28 @@ async def test_scheduled_and_background_jobs_at_the_limit_are_not_run_on_credits
     await ken.run_tasks[run["id"]]
     row = ken._run_row(run["id"])
     assert row["status"] == "failed" and not ken.brain.asks[-1]["credits"] and not onboarding.included_ai_in_use()
+
+
+@pytest.mark.parametrize("via, told", [
+    ("app", "Your Claude sign-in stopped working. Connect it again in Settings → AI, or switch to Ken AI credits there "
+            "to keep going now."),
+    ("telegram", "Your Claude sign-in stopped working. Reply 'use Ken credits' to keep going now, or connect Claude "
+                 "again in Settings → AI.")])
+async def test_a_dead_claude_sign_in_says_how_to_keep_going_and_stays_off_credits(ken, monkeypatch, via, told):
+    async def forget():
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+        monkeypatch.setenv("KEN_USE_CREDITS", "0")
+        onboarding.use_included_ai()
+        return True
+
+    ken.forget_dead_claude = forget
+
+    class Dead(PlanSession):
+        async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
+            self.brain.asks.append({"prompt": prompt, "credits": onboarding.included_ai_in_use()})
+            raise AIUnavailable(401, "authentication_error")
+
+    ken.brain.session = lambda **kw: Dead(ken.brain, kw["cwd"], kw["system"], kw.get("resume"), kw.get("model_fn"),
+                                          kw.get("mcp_fn"), kw.get("env_fn"))
+    assert not await ken.send_message(HOME, "hi", via=via)
+    assert said(ken) == [told] and len(ken.brain.asks) == 1 and not onboarding.included_ai_in_use()

@@ -1941,8 +1941,10 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
       // Ken AI credits are in use when the chat runs on Claude without their own Claude, or they picked credits here.
-      const onCredits = HOSTED && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
-      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // credits_off: their own Claude stopped working; Ken AI credits wait until they pick them.
+      const creditsOff = !!setup?.providers?.claude?.credits_off;
+      const onCredits = HOSTED && !creditsOff && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
+      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED && !creditsOff ? 'credits' : '';
       // Hosted: one tap moves between their own account and Ken AI credits, without signing out of anything.
       const use = (id, label) => html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'use', ai: id } }).then((r) => { onConnected(r); toast(`Ken now uses ${label}.`); }).catch((e) => setError(e.message))}>Use ${id === 'credits' ? 'Ken AI credits' : `my own ${label}`}</button>`;
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
