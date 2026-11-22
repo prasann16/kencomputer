@@ -187,18 +187,29 @@ function usePopover() {
 
 // Ken and their agents as a list of chats, like a messaging app: Ken (their chief of staff) on top, then each agent,
 // a chat of its own for one part of their life. Beside the chat on a wide screen; a phone shows it alone at #/chats.
-function ChatList({ chats, pid, open, library, libraryOn, seenAt, onNew, onSettings, onReport }) {
+function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport }) {
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
   return html`<aside class="chat-list" aria-label="Chats">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Chats</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
-    ${libraryOn && html`<a class=${'chat-row library-row' + (library ? ' sel' : '')} href="#/library"><i class="library-icon">${Glyph('photos')}</i><span class="chat-row-text"><b>Library</b></span></a>`}
-    <nav class="chat-rows">${list.map((c) => html`<a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
+    <nav class="chat-rows">${list.map((c) => html`<a class=${'chat-row' + (open && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
       <i class="chat-dot" style=${{ background: c.color || 'var(--ink)' }}></i>
       <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
       <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
       ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>`)}</nav>
     <div class="chat-list-foot"><button class="settings-link" onClick=${onSettings}>Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
   </aside>`;
+}
+
+// Ken's two places, Chats and Library: a strip down the left edge (a bar along the bottom on a phone), Settings
+// at its foot. Chats goes back to the chat they were in (the list, on a phone).
+function Rail({ library, pid, onSettings }) {
+  const toChats = (e) => { if (!matchMedia('(max-width: 760px)').matches) { e.preventDefault(); location.hash = chatHref(pid || 'home'); } };
+  return html`<nav class="rail" aria-label="Ken">
+    <img class="rail-mark" src="/ken.svg" alt=""/>
+    <a class=${'rail-item' + (library ? '' : ' on')} href="#/chats" onClick=${toChats} aria-current=${library ? undefined : 'page'}>${Glyph('chat')}<span>Chats</span></a>
+    <a class=${'rail-item' + (library ? ' on' : '')} href="#/library" aria-current=${library ? 'page' : undefined}>${Glyph('photos')}<span>Library</span></a>
+    <button class="rail-item rail-settings" onClick=${onSettings}>${Glyph('settings')}<span>Settings</span></button>
+  </nav>`;
 }
 
 // Their Library: the photos and videos they've put in for Ken to use (in cloud storage, never on Ken's computer).
@@ -232,6 +243,7 @@ function LibraryPage({ toast }) {
   const [selecting, setSelecting] = useState(false);
   const [sending, setSending] = useState(null); // {done, total, bytes, size}
   const [confirming, setConfirming] = useState(false);
+  const [show, setShow] = useState('all'); // All, Photos, Videos, Files, Made by Ken
   const chooser = useRef(null);
   const load = () => lib('list').then((r) => { setLib(r); keep('library', r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
   useEffect(() => { load(); }, []);
@@ -241,8 +253,8 @@ function LibraryPage({ toast }) {
     const t = setTimeout(load, 8000); return () => clearTimeout(t);
   }, [lib_]);
   const addFiles = async (files) => {
-    files = [...files].filter((f) => /^(image|video)\//.test(f.type) || /\.(heic|heif|mov|mp4|m4v|dng)$/i.test(f.name));
-    if (!files.length) return toast('Pick photos or videos.');
+    files = [...files];
+    if (!files.length) return;
     const size = files.reduce((n, f) => n + f.size, 0);
     let before = 0;
     setSending({ done: 0, total: files.length, bytes: 0, size });
@@ -257,21 +269,26 @@ function LibraryPage({ toast }) {
     setSending(null); load();
   };
   const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const items = lib_?.groups ? lib_.groups.flatMap((g) => g.items) : [];
-  const count = items.length;
-  const chosen = items.filter((it) => picked.has(it.id));
+  const all = lib_?.groups ? lib_.groups.flatMap((g) => g.items) : [];
+  const fits = { all: () => true, photo: (it) => it.kind === 'photo', video: (it) => it.kind === 'video', file: (it) => it.kind === 'file', ken: (it) => it.source === 'ken' };
+  const filters = [['all', 'All'], ['photo', 'Photos'], ['video', 'Videos'], ['file', 'Files'], ['ken', 'Made by Ken']].filter(([id]) => id === 'all' || all.some(fits[id]));
+  const showing = filters.some(([id]) => id === show) ? show : 'all';
+  const groups = (lib_?.groups || []).map((g) => ({ ...g, items: g.items.filter(fits[showing]) })).filter((g) => g.items.length);
+  const items = groups.flatMap((g) => g.items);
+  const count = all.length;
+  const what = all.some(fits.file) ? (count === 1 ? 'thing' : 'things') : count === 1 ? 'photo or video' : 'photos and videos';
+  const chosen = all.filter((it) => picked.has(it.id));
   const download = () => chosen.forEach((it, i) => setTimeout(() => { const a = document.createElement('a'); a.href = it.url + '?download'; a.download = it.name; document.body.appendChild(a); a.click(); a.remove(); }, i * 400));
   const remove = async () => {
     try { await lib('remove', { method: 'POST', json: { ids: [...picked] } }); toast(picked.size === 1 ? 'Removed.' : `${picked.size} removed.`); }
     catch (e) { toast(e.message); }
     setPicked(new Set()); setConfirming(false); setSelecting(false); load();
   };
-  if (lib_?.off) return html`<div class="library"><header class="library-head"><a class="clear-button narrow-only" href="#/chats">‹ Chats</a><div class="library-title"><h1>Library</h1></div></header><div class="library-empty"><p>Your Library isn't on yet.</p></div></div>`;
+  if (lib_?.off) return html`<div class="library"><header class="library-head"><div class="library-title"><h1>Library</h1></div></header><div class="library-empty"><p>Your Library isn't on yet.</p></div></div>`;
   return html`<div class=${'library' + (selecting || picked.size ? ' selecting' : '')} onDragOver=${(e) => e.preventDefault()} onDrop=${(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
-    <input ref=${chooser} type="file" multiple accept="image/*,video/*,.heic,.heif,.mov" hidden onChange=${(e) => { addFiles(e.target.files); e.target.value = ''; }}/>
+    <input ref=${chooser} type="file" multiple hidden onChange=${(e) => { addFiles(e.target.files); e.target.value = ''; }}/>
     <header class="library-head">
-      <a class="clear-button narrow-only" href="#/chats">‹ Chats</a>
-      <div class="library-title"><h1>Library</h1>${lib_ && !lib_.off && html`<p class="library-sub">${count} ${count === 1 ? 'photo or video' : 'photos and videos'} Ken can use · ${gbLabel(lib_.used)} of ${gbLabel(lib_.allowance)}</p>`}</div>
+      <div class="library-title"><h1>Library</h1>${lib_ && !lib_.off && html`<p class="library-sub">${count} ${what} Ken can use · ${gbLabel(lib_.used)} of ${gbLabel(lib_.allowance)}</p>`}</div>
       ${count > 0 && html`<button class="clear-button narrow-only library-select" onClick=${() => { setSelecting(!selecting); setPicked(new Set()); }}>${selecting ? 'Done' : 'Select'}</button>`}
       <div class="library-add pop">
         <button class="btn primary" disabled=${!!sending} onClick=${() => setAdding(!adding)}>${Glyph('plus')} Add</button>
@@ -289,21 +306,22 @@ function LibraryPage({ toast }) {
     </div>`}
     ${count > 0 && html`<p class="library-try">Try: “Make a reel from my ${lib_.groups[0].title.split(' · ')[0].replace(/ \d{4}$/, '')} clips”</p>`}
     ${lib_?.albums?.length > 0 && html`<div class="library-albums">${lib_.albums.map((a) => html`<span class="library-album" title="New photos in this album are added when you open Ken on your phone">${Glyph('photos')} ${a.name} · ${a.count}<small>from your phone, kept up to date</small></span>`)}</div>`}
-    ${lib_?.groups?.map((g) => html`<section class="library-group">
+    ${filters.length > 2 && html`<div class="segmented library-filters" role="radiogroup" aria-label="Show">${filters.map(([id, label]) => html`<button role="radio" aria-checked=${showing === id} onClick=${() => setShow(id)}>${label}</button>`)}</div>`}
+    ${groups.map((g) => html`<section class="library-group">
       <h2>${g.title}<small>${g.items.length}</small></h2>
       <div class="library-grid">${g.items.map((it) => html`<div class=${'library-item' + (picked.has(it.id) ? ' picked' : '')}>
-        <button class="library-thumb" aria-label=${it.name} onClick=${() => (picked.size || selecting ? toggle(it.id) : setOpen(it))}>${it.thumb ? html`<img src=${it.thumb} alt="" loading="lazy"/>` : html`<span class="library-pending">${Glyph(it.kind === 'video' ? 'play' : 'photos')}<small>Getting ready…</small></span>`}
+        <button class="library-thumb" aria-label=${it.name} onClick=${() => (picked.size || selecting ? toggle(it.id) : it.kind === 'file' ? (location.href = it.url + '?download') : setOpen(it))}>${it.thumb ? html`<img src=${it.thumb} alt="" loading="lazy"/>` : it.kind === 'file' ? html`<span class="library-file">${Glyph('file')}<small>${it.name}</small></span>` : html`<span class="library-pending">${Glyph(it.kind === 'video' ? 'play' : 'photos')}<small>Getting ready…</small></span>`}
           ${it.kind === 'video' && it.duration && html`<span class="library-dur">${runtime(it.duration)}</span>`}</button>
         <button class="library-check" aria-label=${picked.has(it.id) ? 'Unselect' : 'Select'} aria-pressed=${picked.has(it.id)} onClick=${() => toggle(it.id)}>${picked.has(it.id) ? Icon.check : ''}</button>
       </div>`)}</div>
     </section>`)}
     ${picked.size > 0 && html`<div class="library-bar" role="toolbar">${confirming
       ? html`<span>Remove ${picked.size === 1 ? 'this one' : `these ${picked.size}`} from your Library? Ken can't use ${picked.size === 1 ? 'it' : 'them'} after.</span>
-        <button class="btn" onClick=${() => setConfirming(false)}>Keep</button><button class="btn danger" onClick=${remove}>Remove</button>`
+        <button class="library-bar-btn" onClick=${() => setConfirming(false)}>Keep</button><button class="library-bar-btn strong" onClick=${remove}>Remove</button>`
       : html`<span>${picked.size} selected</span>
-        <button class="clear-button" onClick=${() => { setPicked(new Set()); setSelecting(false); }}>Cancel</button>
-        <button class="btn" onClick=${download}>${Glyph('download')} Download</button>
-        <button class="btn danger" onClick=${() => setConfirming(true)}>Remove</button>`}</div>`}
+        <button class="library-bar-btn" onClick=${() => { setPicked(new Set()); setSelecting(false); }}>Cancel</button>
+        <button class="library-bar-btn" onClick=${download}>Download</button>
+        <button class="library-bar-btn" onClick=${() => setConfirming(true)}>Remove</button>`}</div>`}
     ${open && html`<div class="scrim center" onClick=${() => setOpen(null)}><figure class="library-view" onClick=${(e) => e.stopPropagation()}>
       ${open.kind === 'video' ? html`<video src=${open.url} poster=${open.thumb || undefined} controls playsinline autoplay></video>` : html`<img src=${open.kind === 'photo' && /\.(heic|heif|dng)$/i.test(open.name) ? (open.thumb || open.url) : open.url} alt=${open.name}/>`}
       <figcaption><span>${open.name}<small>${open.when}${open.place ? ' · ' + open.place : ''}</small></span><a class="btn" href=${open.url + '?download'} download=${open.name}>${Glyph('download')} Download</a></figcaption>
@@ -2590,7 +2608,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class=${'shell' + (agentsOn ? ' with-chats' + (route.list ? ' on-list' : '') : '')}>${agentsOn && html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} library=${route.library} libraryOn=${libraryOn} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} agentsUI=${agentsOn} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class=${'shell' + (agentsOn ? ' with-chats' + (route.list ? ' on-list' : '') : '') + (libraryOn ? ' with-rail' + (route.library ? ' on-library' : '') : '')}>${libraryOn && html`<${Rail} library=${route.library} pid=${pid} onSettings=${()=>openSettings()}/>`}${agentsOn && !route.library && html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} agentsUI=${agentsOn} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} key=${pid} page pid=${pid} onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>`}
   </main>
