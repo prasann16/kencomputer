@@ -106,6 +106,13 @@ if sys.argv[1:2] == ["--chat"]:  # Ken reading one of their agents' chats (read-
                           int(sys.argv[3]) if sys.argv[3:4] and sys.argv[3].isdigit() else 40))
     raise SystemExit(0)
 
+if sys.argv[1:2] == ["--library"]:  # hosted Ken: their Library of photos and videos, kept by the site (library.py)
+    import os
+    from pathlib import Path
+
+    import library
+    raise SystemExit(library.main(sys.argv[2:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -1127,6 +1134,8 @@ def build_system() -> str:
             system += "\n\n" + ENGINE.chief_brief(read_chat=f"{KEN_CMD} --chat")
         except Exception as e:
             log.warning("agent listing failed: %s", e)
+    if library_prompt():
+        system += "\n\n" + library_prompt()
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -2383,7 +2392,7 @@ async def keep_awake() -> None:
     async with httpx.AsyncClient(timeout=15) as client:
         while True:
             try:
-                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS)
+                busy = ENGINE.busy() or bool(ACCOUNTS and ACCOUNTS.active) or bool(DOWNLOADS) or LIBRARY_BUSY
                 # talked / ai: Ken's first answer and how it thinks, for the host's funnel (counted once there).
                 ai = ACCOUNTS.providers["claude"].ai_choice() if ACCOUNTS and hasattr(ACCOUNTS.providers.get("claude"), "ai_choice") else ""
                 stats = await asyncio.to_thread(computer_stats)  # disk and memory, for the owner's fleet page
@@ -2399,9 +2408,47 @@ async def keep_awake() -> None:
                     if engine_mod.save_kits(ENGINE.home, answer.get("kits")):  # a kit switched on or off for them
                         ENGINE.sync_skills()
                         log.info("kits now: %s", engine_mod.kits_on(ENGINE.home))
+                if not LIBRARY_BUSY:  # new photos and videos in their Library: thumbnails, when and where
+                    APP_TASKS.add(asyncio.create_task(library_pass()))
             except Exception as e:
                 log.warning("keep-awake check-in failed: %s", e)
             await asyncio.sleep(60)
+
+
+LIBRARY_BUSY = False
+LIBRARY_ON = False  # their Library is switched on for them (the site answers this computer's Library calls)
+
+
+async def library_pass() -> None:
+    """Thumbnails, dates and places for what's new in their Library, off the main thread; the computer stays awake for it."""
+    global LIBRARY_BUSY, LIBRARY_ON
+    import library
+    LIBRARY_BUSY = True
+    try:
+        done = await asyncio.to_thread(library.process_new, 50, log)
+        LIBRARY_ON = done is not None
+        if done:
+            log.info("library: %d new item(s) ready", done)
+    except Exception as e:
+        log.warning("library pass failed: %s", e)
+    finally:
+        LIBRARY_BUSY = False
+
+
+def library_prompt() -> str:
+    if not LIBRARY_ON:
+        return ""
+    return (
+        "THEIR LIBRARY: the photos and videos they've put in for you (from their phone, the web, Telegram), kept in their "
+        "own cloud storage, not on this computer. When a task needs their photos or clips (a reel from a trip, a post, "
+        f"\"the one from Lisbon\"), search it: `{KEN_CMD} --library find [words] [--from YYYY-MM-DD] [--to YYYY-MM-DD] "
+        "[--kind photo|video]` (words match the place, file name, album and your notes). Look before you choose: "
+        f"`{KEN_CMD} --library thumb <id> …` gives small previews to open. Then fetch only what you'll use: "
+        f"`{KEN_CMD} --library get <id> …` (add `--seconds 12-20` for just part of a long video), and delete those copies "
+        f"when you're done. After you've looked at one, save a line on what's in it: `{KEN_CMD} --library note <id> "
+        "<what's in it>`, so the next search finds it. Something you made that they'll want to keep (a finished reel): "
+        f"`{KEN_CMD} --library add <file>`. Never remove anything from it; they do that in the app's Library."
+    )
 
 
 def voice_available() -> bool:

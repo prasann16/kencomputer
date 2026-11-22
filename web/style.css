@@ -734,3 +734,10 @@ ol.conn-steps li { margin: 2px 0; }
   .library.selecting .library-check { opacity: 1; pointer-events: auto; }
 }
 .library-bar .btn.danger { color: var(--danger); }
+
+.library-sending { position: relative; margin-top: var(--s4); padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--text-sm); overflow: hidden; max-width: 520px; }
+.library-sending span { display: block; color: var(--muted); }
+.library-sending i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--ink); transition: width .3s; }
+.library-pending { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 100%; color: var(--faint); }
+.library-pending svg { width: 22px; height: 22px; }
+.library-pending small { font-size: 12px; }
