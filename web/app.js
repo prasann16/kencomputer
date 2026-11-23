@@ -1798,9 +1798,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
-  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
+  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
-  <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
+  <header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
   ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
   ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not or when you pick them.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
@@ -1918,7 +1918,7 @@ function SendBigFile({ token, onClose }) {
   };
   const pct = Math.round((progress || 0) * 100);
   return html`<div class="settings-page send-page" role="region" aria-label="Send files to Ken"><div class="sp-wrap">
-    <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn sm ghost" onClick=${onClose}>Close</button></header>
+    <header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn sm ghost" onClick=${onClose}>Close</button></header>
     ${done ? html`<h1 class="sp-title">Ken has them</h1><p class="np-help">Ken is on it, and will answer you in Telegram.</p><div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
       : error && !info ? html`<h1 class="sp-title">This link doesn't work</h1><p class="connect-error" role="alert">${error}</p>`
       : !info ? html`<p class="np-note">Loading…</p>`
