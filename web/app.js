@@ -718,7 +718,7 @@ const runClock = (ts) => {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
 };
 
-function RunningPill({ runs, toast }) {
+function RunningPill({ runs, toast, onOpen }) {
   const [open, setOpen] = useState(false), [stopping, setStopping] = useState({}), [, setNow] = useState(0);
   const box = useRef(null), any = runs.length > 0;
   useEffect(() => {
@@ -741,11 +741,11 @@ function RunningPill({ runs, toast }) {
     try { await api(`/api/runs/${id}/stop`, { json: {} }); } catch (e) { setStopping((s) => ({ ...s, [id]: false })); toast(e.message); }
   };
   return html`<div class="running" ref=${box}>
-    <button class="running-pill" aria-expanded=${open} aria-label=${`${list.length} running. Show jobs`} onClick=${() => setOpen(!open)}>
+    <button class="running-pill" aria-expanded=${open} aria-label=${list.length > 1 ? `${list.length} running. Show jobs` : `Watch ${first.title}`} onClick=${() => list.length === 1 && onOpen ? onOpen(first.id) : setOpen(!open)}>
       <span aria-hidden="true">⏳</span>${list.length > 1 && html`<b>${list.length} running</b><span class="sep">·</span>`}<span class="ellipsis">${first.title}</span><span class="sep">·</span><span class="t">${since(first)}</span><span class="chev" aria-hidden="true">›</span>
     </button>
     ${open && html`<div class="running-list" role="dialog" aria-label="Running jobs">${list.map((r) => html`<div class="running-item" key=${r.id}>
-      <div class="run-text"><div class="title ellipsis">${r.title}</div><div class="run-step ellipsis" key=${r.activity}>${r.status === 'queued' ? 'Waiting for a free slot' : r.activity || 'Working'}</div></div>
+      <button class="run-text run-open" title="Watch" onClick=${() => { setOpen(false); onOpen?.(r.id); }}><div class="title ellipsis">${r.title}</div><div class="run-step ellipsis" key=${r.activity}>${r.status === 'queued' ? 'Waiting for a free slot' : r.activity || 'Working'}</div></button>
       <span class="t">${since(r)}</span>
       <button class="btn sm" disabled=${!!stopping[r.id]} onClick=${() => stop(r.id)}>${stopping[r.id] ? 'Stopping…' : 'Stop'}</button>
     </div>`)}</div>`}
@@ -957,7 +957,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
   const leave = () => { following.current = false; };
   return html`<section class=${'conversation-body' + (runs.length ? ' has-running' : '')} aria-label="Conversation"
 >
-    <${RunningPill} runs=${runs} toast=${toast}/>
+    <${RunningPill} runs=${runs} toast=${toast} onOpen=${openRun}/>
     <div class="scroll" ref=${thread} onWheel=${(e) => e.deltaY < 0 && leave()} onTouchMove=${leave} onKeyDown=${(e) => ['ArrowUp', 'PageUp', 'Home'].includes(e.key) && leave()}
       onScroll=${() => { if (thread.current && atEnd(thread.current)) { following.current = true; setBelow(false); } }}>
       <div class="thread conversation-thread">

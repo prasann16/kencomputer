@@ -693,3 +693,8 @@ ol.conn-steps li { margin: 2px 0; }
 .chat-row-wrap:has(.pop-menu) { z-index: 5; }
 .chat-row-wrap:has(.pop-menu) .row-more { opacity: 1; }
 .chat-row-wrap:has(.row-more):hover .chat-row-top small, .chat-row-wrap:has(.row-more:focus-within) .chat-row-top small { visibility: hidden; }
+
+/* A running job in the ⏳ list opens when tapped, like Watch */
+.run-open { all: unset; display: block; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.run-open:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+.run-open:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
