@@ -1955,9 +1955,12 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use${setup?.providers?.claude?.credits_until ? ` until ${setup.providers.claude.credits_until}` : ''}` : ''}</span>
         <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
       // Their own Claude or ChatGPT at its limit: carry on with Ken AI credits until it resets (off unless they turn it on).
+      // Shown once their Ken knows the setting (it reports auto_credits); a Ken that hasn't updated yet doesn't.
+      const known = typeof setup?.providers?.claude?.auto_credits === 'boolean';
       const auto = !!setup?.providers?.claude?.auto_credits;
-      if (HOSTED && (usage.credits_left || usage.free) && (own.claude || own.codex)) rows.push(html`<div class="ai-auto"><span class="ai-name">Keep going on Ken AI credits when your plan hits its limit</span>
-        <input class="job-switch" type="checkbox" role="switch" aria-label="Keep going on Ken AI credits when your plan hits its limit" checked=${auto} onChange=${(e) => api('/api/setup', { json: { action: 'auto-credits', on: e.target.checked } }).then(onConnected).catch((err) => setError(err.message))}/></div>`);
+      const keepGoing = (on) => api('/api/setup', { json: { action: 'auto-credits', on } }).then((r) => { onConnected(r); toast(on ? 'When your plan hits its limit, Ken keeps going on Ken AI credits.' : 'When your plan hits its limit, Ken stops and tells you.'); }).catch((err) => setError(err.message));
+      if (HOSTED && known && (usage.credits_left || usage.free) && (own.claude || own.codex)) rows.push(html`<div class="ai-auto"><span class="ai-name">Keep going on Ken AI credits when your plan hits its limit</span>
+        <input class="job-switch" type="checkbox" role="switch" aria-label="Keep going on Ken AI credits when your plan hits its limit" checked=${auto} onChange=${(e) => keepGoing(e.target.checked)}/></div>`);
       return rows;
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
