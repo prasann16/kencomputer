@@ -1976,7 +1976,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const [tools, setTools] = useState(null);
   // Settings → Cloud (the Mac) / Your Mac (the cloud): only where it's on (the site says, or this Ken has a link).
   const [macLink, setMacLink] = useState(false);
-  useEffect(() => { (HOSTED ? fetch('/account/mac.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : {}).then((r) => !!r.on) : api('/api/link').then(() => true)).then(setMacLink).catch(() => {}); }, []);
+  // Asked once Ken has said whether it's in the cloud (meta), so the right one is asked.
+  const metaIn = Object.keys(meta).length > 0;
+  useEffect(() => { if (!metaIn) return; (HOSTED ? fetch('/account/mac.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : {}).then((r) => !!r.on) : api('/api/link').then(() => true)).then(setMacLink).catch(() => {}); }, [metaIn]);
   const [privacy, setPrivacy] = useState(null), [limits, setLimits] = useState(null);
   useEffect(() => { api('/api/limits').then(setLimits).catch(() => {}); }, []);  // their plans' limits, from replies (no AI call)
   useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); if (!HOSTED) api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
