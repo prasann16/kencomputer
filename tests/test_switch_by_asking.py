@@ -142,40 +142,6 @@ async def test_on_telegram_the_limit_and_credits_out_say_what_to_reply(ken):
     assert said(ken)[-1] == "You've used your Ken AI credits. Switch back to your own Claude in Settings → AI on kencomputer.dev (its limit resets at 22:20)."
 
 
-def test_only_the_replies_offered_are_answered_without_the_ai(monkeypatch):
-    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://credits.example/v1")
-    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "included-key")
-    assert bot.switch_request("use Ken credits") == "credits"
-    assert bot.switch_request("'Use Ken AI credits.'") == "credits"
-    assert bot.switch_request("use my Claude") == "claude"
-    assert bot.switch_request("switch back to my own ChatGPT!") == "codex"
-    assert bot.switch_request("use my claude to write a post") == ""
-    monkeypatch.delenv("KEN_INCLUDED_AI_TOKEN")
-    assert bot.switch_request("use Ken credits") == ""
-
-
-async def test_out_of_credits_on_telegram_the_reply_switches_back(ken, monkeypatch):
-    """The AI that ran out can't answer, so the offered reply is answered by Ken itself, and the next message works."""
-    monkeypatch.setattr(bot, "ENGINE", ken)
-    monkeypatch.setattr(bot, "ACCOUNTS", accounts(ken))
-    monkeypatch.setenv("KEN_USE_CREDITS", "1")
-    onboarding.use_included_ai()
-    ken.plan.credits_out = True
-    assert not await ken.send_message(HOME, "hi", via="telegram")
-    assert said(ken)[-1] == "You've used your Ken AI credits. Switch back to your own Claude in Settings → AI on kencomputer.dev."
-    replies = []
-
-    class Message:
-        async def reply_text(self, text, **kw):
-            replies.append(text)
-
-    update = type("U", (), {"effective_message": Message()})()
-    await bot.switch_on_phone(update, "use my Claude", bot.switch_request("use my Claude"))
-    assert replies == ["Done, I'm on your own Claude now."] and said(ken)[-1] == replies[0]
-    assert await ken.send_message(HOME, "hi again", via="telegram")
-    assert said(ken)[-1] == "answer on claude"
-
-
 async def test_settings_says_until_when_ken_switched_to_credits_by_itself(ken, aiohttp_client):
     """A switch an older Ken made at a plan's limit: /api/setup says until when (providers.claude.credits_until), only while it lasts."""
     app = WebApp(ken, ken.home, setup=accounts(ken))

@@ -24,7 +24,8 @@ class PlanSession(FakeSession):
     async def ask(self, prompt, on_text, on_tool=None, on_delta=None):
         brain, plan = self.brain, self.brain.plan
         credits = brain.name == "claude" and onboarding.included_ai_in_use()
-        brain.asks.append({"prompt": prompt, "credits": credits})
+        brain.asks.append({"prompt": prompt, "credits": credits, "resume": self.session_id})
+        self.session_id = self.session_id or f"{brain.name}-session-{len(brain.asks)}"
         if credits and plan.credits_out:
             raise AIUnavailable(402, "billing_error")
         if not credits and plan.limited.get(brain.name):
@@ -179,3 +180,92 @@ async def test_a_dead_claude_sign_in_says_how_to_keep_going_and_stays_off_credit
                                           kw.get("mcp_fn"), kw.get("env_fn"))
     assert not await ken.send_message(HOME, "hi", via=via)
     assert said(ken) == [told] and len(ken.brain.asks) == 1 and not onboarding.included_ai_in_use()
+
+
+# ---- Turned on in Settings → AI: Ken keeps going on Ken AI credits until their plan resets
+
+SWITCHED = "Your Claude plan hit its limit, so I'm carrying on with Ken AI credits until 22:20."
+
+
+@pytest.fixture
+def keep_going(monkeypatch):
+    monkeypatch.setenv("KEN_AUTO_CREDITS", "1")
+
+
+async def test_turned_on_a_plan_at_its_limit_carries_on_with_credits_and_goes_back(ken, keep_going):
+    ken.plan.limited["claude"] = True
+    assert await ken.send_message(HOME, "draft my post")
+    assert [a["credits"] for a in ken.brain.asks] == [False, True]
+    assert "draft my post" in ken.brain.asks[1]["prompt"]  # nothing done yet: the same message, once more
+    assert said(ken) == [SWITCHED, "answer on credits"]
+    assert await ken.send_message(HOME, "another")  # still on credits, nothing said again
+    assert said(ken)[-1] == "answer on credits" and len(said(ken)) == 3
+    ken.plan.resets.clear()  # 22:20 came
+    ken.plan.limited.clear()
+    assert await ken.send_message(HOME, "thanks")
+    assert not ken.brain.asks[-1]["credits"] and not onboarding.included_ai_in_use()
+    assert said(ken)[-2:] == ["Back on your own Claude.", "answer on claude"]
+
+
+async def test_turned_on_a_reply_cut_off_midway_carries_on_in_the_same_session(ken, keep_going):
+    ken.plan.limited["claude"], ken.plan.act_first = True, True
+    assert await ken.send_message(HOME, "email Sam")
+    first, second = ken.brain.asks
+    assert not first["credits"] and second["credits"]
+    assert second["resume"] == "claude-session-1"  # the session that saw what was already done
+    assert second["prompt"].startswith("(Their Claude plan hit its limit partway through this")
+    assert "Don't redo or send again anything you already did." in second["prompt"]
+    assert "email Sam" not in second["prompt"]
+    assert said(ken) == [SWITCHED, "answer on credits"]
+
+
+async def test_turned_on_a_chatgpt_chat_moves_to_claude_with_what_it_had_done(ken, keep_going):
+    await ken.set_runtime(HOME, backend="codex")
+    ken.plan.limited["codex"], ken.plan.act_first = True, True
+    assert await ken.send_message(HOME, "email Sam")
+    ask = ken.brains["claude"].asks[-1]
+    assert ask["credits"] and ken.backend(HOME) == "claude"
+    assert "email Sam" in ask["prompt"] and "- Sending the email" in ask["prompt"]
+    assert "Their ChatGPT plan hit its limit partway through this" in ask["prompt"]
+    assert said(ken)[0].startswith("Your ChatGPT plan hit its limit, so I'm carrying on with Ken AI credits")
+    ken.plan.resets.clear()
+    ken.plan.limited.clear()
+    assert await ken.send_message(HOME, "thanks")
+    assert ken.backend(HOME) == "codex" and said(ken)[-2:] == ["Back on your own ChatGPT.", "answer on codex"]
+
+
+async def test_turned_on_but_held_after_a_dead_sign_in_it_doesnt_switch(ken, keep_going, monkeypatch):
+    monkeypatch.setenv("KEN_USE_CREDITS", "0")  # their Claude sign-in stopped working: credits wait for their pick
+    await ken.set_runtime(HOME, backend="codex")
+    ken.plan.limited["codex"] = True
+    assert not await ken.send_message(HOME, "hi")
+    assert ken.backend(HOME) == "codex" and not ken.brains["claude"].asks and not onboarding.included_ai_in_use()
+
+
+async def test_turned_on_jobs_and_background_runs_carry_on(ken, keep_going):
+    ken.plan.limited["claude"] = True
+    text = await ken.run_job(HOME, "the brief", job={"name": "morning-brief", "label": "☀️ Morning brief"})
+    assert text == f"{SWITCHED}\n\nanswer on credits"
+    ken.back_from_credits(force=True)
+    ken.plan.act_first = True
+    ken.create_agent("Reader")
+    run = ken.start_run("reader", "Read", "read it")
+    await ken.run_tasks[run["id"]]
+    last = ken.brain.asks[-1]
+    assert ken._run_row(run["id"])["status"] == "done" and last["credits"] and last["resume"]
+    assert last["prompt"].startswith("(Their Claude plan hit its limit partway through this")
+
+
+async def test_the_setting_is_off_unless_they_turn_it_on(tmp_path, monkeypatch):
+    for name in ("KEN_AUTO_CREDITS", "KEN_INCLUDED_AI_TOKEN", "KEN_INCLUDED_AI_URL"):
+        monkeypatch.setenv(name, "x")
+        monkeypatch.delenv(name)
+    from test_onboarding import make
+    setup, _ = make(tmp_path)
+    assert "auto_credits" not in setup.status()
+    with pytest.raises(ValueError):
+        setup.keep_going_on_credits(True)  # no Ken AI credits on this plan
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://credits.example/v1")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "included-key")
+    assert setup.keep_going_on_credits(True)["auto_credits"] and "KEN_AUTO_CREDITS=1" in (tmp_path / ".env").read_text()
+    assert "auto_credits" not in setup.keep_going_on_credits(False)
