@@ -1802,8 +1802,10 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
       // Ken AI credits are in use when the chat runs on Claude without their own Claude, or they picked credits here.
-      const onCredits = HOSTED && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
-      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // credits_off: their own Claude stopped working; Ken AI credits wait until they pick them.
+      const creditsOff = !!setup?.providers?.claude?.credits_off;
+      const onCredits = HOSTED && !creditsOff && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
+      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED && !creditsOff ? 'credits' : '';
       // Hosted: one tap moves between their own account and Ken AI credits, without signing out of anything.
       const use = (id, label) => html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'use', ai: id } }).then((r) => { onConnected(r); toast(`Ken now uses ${label}.`); }).catch((e) => setError(e.message))}>Use ${id === 'credits' ? 'Ken AI credits' : `my own ${label}`}</button>`;
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
@@ -1813,6 +1815,10 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       const usage = meta.usage || {};
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use${setup?.providers?.claude?.credits_until ? ` until ${setup.providers.claude.credits_until}` : ''}` : ''}</span>
         <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
+      // Their own Claude or ChatGPT at its limit: carry on with Ken AI credits until it resets (off unless they turn it on).
+      const auto = !!setup?.providers?.claude?.auto_credits;
+      if (HOSTED && (usage.credits_left || usage.free) && (own.claude || own.codex)) rows.push(html`<div class="ai-auto"><span class="ai-name">Keep going on Ken AI credits when your plan hits its limit</span>
+        <input class="job-switch" type="checkbox" role="switch" aria-label="Keep going on Ken AI credits when your plan hits its limit" checked=${auto} onChange=${(e) => api('/api/setup', { json: { action: 'auto-credits', on: e.target.checked } }).then(onConnected).catch((err) => setError(err.message))}/></div>`);
       return rows;
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}

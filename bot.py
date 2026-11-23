@@ -1243,29 +1243,6 @@ def ai_question() -> str:
 
 
 FREE_REPLY = re.compile(r"\W*(try( it| me)?\s+)?free\W*", re.I)
-# The reply a limit or credits-out message on Telegram offers (engine.explain). Answered here, not by the AI: the AI
-# that just stopped (out of credits, at its limit) couldn't answer it.
-SWITCH_REPLY = re.compile(r"\W*(?:please\s+)?(?:use|switch(?: back)? to)\s+(?:(ken(?: ai)? credits)|my(?: own)? (claude|chatgpt))\W*", re.I)
-
-
-def switch_request(text: str) -> str:
-    """ "use Ken credits" -> "credits", "use my Claude" -> "claude", "use my ChatGPT" -> "codex"; else ""."""
-    m = SWITCH_REPLY.fullmatch(text or "") if included_ai_key() else None
-    if not m:
-        return ""
-    return "credits" if m.group(1) else {"claude": "claude", "chatgpt": "codex"}[m.group(2).lower()]
-
-
-async def switch_on_phone(update: Update, text: str, ai: str) -> None:
-    from web import use_ai
-    try:
-        await use_ai(ENGINE, ACCOUNTS, ai)
-        reply = f"Done, I'm on {'Ken AI credits' if ai == 'credits' else 'your own ' + ('ChatGPT' if ai == 'codex' else 'Claude')} now."
-    except ValueError as e:
-        reply = str(e)
-    ENGINE.log_message(HOME, "you", text, via="telegram")
-    ENGINE.log_message(HOME, "ken", reply, via="telegram")
-    await update.effective_message.reply_text(reply)
 
 
 async def handle_prompt(update: Update, prompt: str, context: str = "", said: str | None = None,
@@ -1284,9 +1261,6 @@ async def handle_prompt(update: Update, prompt: str, context: str = "", said: st
         if ENGINE.backend(HOME) != "claude":
             await ENGINE.set_runtime(HOME, backend="claude")  # Ken AI credits run on Claude
         prompt, context, said, files = first_contact_prompt("chose to try Ken free, on their phone"), "", None, None
-    if said is None and (ai := switch_request(prompt)):
-        await switch_on_phone(update, prompt, ai)
-        return
     shown = said is not None or not prompt.startswith("(")
     chat_id = update.effective_chat.id
     if ENGINE.chat_busy(HOME):
