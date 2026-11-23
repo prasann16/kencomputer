@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -352,6 +353,71 @@ async def test_a_reel_ken_names_is_ready_to_watch_before_anyone_presses_play(eng
     assert len(list(app.previews.glob("*.mp4"))) == 1
     await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
     assert len(list(app.previews.glob("*.mp4"))) == 1  # the phone gets that same copy, not a second one
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+async def test_the_watching_copy_goes_up_to_the_site_so_it_plays_without_waking_ken(engine, aiohttp_client, hosted, monkeypatch):  # noqa: F811
+    """Hosted with their Library on: each watching copy also goes up to the site (ken-hosted previews.ts), named the way
+    the chat names it, once; the phone and the web then play it from storage. The site saying no (Library off) stops
+    the asking for a while, and nothing about playing from this computer changes."""
+    import subprocess
+    from aiohttp import web as aioweb
+    calls, state = [], {"on": True, "has": set()}
+
+    async def site(request):
+        if not state["on"]:
+            calls.append((request.method, request.path, None))
+            return aioweb.json_response({"error": "not_found"}, status=404)
+        assert request.headers["Authorization"] == "Bearer box-token"
+        key = request.query.get("key")
+        body = await request.read()
+        calls.append((request.method, request.path, key or json.loads(body)))
+        if request.path.endswith("/has"):
+            return aioweb.json_response({"has": key in state["has"]})
+        if request.path.endswith("/file"):
+            assert body[:12].find(b"ftyp") >= 0 and int(request.headers["Content-Length"]) == len(body)
+            state["has"].add(key)
+        return aioweb.json_response({"ok": True})
+
+    fake = aioweb.Application()
+    fake.router.add_route("*", "/box/previews/{what}", site)
+    site_client = await aiohttp_client(fake)
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", f"http://127.0.0.1:{site_client.port}/box/checkin")
+    monkeypatch.setenv("KEN_KEEPALIVE_TOKEN", "box-token")
+
+    app, client = await signed_in(engine, aiohttp_client)
+    engine.files_dir(HOME).mkdir(parents=True, exist_ok=True)
+    reel = engine.files_dir(HOME) / "reel.mov"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=1",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(reel)], check=True)
+
+    async def settled(n):
+        for _ in range(100):
+            if len(calls) >= n and not app.bg:
+                return
+            await asyncio.sleep(0.05)
+
+    engine.log_message(HOME, "ken", f"Here it is: `{reel}`")
+    await settled(3)
+    [copy] = app.previews.glob("*.mp4")
+    assert calls == [("GET", "/box/previews/has", copy.stem), ("PUT", "/box/previews/file", copy.stem),
+                     ("POST", "/box/previews/names", {"key": copy.stem, "refs": [str(reel)]})]
+    # Played as a chat file: only its new name goes up, not the video again. Played again: nothing.
+    r = await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    assert r.status == 200 and await r.read() == copy.read_bytes()
+    await settled(4)
+    assert calls[3:] == [("POST", "/box/previews/names", {"key": copy.stem, "refs": [f"chat:{HOME}/reel.mov"]})]
+    await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    await settled(5)
+    assert len(calls) == 4
+    # Their Library switched off: the site says no once, and playing still works as it did.
+    state["on"] = False
+    reel.write_bytes(reel.read_bytes())  # a new version: a new copy
+    os.utime(reel, (time.time() + 5, time.time() + 5))
+    for _ in range(2):
+        assert (await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")).status == 200
+        await settled(6)
+    assert calls[4:] == [("GET", "/box/previews/has", None)]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")

@@ -224,6 +224,35 @@ def process_new(limit: int = 50, log=None) -> int | None:
     return done
 
 
+# ------------------------------------------------------------------ watching copies of chat videos
+
+def store_watching_copy(copy: Path, refs: list[str], upload: bool = True) -> None:
+    """A video's small watching copy (web.py _preview) kept by the site next to their Library, so the phone and the web
+    play it from storage at once instead of waking this computer to stream it (ken-hosted previews.ts). `refs` is what
+    the chat calls the file (a path as Ken named it, or chat:<pid>/<name>). Off (Library not on for them): raises Off."""
+    where = site()
+    if not where:
+        raise Off()
+    base, key = where[0].rsplit("/library", 1)[0] + "/previews", copy.stem
+    auth = {"Authorization": f"Bearer {where[1]}", "User-Agent": "Ken"}
+
+    def send(path: str, data=None, method: str = "GET", headers: dict | None = None, timeout: int = 30) -> dict:
+        req = urllib.request.Request(f"{base}/{path}", data=data, method=method, headers={**auth, **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404 and path.startswith("has"):
+                raise Off() from None
+            raise RuntimeError(f"{path}: {e.code}") from None
+
+    if upload and not send(f"has?key={key}").get("has"):
+        with copy.open("rb") as f:
+            send(f"file?key={key}", f, "PUT", {"Content-Type": "video/mp4", "Content-Length": str(copy.stat().st_size)}, timeout=300)
+    if refs:
+        send("names", json.dumps({"key": key, "refs": refs}).encode(), "POST", {"Content-Type": "application/json"})
+
+
 # ------------------------------------------------------------------ Ken's command line
 
 def _day(s: str) -> int | None:

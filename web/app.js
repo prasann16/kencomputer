@@ -441,6 +441,11 @@ const IDLE_MS = 5 * 60000;
 let lastTouch = Date.now(), napping = false;
 const idleTab = () => HOSTED && (document.hidden || napping);
 const sharedUrl = (path) => `/api/file?path=${encodeURIComponent(path)}`;
+// Ken in the cloud with their Library on: a video in the chat plays from the copy the site keeps (ken-hosted
+// previews.ts), so it starts at once without waking Ken's computer; with none kept, the site sends the player to the
+// same URL as before. Saving still gets the original from Ken.
+let STORED_VIDEO = false;
+const watchUrl = (query, before) => STORED_VIDEO ? `/account/previews?${query}` : before;
 async function openFile(path) {
   try {
     const found = await api('/api/open', { json: { path } });
@@ -831,11 +836,13 @@ function withoutFileLines(text, shown) {
 }
 function Media({ path }) {
   const [gone, setGone] = useState(false);
+  const [plain, setPlain] = useState(false);  // the stored copy didn't play: Ken's own, as before
   if (gone) return null;
   const url = sharedUrl(path), name = path.split('/').pop();
+  const watch = plain ? url : watchUrl(`path=${encodeURIComponent(path)}`, url);
   // Saving it is one tap: the browser's own video menu has no Save in Safari, and a picture opens instead of downloading.
   return html`<div class="msg-media">${/\.(mp4|mov|webm|m4v)$/i.test(name)
-    ? html`<video src=${url} controls preload="metadata" playsinline onError=${() => setGone(true)}></video>`
+    ? html`<video src=${watch} controls preload="metadata" playsinline onError=${() => watch !== url ? setPlain(true) : setGone(true)}></video>`
     : isAudio(name) ? html`<audio src=${url} controls preload="metadata" onError=${() => setGone(true)}></audio>`
     : /\.(png|jpe?g|gif|webp)$/i.test(name) ? html`<img src=${url} alt=${name} loading="lazy" onError=${() => setGone(true)}/>`
     : html`<a class="file-card" href=${url + '&download'} download=${name} title="Download">${Icon.file}<span class="file-card-name">${name}</span><span class="file-card-get">${Glyph('download')} Download</span></a>`}
@@ -1059,6 +1066,12 @@ const isAudio = (name) => /\.(mp3|wav|m4a|ogg|oga|opus|flac|aac|aiff?)$/i.test(n
 const isText = (name) => /\.(txt|md|csv|json|log|py|js|css|html)$/i.test(name);
 const bytes = (n) => n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : (n / 1024 / 1024).toFixed(1) + ' MB';
 
+function ChatVideo({ file }) {
+  const [plain, setPlain] = useState(false);
+  const url = fileUrl(file), watch = plain ? url : watchUrl(`pid=${encodeURIComponent(file.project)}&name=${encodeURIComponent(file.name)}`, url);
+  return html`<video src=${watch} controls onError=${() => watch !== url && setPlain(true)}></video>`;
+}
+
 function PreviewModal({ file, onClose, toast }) {
   const [text, setText] = useState(null);
   useEffect(() => {
@@ -1067,7 +1080,7 @@ function PreviewModal({ file, onClose, toast }) {
     return () => { alive = false; };
   }, [file]);
   return html`<${Modal} title=${file.name} onClose=${onClose}>
-    <div class="file-preview">${isImage(file.name) ? html`<img src=${fileUrl(file)} alt=${file.name} />` : isVideo(file.name) ? html`<video src=${fileUrl(file)} controls></video>` : isAudio(file.name) ? html`<audio src=${fileUrl(file)} controls></audio>` : isText(file.name) ? html`<pre>${text ? text.text : 'Loading preview…'}</pre>${text && text.truncated && html`<p class="meta">Preview shortened. Download the full file below.</p>`}` : html`<div class="document-art">${Glyph('file')}</div><p>Download this file to open it in your usual app.</p>`}</div>
+    <div class="file-preview">${isImage(file.name) ? html`<img src=${fileUrl(file)} alt=${file.name} />` : isVideo(file.name) ? html`<${ChatVideo} file=${file}/>` : isAudio(file.name) ? html`<audio src=${fileUrl(file)} controls></audio>` : isText(file.name) ? html`<pre>${text ? text.text : 'Loading preview…'}</pre>${text && text.truncated && html`<p class="meta">Preview shortened. Download the full file below.</p>`}` : html`<div class="document-art">${Glyph('file')}</div><p>Download this file to open it in your usual app.</p>`}</div>
     <div class="row"><a class="btn primary download-btn" href=${fileUrl(file)} download=${file.name}>Download</a><button class="btn" onClick=${() => { onClose(); location.hash = file.project === 'home' ? '#/conversations' : '#/p/' + file.project; }}>Talk about this</button><button class="btn ghost" onClick=${onClose}>Close</button></div>
   <//>`;
 }
@@ -2327,6 +2340,7 @@ const CACHE_MESSAGES = 40;
 const cached = (key) => { try { return JSON.parse(localStorage.getItem('ken-cache:' + key) || 'null'); } catch { return null; } };
 const keep = (key, value) => { try { localStorage.setItem('ken-cache:' + key, JSON.stringify(value)); } catch {} };
 AGENTS_UI = !!cached('agents');  // the look they had last time, so the page doesn't open one way and switch
+STORED_VIDEO = !!cached('library-on');
 // On a phone-width screen with agents, Ken opens on the list of chats: go there before anything is drawn.
 if (AGENTS_UI && (cached('chats') || []).length > 1 && (location.hash === '' || location.hash === '#/') && matchMedia('(max-width: 760px)').matches) location.replace('#/chats');
 function App() {
@@ -2340,7 +2354,7 @@ function App() {
   // Their Library (hosted, while it's tried out): the site says whether it's on for them.
   const [libraryOn, setLibraryOn] = useState(() => !!cached('library-on'));
   const [libPeek, setLibPeek] = useState(() => cached('library')?.groups?.flatMap((g) => g.items) || []);
-  useEffect(() => { if (!meta.hosted) return; fetch(LIB + 'list', { credentials: 'same-origin' }).then(async (r) => { setLibraryOn(r.ok); keep('library-on', r.ok); if (r.ok) { const l = await r.json(); indexLibrary(l); setLibPeek(l.groups.flatMap((g) => g.items)); } }).catch(() => {}); }, [meta.hosted]);
+  useEffect(() => { if (!meta.hosted) return; fetch(LIB + 'list', { credentials: 'same-origin' }).then(async (r) => { STORED_VIDEO = r.ok; setLibraryOn(r.ok); keep('library-on', r.ok); if (r.ok) { const l = await r.json(); indexLibrary(l); setLibPeek(l.groups.flatMap((g) => g.items)); } }).catch(() => {}); }, [meta.hosted]);
   const agentsOn = 'agents' in meta ? !!meta.agents : AGENTS_UI;
   const [library, setLibrary] = useState([]);
   const [runId, setRunId] = useState(null);
