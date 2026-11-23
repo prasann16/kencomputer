@@ -1040,6 +1040,7 @@ class WebApp:
             self.engine.unsubscribe(q)
 
     async def _warm(self, path: Path, refs: list[str] | None = None) -> None:
+        await self._name_first(path, refs or [])
         async with self._warming:
             try:
                 self._stored(await self._preview(path), refs or [])
@@ -1057,6 +1058,25 @@ class WebApp:
             if library.site():
                 self._spawn(self._store(copy, [r for r in refs if r]))
         return copy
+
+    async def _name_first(self, path: Path, refs: list[str]) -> None:
+        """Before making the copy: the site's name for this video points at the version Ken just named, so a re-edit at
+        the same path never plays the old copy (until the new one is up, it plays from here, as before)."""
+        import library
+        key = self._preview_key(path)
+        if not refs or not key or time.time() < self._store_off_until or not library.site():
+            return
+        try:
+            if set(refs) <= set(json.loads((self.previews / f"{key}.stored").read_text()).get("refs", [])):
+                return
+        except (OSError, ValueError):
+            pass
+        try:
+            await asyncio.to_thread(library.name_watching_copy, key, refs)
+        except library.Off:
+            self._store_off_until = time.time() + 3600
+        except Exception:
+            log.debug("naming the watching copy of %s failed", path.name, exc_info=True)
 
     async def _store(self, copy: Path, refs: list[str]) -> None:
         import library
@@ -1080,16 +1100,22 @@ class WebApp:
                 return
         marker.write_text(json.dumps({"at": was["at"] if fresh else time.time(), "refs": sorted(named | set(refs))[-20:]}))
 
+    def _preview_key(self, path: Path) -> str | None:
+        """The watching copy's name: one per version of the file. None when it gets none (not a video, no ffmpeg)."""
+        if path.suffix.lower() not in self.PREVIEW_SUFFIXES or not shutil.which("ffmpeg"):
+            return None
+        import hashlib
+        st = path.stat()
+        return hashlib.sha256(f"{path}:{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:20]
+
     async def _preview(self, path: Path) -> Path:
         """A video's watching copy (?preview=1): what Telegram does, for the app and the web. Full-quality originals are
         big and often not saved streaming-ready, so a phone couldn't play them; this copy is at most 1280 px on its long
         side, H.264, streaming-ready, a few MB. Made once per version of the file (a few seconds), then kept a week.
         Saving or sharing still gets the original. A file that isn't a video, or that ffmpeg can't read, is served as is."""
-        if path.suffix.lower() not in self.PREVIEW_SUFFIXES or not shutil.which("ffmpeg"):
+        key = self._preview_key(path)
+        if not key:
             return path
-        import hashlib
-        st = path.stat()
-        key = hashlib.sha256(f"{path}:{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:20]
         out = self.previews / f"{key}.mp4"
         async with self._preview_locks.setdefault(key, asyncio.Lock()):
             if out.exists():

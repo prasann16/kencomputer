@@ -398,26 +398,27 @@ async def test_the_watching_copy_goes_up_to_the_site_so_it_plays_without_waking_
             await asyncio.sleep(0.05)
 
     engine.log_message(HOME, "ken", f"Here it is: `{reel}`")
-    await settled(3)
+    await settled(4)
     [copy] = app.previews.glob("*.mp4")
-    assert calls == [("GET", "/box/previews/has", copy.stem), ("PUT", "/box/previews/file", copy.stem),
-                     ("POST", "/box/previews/names", {"key": copy.stem, "refs": [str(reel)]})]
+    named = ("POST", "/box/previews/names", {"key": copy.stem, "refs": [str(reel)]})
+    # Named first (a re-edit never plays the old copy), then up, then named again now it's there.
+    assert calls == [named, ("GET", "/box/previews/has", copy.stem), ("PUT", "/box/previews/file", copy.stem), named]
     # Played as a chat file: only its new name goes up, not the video again. Played again: nothing.
     r = await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
     assert r.status == 200 and await r.read() == copy.read_bytes()
-    await settled(4)
-    assert calls[3:] == [("POST", "/box/previews/names", {"key": copy.stem, "refs": [f"chat:{HOME}/reel.mov"]})]
-    await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
     await settled(5)
-    assert len(calls) == 4
+    assert calls[4:] == [("POST", "/box/previews/names", {"key": copy.stem, "refs": [f"chat:{HOME}/reel.mov"]})]
+    await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")
+    await settled(6)
+    assert len(calls) == 5
     # Their Library switched off: the site says no once, and playing still works as it did.
     state["on"] = False
     reel.write_bytes(reel.read_bytes())  # a new version: a new copy
     os.utime(reel, (time.time() + 5, time.time() + 5))
     for _ in range(2):
         assert (await client.get(f"/api/chats/{HOME}/files/reel.mov?preview=1")).status == 200
-        await settled(6)
-    assert calls[4:] == [("GET", "/box/previews/has", None)]
+        await settled(7)
+    assert calls[5:] == [("GET", "/box/previews/has", None)]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Ken in the cloud and on a Mac write POSIX paths")
