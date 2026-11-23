@@ -810,3 +810,7 @@ ol.conn-steps li { margin: 2px 0; }
 .lib-bar button.strong.ink, .lib-v-acts button.strong.ink { background: var(--ink); color: var(--bg); }
 .lib-v-acts button.strong.ink { background: #fff; color: #000; }
 @media (max-width: 760px) { .lib-picker { width: 100vw; max-height: 92vh; border-radius: var(--r-lg) var(--r-lg) 0 0; align-self: flex-end; } }
+
+/* Library: Add's menu (with Google Photos on) and the line while they pick there */
+.lib-add-menu { right: 0; left: auto; top: calc(100% + 6px); min-width: 210px; }
+.lib-google { margin: 0 var(--s5) var(--s3); padding: 10px 14px; border-radius: 12px; background: var(--well); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; justify-content: space-between; gap: 12px; }

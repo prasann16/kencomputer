@@ -330,6 +330,34 @@ const libFits = { all: () => true, photo: (it) => it.kind === 'photo', video: (i
 const ring = (p) => html`<svg class="lib-ring" viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="12"/><circle cx="15" cy="15" r="12" style=${{ strokeDasharray: 75.4, strokeDashoffset: 75.4 * (1 - Math.max(0.04, p)) }}/></svg>`;
 const BACK = html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>`;
 
+// From Google Photos (the site does the Google part). The window is opened in the click itself (or the browser blocks
+// it) at google/start?n=<run>; this waits while they pick there, then has the site copy each one in. `run` names this
+// click, so a window or run left from an earlier click never answers for it. Gives back what to tell them.
+const GOOGLE_PHOTOS_OFF = "Google Photos isn't set up for Ken yet. You can add photos from this computer for now.";
+function openGooglePhotos(run) {
+  return window.open(LIB + 'google/start?n=' + run, 'ken-google-photos', 'popup,width=1000,height=760');
+}
+async function fromGooglePhotos(run, stopped, onProgress) {
+  try {
+    let items = null;
+    for (const until = Date.now() + 30 * 60_000; !items;) {
+      if (stopped()) return '';
+      if (Date.now() > until) throw new Error('Google Photos took too long. Please try again.');
+      const s = await lib('google/status?n=' + run);
+      if (s.state === 'picked') items = (await lib('google/items', { method: 'POST' })).items;
+      else await new Promise((r) => setTimeout(r, (s.poll || 2) * 1000));
+    }
+    if (!items.length) return 'Nothing was picked in Google Photos.';
+    let added = 0, missed = '';
+    for (const [i, it] of items.entries()) {
+      if (stopped()) break;
+      onProgress(i, items.length);
+      try { await lib('google/take', { method: 'POST', json: { id: it.id } }); added++; }
+      catch (e) { if (e.status === 413) throw e; missed = e.message; }
+    }
+    return missed ? `${added} of ${items.length} added. ${missed}` : added === 1 ? 'Added to your Library.' : `${added} added to your Library.`;
+  } finally { lib('google/done?n=' + run, { method: 'POST' }).catch(() => {}); }
+}
 function LibraryPage({ toast, onChanged }) {
   const [lib_, setLib] = useState(() => cached('library'));
   const [picked, setPicked] = useState(new Set());
@@ -340,6 +368,9 @@ function LibraryPage({ toast, onChanged }) {
   const [over, setOver] = useState(false);
   const chooser = useRef(null);
   const pending = useLibraryQueue();
+  const [adding, setAdding] = useState(false); // the Add menu (only when Google Photos is on for them)
+  const [google, setGoogle] = useState(null); // while they pick in Google Photos: { done, total } once copying
+  const googleRun = useRef(null);
   const load = () => lib('list').then((r) => { setLib(r); keep('library', r); indexLibrary(r); onChanged?.(r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
   useEffect(() => { load(); libraryQueue.arrived.add(load); return () => libraryQueue.arrived.delete(load); }, []);
   useEffect(() => {
@@ -360,6 +391,22 @@ function LibraryPage({ toast, onChanged }) {
     setPicked(new Set()); setConfirming(false); setSelecting(false); setOpen(null); load();
   };
   const add = (files) => files?.length && addToLibraryQueue(files);
+  const fromGoogle = async () => {
+    setAdding(false);
+    if (!lib_?.google) return toast(GOOGLE_PHOTOS_OFF);
+    const run = Math.random().toString(36).slice(2, 10);
+    if (!openGooglePhotos(run)) return toast('Your browser blocked the Google Photos window. Allow pop-ups for this page, then try again.');
+    const current = () => googleRun.current === run;
+    googleRun.current = run; setGoogle({});
+    try { const said = await fromGooglePhotos(run, () => !current(), (i, n) => current() && setGoogle({ done: i, total: n })); if (said && current()) toast(said); }
+    catch (e) { if (current()) toast(e.message); }
+    finally { if (current()) { googleRun.current = null; setGoogle(null); } load(); }
+  };
+  // Add: straight to the file chooser, or a small menu when Google Photos is on for them.
+  const addClick = () => (lib_?.google ? setAdding(!adding) : chooser.current.click());
+  const addMenu = adding && html`<div class="pop-menu lib-add-menu" role="menu">
+    <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); chooser.current.click(); }}>From this computer</button>
+    <button role="menuitem" class="pop-row" onClick=${fromGoogle}>From Google Photos</button></div>`;
   const pic = (it) => it.thumb || libraryPicture.get(it.id);
   const empty = lib_ && !lib_.off && !all.length && !pending.length;
   if (lib_?.off) return html`<div class="library"><header class="lib-head"><a class="lib-back narrow-only" href="#/chats" aria-label="Back">${BACK}</a><h1>Library</h1></header><p class="lib-note">Your Library isn't on yet.</p></div>`;
@@ -371,12 +418,14 @@ function LibraryPage({ toast, onChanged }) {
       <a class="lib-back narrow-only" href="#/chats" aria-label="Back">${BACK}</a>
       <h1>Library</h1>
       ${all.length > 0 && html`<button class="lib-text-btn" onClick=${() => { setSelecting(!choosing); setPicked(new Set()); }}>${choosing ? 'Done' : 'Select'}</button>`}
-      ${!empty && html`<button class="lib-add" aria-label="Add photos and videos" title="Add photos and videos" onClick=${() => chooser.current.click()}>${Glyph('plus')}<span>Add</span></button>`}
+      ${!empty && html`<span class="pop"><button class="lib-add" aria-label="Add photos and videos" title="Add photos and videos" disabled=${!!google} onClick=${addClick}>${Glyph('plus')}<span>Add</span></button>${addMenu}</span>`}
     </header>
+    ${google && html`<div class="lib-google" role="status">${google.total ? `Adding ${google.done + 1} of ${google.total} from Google Photos…` : 'Pick photos and videos in the Google Photos window.'} <button class="lib-text-btn" onClick=${() => { googleRun.current = null; setGoogle(null); }}>Cancel</button></div>`}
     ${empty ? html`<div class="lib-empty">
       <span class="lib-ghosts"><i></i><i></i><i></i></span>
       <b>Nothing here yet</b><span>Add photos and videos for Ken to use.</span>
       <button class="btn primary" onClick=${() => chooser.current.click()}>${Glyph('plus')} Add photos</button>
+      ${lib_?.google && html`<button class="btn sm ghost" disabled=${!!google} onClick=${fromGoogle}>From Google Photos</button>`}
     </div>` : html`
       ${tabs.length > 2 && html`<nav class="lib-tabs" role="tablist">${tabs.map(([id, label]) => html`<button role="tab" aria-selected=${showing === id} onClick=${() => setShow(id)}>${label}</button>`)}</nav>`}
       ${pending.length > 0 && showing === 'all' && html`<div class="lib-grid lib-adding">${pending.map((p) => html`<button class="lib-tile" aria-label=${p.failed ? "Couldn't add. Click to try again." : `Adding, ${Math.round(p.progress * 100)}%`} title=${p.failed || ''} onClick=${() => p.failed && retry(p.key)}>
