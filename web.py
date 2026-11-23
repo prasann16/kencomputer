@@ -454,7 +454,8 @@ class WebApp:
 
     async def mac_link(self, request):
         """Settings → Cloud on the Mac: the link to their Ken in the cloud, and what it may use here.
-        POST {action: link, code} | {action: unlink} | {action: switch, id, on} | {action: folders, folders: [...]}."""
+        POST {action: link, code} | {action: unlink} | {action: switch, id, on} | {action: folders, folders: [...]}
+        | {action: open-access} (System Settings → Full Disk Access, for WhatsApp)."""
         if not self.link:
             return _json({"error": "not found"}, 404)
         if request.method == "GET":
@@ -468,6 +469,9 @@ class WebApp:
                 return _json(await self.link.unlink())
             if action == "switch":
                 return _json(self.link.set_switch(str(body.get("id", "")), bool(body.get("on"))))
+            if action == "open-access":  # WhatsApp: System Settings → Full Disk Access
+                self.link.open_full_disk_access()
+                return _json(self.link.status())
             if action == "folders" and isinstance(body.get("folders"), list):
                 return _json(self.link.set_folders(body["folders"]))
         except ValueError as exc:

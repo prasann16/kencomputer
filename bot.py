@@ -117,6 +117,13 @@ if sys.argv[1:2] == ["--mac"]:  # hosted Ken: their linked Mac, through the site
     import mac_link
     raise SystemExit(mac_link.cloud_main(sys.argv[2:]))
 
+if sys.argv[1:2] == ["--whatsapp"]:  # their WhatsApp messages, read-only: imports, the Mac's, and in the cloud the linked Mac's
+    import os
+    from pathlib import Path
+
+    import whatsapp
+    raise SystemExit(whatsapp.main(sys.argv[2:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -1142,6 +1149,7 @@ def build_system() -> str:
         system += "\n\n" + library_prompt()
     if mac_prompt():
         system += "\n\n" + mac_prompt()
+    system += "\n\n" + whatsapp_prompt()
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
@@ -2473,6 +2481,9 @@ def mac_prompt() -> str:
     if "files" in caps:
         uses.append(f"files in folders they chose: `{KEN_CMD} --mac folders`, `--mac list <folder>`, `--mac find <words>`, "
                     "`--mac get <file>` (copies it here; delete the copy when you're done)")
+    if "whatsapp" in caps:
+        uses.append(f"their WhatsApp messages, read-only: `{KEN_CMD} --whatsapp chats`, `--whatsapp search <words> "
+                    "[--chat <name>] [--days N]`, `--whatsapp read <chat>` (you can't send WhatsApp messages)")
     off = [label for k, label in mac_link.SWITCHES.items() if k not in caps]
     return (f"THEIR MAC: {name} is linked to you (Ken for Mac). " + (
         "While it's on, you can use: " + "; ".join(uses) + ". " if uses else "They haven't switched anything on there yet. ")
@@ -2480,6 +2491,15 @@ def mac_prompt() -> str:
         + (f"Switched off on the Mac: {', '.join(off)}. " if off else "")
         + "Nothing else on the Mac can be reached. If a task needs something that's off, tell them to turn it on in "
         "Ken for Mac → Settings → Cloud.")
+
+
+def whatsapp_prompt() -> str:
+    """Their WhatsApp, read-only (whatsapp.py): what's already here, and how an exported chat gets in."""
+    here = (KEN_HOME / "whatsapp.db").exists()
+    return ((f"WHATSAPP: some of their WhatsApp messages are kept here for you, read-only: `{KEN_CMD} --whatsapp chats`, "
+             "`--whatsapp search <words> [--chat <name>] [--days N]`, `--whatsapp read <chat>`. You can't send WhatsApp messages. "
+             if here else "")
+            + f"A WhatsApp \"Export chat\" file they give you (.zip or .txt): `{KEN_CMD} --whatsapp import <file>` keeps it for searching.")
 
 
 def voice_available() -> bool:
@@ -3486,7 +3506,7 @@ async def run() -> None:
     background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
                   asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
-                  asyncio.create_task(runtimes.update(signed_in()))] + ([asyncio.create_task(MAC_LINK.run())] if MAC_LINK else [])
+                  asyncio.create_task(runtimes.update(signed_in()))] + ([asyncio.create_task(MAC_LINK.run()), asyncio.create_task(MAC_LINK.keep_whatsapp())] if MAC_LINK else [])
     try:
         await asyncio.gather(*(refresh_models_file(backend=name) for name in BRAINS))
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
