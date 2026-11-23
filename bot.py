@@ -786,6 +786,9 @@ SYSTEM_PROMPT = (
     'like {"name": "morning-brief", "time": "07:00", "days": "daily", "prompt": "..."}; '
     '"on": false pauses a job without deleting it; "date": "2026-10-31" makes it one-time: it runs that '
     'day only and Ken removes it after (use it for reminders, not "days" plus a date check in the prompt). '
+    'A job missed while this computer slept is not run the moment it wakes: they are asked first, one question for '
+    'everything missed, and no answer means it waits for its next time. "missed": "run" on a job makes it catch up '
+    'without asking (only for something light they always want, when they say so); "missed": "skip" never asks. '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -1993,6 +1996,122 @@ CATCH_UP_HOURS = 6  # a laptop asleep at job time still gets the job when it wak
 LATE_NOTICE_MINUTES = 5  # a job this late was caught up after sleep, not just a slow minute
 
 
+MISSED_KEY = "_missed"  # in the job state file: {approval id: [job keys]} still waiting for their answer
+COSTLY_MODELS = ("fable", "mythos")  # the models that use a plan up fastest
+PILE = 3  # this many background jobs lined up at once on a costly model is worth a heads-up
+PILE_QUIET = 3600  # seconds before the heads-up may come again
+
+
+def missed_policy(job: dict) -> str:
+    """What a job missed while the computer slept does when it wakes: "ask" first (the default), "run" as before,
+    or "skip". A one-time job is a reminder, so it still runs."""
+    policy = str(job.get("missed", "")).lower()
+    return policy if policy in ("ask", "run", "skip") else ("run" if job.get("date") else "ask")
+
+
+def is_late(job: dict, now: time.struct_time) -> bool:
+    """Caught up after sleep, not just a slow minute."""
+    try:
+        hour, minute = (int(x) for x in str(job.get("time", "")).split(":"))
+    except ValueError:
+        return False
+    return (now.tm_hour * 60 + now.tm_min) - (hour * 60 + minute) >= LATE_NOTICE_MINUTES
+
+
+def costly_model(model: str) -> str:
+    """The model's short name when it is one of the costly ones, else ""."""
+    return next((m.capitalize() for m in COSTLY_MODELS if m in (model or "").lower()), "")
+
+
+def missed_text(jobs: list[dict], model: str = "") -> tuple[str, str]:
+    """The question about jobs missed while asleep: its title and the list they see."""
+    n = len(jobs)
+    title = (f"Run the {n} jobs you missed while this computer slept?" if n > 1
+             else f"Run {str(jobs[0].get('name', 'the job')).replace('-', ' ')}, missed while this computer slept?")
+    body = "\n".join(f"{j.get('time', '')}  {str(j.get('name', 'job')).replace('-', ' ')}" for j in jobs)
+    if n > 1:
+        body += "\n\nApprove runs them one after another. Skip leaves them until their next time."
+    if n > 1 and (name := costly_model(model)):
+        body += f"\n\nYou're on {name}, the model that uses your plan fastest, so {n} jobs in a row can use up a lot of it."
+    return title, body
+
+
+async def ask_missed(jobs: list[dict], state: dict) -> None:
+    """One question for everything missed, instead of running it all at once. No answer means nothing runs, and
+    a question from an earlier day they never answered is closed, so old jobs can't run on top of today's."""
+    for old in list(state.get(MISSED_KEY, {})):
+        state[MISSED_KEY].pop(old)
+        try:
+            await ENGINE.resolve_approval(old, "skip")
+        except KeyError:
+            pass
+    title, body = missed_text(jobs, active_model())
+    a = ENGINE.create_approval(HOME, "missed", title, body)
+    state.setdefault(MISSED_KEY, {})[a["id"]] = [job_key(j) for j in jobs]
+
+
+async def run_missed(aid: str) -> None:
+    """They said yes: the missed jobs run one at a time, never as a pile."""
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+    except Exception:
+        return
+    keys = state.get(MISSED_KEY, {}).pop(aid, None)
+    if keys is None:
+        return
+    JOB_STATE_FILE.write_text(json.dumps(state))
+    by_key = {job_key(j): j for j in all_jobs()}
+    for key in keys:
+        job = by_key.get(key)
+        if job is None or job.get("on") is False or ENGINE.is_off():
+            continue
+        agent = job.get("agent") or job.get("project")
+        if agent:
+            await run_agent_job(str(agent), job, late_notice(job, time.localtime()))
+        else:
+            await run_outbound(job)
+
+
+def forget_missed(aid: str) -> None:
+    """They said skip: the jobs wait for their next time."""
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+        if state.get(MISSED_KEY, {}).pop(aid, None) is not None:
+            JOB_STATE_FILE.write_text(json.dumps(state))
+    except Exception:
+        pass
+
+
+def pile_warning(waiting: int, model: str, last: float, now: float) -> str:
+    """The heads-up when many background jobs are lined up on a costly model; "" when there's nothing to say."""
+    name = costly_model(model)
+    if not name or waiting < PILE or now - last < PILE_QUIET:
+        return ""
+    return (f"Heads-up: {waiting} background jobs are lined up on {name}, the model that uses your plan fastest. "
+            "Together they can use up your limit. Say stop to cancel some, or pick a lighter model for them.")
+
+
+async def missed_watch() -> None:
+    """Runs the missed jobs they approved, and warns once when background jobs pile up on a costly model."""
+    q = ENGINE.subscribe()
+    warned = 0.0
+    while True:
+        ev = await q.get()
+        try:
+            if ev["type"] == "approval.resolved" and ev["approval"].get("kind") == "missed":
+                if ev["approval"].get("status") == "approved":
+                    asyncio.create_task(run_missed(ev["approval"]["id"]))
+                else:
+                    forget_missed(ev["approval"]["id"])
+            elif ev["type"] == "run.created":
+                waiting = len(ENGINE.list_runs(active=True, limit=1000))
+                if text := pile_warning(waiting, active_model(), warned, time.time()):
+                    warned = time.time()
+                    ENGINE.log_message(HOME, "ken", text, via="background")
+        except Exception as e:
+            log.warning("missed jobs watch failed: %s", e)
+
+
 def late_notice(job: dict, now: time.struct_time) -> str:
     """The line a caught-up job opens with, so they know why it's arriving now; "" when on time."""
     try:
@@ -2270,6 +2389,7 @@ async def scheduler() -> None:
                 pass
             if note_new_jobs(jobs, now, state) | clear_reel_caches_daily(state, now):
                 JOB_STATE_FILE.write_text(json.dumps(state))
+            missed = []
             for job in jobs:
                 if job.get("date") and job["date"] < time.strftime("%Y-%m-%d", now):
                     remove_job(job)  # its day passed while Ken was off
@@ -2283,10 +2403,16 @@ async def scheduler() -> None:
                         continue  # the disk is nearly full: nothing runs until they've said what to do (see Usage.disk_check)
                     if asking_ai():
                         continue  # a brand-new Ken still waiting to be told how to think: nothing runs (or spends) yet
-                    if job.get("date"):
+                    policy = missed_policy(job) if is_late(job, now) else "run"
+                    if job.get("date") and policy == "run":
                         remove_job(job)  # one-time: it runs now and is gone
                     state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)
                     JOB_STATE_FILE.write_text(json.dumps(state))
+                    if policy != "run":  # missed while asleep: they're asked first, or it waits for its next time
+                        log.info("job missed (%s): %s", policy, job_key(job))
+                        if policy == "ask":
+                            missed.append(job)
+                        continue
                     log.info("job due: %s", job_key(job))
                     crash.track("job_ran", builtin=job.get("name") in ("morning-brief", "nightly-review"), agent=bool(job.get("agent") or job.get("project")))
                     agent = job.get("agent") or job.get("project")
@@ -2295,6 +2421,9 @@ async def scheduler() -> None:
                         asyncio.create_task(run_agent_job(str(agent), job, late_notice(job, now)))
                     else:
                         asyncio.create_task(run_outbound(job))
+            if missed:
+                await ask_missed(missed, state)
+                JOB_STATE_FILE.write_text(json.dumps(state))
         except Exception as e:
             log.warning("scheduler error: %s", e)
         await asyncio.sleep(20)
@@ -3363,7 +3492,7 @@ async def run() -> None:
     web_app = await start_engine()
     # A reply cut off by the last restart carries on, in Telegram too when that's where they asked.
     ENGINE.resume_listener = lambda via: (lambda text: send_outbound(PHONE.bot, text)) if via == "telegram" else None
-    background = [asyncio.create_task(scheduler()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
+    background = [asyncio.create_task(scheduler()), asyncio.create_task(missed_watch()), asyncio.create_task(self_update()), asyncio.create_task(warmup()),
                   asyncio.create_task(USAGE.watch_memory()), asyncio.create_task(USAGE.watch_disk(stop_all_work, more_space(), ask=ask_to_clear)),
                   asyncio.create_task(keep_awake()),
                   asyncio.create_task(runtimes.update(signed_in()))]

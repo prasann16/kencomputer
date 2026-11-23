@@ -64,7 +64,7 @@ DEFAULT_AUTONOMY = {
     "alone": ["Check users & errors", "Draft replies", "Open PRs", "Draft posts"],
     "ask": ["Email customers", "Post publicly", "Merge & ship", "Spend money"],
 }
-APPROVAL_KINDS = ("email", "post", "merge", "spend", "other")
+APPROVAL_KINDS = ("email", "post", "merge", "spend", "missed", "other")  # "missed": jobs missed while asleep (bot.ask_missed)
 # Work runs as long as it needs; only a brain that has said nothing for this long is stopped.
 IDLE_LIMIT = 45 * 60
 # ...but an AI that hasn't answered at all two minutes after it was asked isn't coming: stop and say so.
@@ -908,7 +908,8 @@ class Engine:
             f"- memory/: your notes, one topic per file, its first line saying what it holds. Now:\n{memory_listing(d / 'memory')}\n"
             f"- jobs.json: your schedule, a JSON array like {{\"name\": \"daily-report\", \"time\": \"08:00\", \"days\": \"daily\", \"prompt\": \"...\"}} "
             '("days": daily, weekdays or e.g. "mon,thu"; "date": "2026-10-31" instead makes it one-time, removed after it runs; '
-            '"on": false pauses one). Each job runs here, in this chat, at '
+            '"on": false pauses one; a job missed while the computer slept asks them before it runs, unless it has '
+            '"missed": "run" or "skip"). Each job runs here, in this chat, at '
             "this computer's local time. Add, change or remove jobs when they ask.\n"
             f"- tools.json: what you may use. \"use\" picks Ken's built-in tools ({', '.join(BUILTIN_TOOLS)}); "
             "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "
@@ -2601,7 +2602,7 @@ class Engine:
         )
         a = self.get_approval(aid)
         self.emit("approval.resolved", project=a["project"], approval=a)
-        if approved:
+        if approved and a["kind"] != "missed":  # missed jobs are run by the scheduler's own watcher (bot.missed_watch)
             go = f'(Approved: "{a["title"]}". Do it now, exactly as below, then report the proof.\n\n{final}' + (
                 f"\n\nThen: {a['next']})" if a["next"] else ")")
             if a["project"] == HOME:
