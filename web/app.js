@@ -202,19 +202,14 @@ function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, libra
       <div class="chat-list-foot"><button class="settings-link" onClick=${onSettings}>Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
     </aside>`;
   }
-  const pics = (peek || []).filter((it) => it.kind !== 'file' && (it.thumb || libraryPicture.get(it.id))).slice(0, 4);
   return html`<aside class="chat-list side" aria-label="Ken">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b>${agents && html`<button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>`}</div>
-    ${libraryOn && html`<a class=${'side-library' + (library ? ' sel' : '')} href="#/library">
-      <span class="side-library-head">${Glyph('photos')}<b>Library</b>${peek?.length > 0 && html`<small>${peek.length}</small>`}</span>
-      ${pics.length > 0 && html`<span class="side-peek">${[0, 1, 2, 3].map((i) => html`<i>${pics[i] && html`<img src=${pics[i].thumb || libraryPicture.get(pics[i].id)} alt="" loading="lazy"/>`}</i>`)}</span>`}
-    </a>`}
-    <p class="side-label">Chats</p>
     <nav class="chat-rows">${list.map((c) => html`<a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
       <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
       <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
       ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>`)}</nav>
-    <div class="chat-list-foot"><button class=${'settings-link side-settings' + (library ? '' : ' narrow-only')} onClick=${onSettings}>${Glyph('settings')}Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
+    <a class=${'side-library' + (library ? ' sel' : '')} href="#/library">${Glyph('photos')}<b>Library</b>${peek?.length > 0 && html`<small>${peek.length}</small>`}</a>
+    <div class=${'chat-list-foot' + (library ? '' : ' side-foot')}><button class=${'settings-link side-settings' + (library ? '' : ' narrow-only')} onClick=${onSettings}>${Glyph('settings')}Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
   </aside>`;
 }
 
@@ -473,7 +468,7 @@ function LibraryViewer({ items, at, onAt, onClose, onDownload, onRemove }) {
 }
 
 // ⋯ at the top of a chat: its model, Brain, Clear, and for an agent Rename and Remove.
-function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connected, onClear, clearing, onPick }) {
+function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connected, onClear, clearing, onPick, onSettings }) {
   const [open, setOpen, box] = usePopover();
   const pick = (id) => { setOpen(false); onPick(id); };
   return html`<div class=${'pop' + (onPick ? '' : ' narrow-only')} ref=${box}><button class="proj-more" aria-label="Chat options" title="Chat options" aria-haspopup="menu" aria-expanded=${open} onClick=${() => setOpen(!open)}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
@@ -484,6 +479,7 @@ function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connec
       ${onPick && html`${window.kenDesktop?.openFolder && html`<button role="menuitem" class="pop-row" onClick=${() => pick('open')}>Open in Finder</button>`}
         <button role="menuitem" class="pop-row" onClick=${() => pick('rename')}>Rename…</button>
         <button role="menuitem" class="pop-row danger" onClick=${() => pick('remove')}>Remove…</button>`}
+      ${onSettings && html`<button role="menuitem" class="pop-row narrow-only" onClick=${() => { setOpen(false); onSettings(); }}>Settings</button>`}
     </div>`}</div>`;
 }
 
@@ -1482,7 +1478,7 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
     ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}
     <div class="chat-tools">${!brain && !title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}
       ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}${!side && html`<a class="clear-button" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>`}</span>`}
-      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/>${side && html`<button class="clear-button wide-only" onClick=${onSettings}>Settings</button>`}</div>
+      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null} onSettings=${side ? onSettings : null}/>${side && onReport && html`<button class="report-link wide-only" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}${side && html`<button class="clear-button wide-only" onClick=${onSettings}>Settings</button>`}</div>
   </header>`;
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && window.kenDesktop?.popupMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
