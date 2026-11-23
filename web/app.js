@@ -1709,6 +1709,56 @@ function HostedPhone() {
       : html`<${HostedTelegram}/>`}`;
 }
 
+// Ken for Mac linked to their Ken in the cloud (mac_link.py; the site's maclink.ts). The Mac connects out to the site
+// only; the cloud Ken can use what's switched on here, nothing else. Mac: Settings → Cloud. Cloud: Settings → Your Mac.
+function CloudLink({ toast }) {
+  const [st, setSt] = useState(null), [code, setCode] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const load = () => api('/api/link').then(setSt).catch((e) => setError(e.message));
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, []);
+  const act = async (json, done) => { setBusy(true); setError(''); try { setSt(await api('/api/link', { json })); if (done) toast(done); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const addFolder = async () => { const f = await window.kenDesktop?.pickFolder?.(); if (f) act({ action: 'folders', folders: [...st.folders, f] }); };
+  if (!st) return error ? html`<p class="connect-error" role="alert">${error}</p>` : html`<p class="np-note">Loading…</p>`;
+  if (!st.linked) return html`<p class="np-help">If you also have Ken on kencomputer.dev, link it to this Mac so it can use things here that you allow, like files in folders you pick. This Mac connects out to Ken; nothing on it is opened to the internet. You can unlink any time.</p>
+    ${st.problem && html`<p class="np-note">${st.problem}</p>`}
+    <p class="np-help">In Ken on kencomputer.dev, open Settings → Your Mac and press Get a code. Type it here:</p>
+    <form class="row np-actions" onSubmit=${(e) => { e.preventDefault(); act({ action: 'link', code }, 'Linked to your Ken in the cloud.'); }}>
+      <input class="np-input" placeholder="ABCD-1234" aria-label="Code" value=${code} onInput=${(e) => setCode(e.target.value)} autocomplete="off"/>
+      <button class="btn primary" disabled=${busy || !code.trim()}>${busy ? 'Linking…' : 'Link'}</button></form>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}`;
+  return html`<div class="conn-list"><div><span class="conn-on"><i></i>Linked${st.account ? ` to ${st.account}` : ''}</span>
+      <button class="text-action" disabled=${busy} onClick=${() => act({ action: 'unlink' }, 'Unlinked.')}>Unlink</button></div></div>
+    <p class="np-note">${st.online ? 'Connected. Ken in the cloud can reach this Mac while it’s on and Ken is open.' : st.problem || 'Connecting…'}</p>
+    <p class="np-help">What Ken in the cloud may use on this Mac. All off until you turn them on. It can only look, never send or change anything.</p>
+    <div class="tool-list">${st.switches.map((sw) => html`<div class="conn"><div class="conn-row"><div class="conn-text"><b>${sw.label}</b>
+      <span>${sw.id === 'files' ? (st.folders.length ? 'Only these folders, and what’s inside them:' : 'Pick the folders Ken may read. Nothing outside them.') : ''}</span></div>
+      <div class="conn-right"><input class="job-switch" type="checkbox" role="switch" aria-label=${sw.label} checked=${sw.on} disabled=${busy} onChange=${(e) => act({ action: 'switch', id: sw.id, on: e.target.checked })}/></div></div>
+      ${sw.id === 'files' && html`<div class="conn-body">${st.folders.map((f) => html`<div class="row"><span class="np-note">${f}</span><button class="text-action" disabled=${busy} onClick=${() => act({ action: 'folders', folders: st.folders.filter((x) => x !== f) })}>Remove</button></div>`)}
+        ${window.kenDesktop?.pickFolder && html`<button class="btn sm light" disabled=${busy} onClick=${addFolder}>Add a folder…</button>`}</div>`}</div>`)}</div>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}`;
+}
+
+function HostedMac() {
+  const [st, setSt] = useState(null), [code, setCode] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const load = () => fetch('/account/mac.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject()).then(setSt);
+  useEffect(() => { load().catch(() => setError("Couldn't check your Mac just now.")); }, []);
+  // While a code is showing, see when the Mac takes it; the code lasts ten minutes.
+  useEffect(() => { if (!code || st?.linked) return; const t = setInterval(() => load().catch(() => {}), 3000); const end = setTimeout(() => { clearInterval(t); setCode(null); }, code.minutes * 60000); return () => { clearInterval(t); clearTimeout(end); }; }, [code, st?.linked]);
+  const post = async (path) => { const r = await fetch(path, { method: 'POST', credentials: 'same-origin' }); const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.error || 'That didn’t work. Try again.'); return body; };
+  const getCode = async () => { setBusy(true); setError(''); try { setCode(await post('/account/mac/code')); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const unlink = async () => { setBusy(true); setError(''); try { await post('/account/mac/unlink'); setCode(null); await load(); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const names = { files: 'Files in folders you chose', whatsapp: 'WhatsApp (read)' };
+  return html`<p class="np-help">Link Ken for Mac so Ken here can use things on your Mac that you allow, like files in folders you pick. Your Mac connects out to Ken; nothing on it is opened to the internet. You choose what's allowed on the Mac itself.</p>
+    ${error && html`<p class="connect-error" role="alert">${error}</p>`}
+    ${!st ? !error && html`<p class="np-note">Loading…</p>`
+      : st.linked ? html`<div class="conn-list"><div><span class="conn-on"><i></i>${st.linked.name}</span><span class="ai-state">${st.linked.online ? 'On now' : 'Off or asleep'}</span>
+          <button class="text-action" disabled=${busy} onClick=${unlink}>Unlink</button></div></div>
+        <p class="np-note">${st.linked.caps.length ? `Allowed on the Mac: ${st.linked.caps.map((c) => names[c] || c).join(', ')}.` : 'Nothing is switched on yet. Turn things on in Ken for Mac → Settings → Cloud.'}</p>`
+      : code ? html`<div class="tg-connect"><p class="np-help">In Ken for Mac, open Settings → Cloud and type this code. It works for ${code.minutes} minutes.</p>
+          <p class="mac-code">${code.code}</p><p class="np-note" role="status">Waiting for your Mac…</p></div>`
+      : html`<button class="btn primary" disabled=${busy} onClick=${getCode}>${busy ? 'Getting a code…' : 'Get a code'}</button>
+        <p class="np-note">Don't have Ken for Mac? <a class="text-action" href="https://kencomputer.dev" target="_blank" rel="noopener">Get it here</a>.</p>`}`;
+}
+
 // Hosted Ken's Settings → Telegram: a code to scan with the phone (a button on the phone itself), right here; it
 // says Connected by itself once they press Start in Telegram.
 function HostedTelegram() {
@@ -1914,6 +1964,11 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const setTab = onTab;
   useEffect(() => { const esc = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal')) onClose(); }; addEventListener('keydown', esc); return () => removeEventListener('keydown', esc); }, [onClose]);
   const [tools, setTools] = useState(null);
+  // Settings → Cloud (the Mac) / Your Mac (the cloud): only where it's on (the site says, or this Ken has a link).
+  const [macLink, setMacLink] = useState(false);
+  // Asked once Ken has said whether it's in the cloud (meta), so the right one is asked.
+  const metaIn = Object.keys(meta).length > 0;
+  useEffect(() => { if (!metaIn) return; (HOSTED ? fetch('/account/mac.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : {}).then((r) => !!r.on) : api('/api/link').then(() => true)).then(setMacLink).catch(() => {}); }, [metaIn]);
   const [privacy, setPrivacy] = useState(null), [limits, setLimits] = useState(null);
   useEffect(() => { api('/api/limits').then(setLimits).catch(() => {}); }, []);  // their plans' limits, from replies (no AI call)
   useEffect(() => { api('/api/privacy').then(setPrivacy).catch(() => {}); if (!HOSTED) api('/api/about/home').then((a) => setTools(a.tools)).catch((e) => setTools(e)); }, []);
@@ -1925,7 +1980,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   // one of them show only there (HOSTED: plan, apps and Telegram on Ken's site; the Mac: Phone and updates).
   // #/settings/<section> scrolls to that section.
   // Tabs, one section at a time (#/settings/<tab> opens that one). Plan, Apps and Telegram are Ken's site only.
-  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ...(HOSTED ? [] : [['tools', 'Tools']]), ['account', 'Account']];  // Ken on the site: Apps covers it
+  const tabsList = [...(HOSTED ? [['plan', 'Plan']] : []), ['claude', 'AI'], ...(HOSTED ? [['apps', 'Apps']] : []), ['phone', 'Phone'], ...(macLink ? [['link', HOSTED ? 'Your Mac' : 'Cloud']] : []), ...(HOSTED ? [] : [['tools', 'Tools']]), ['account', 'Account']];  // Ken on the site: Apps covers it
   const wanted = tab && tab.startsWith('connect-') ? 'claude' : ['privacy', 'appearance', 'general'].includes(tab) ? 'account' : tab;
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
@@ -1960,6 +2015,7 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', 'Phone', HOSTED ? html`<${HostedPhone}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
+  ${section('link', HOSTED ? 'Your Mac' : 'Ken in the cloud', HOSTED ? html`<${HostedMac}/>` : html`<${CloudLink} toast=${toast}/>`)}
   ${section('tools', 'Tools', html`<p class="np-help">What Ken can use on this computer and online.</p>${tools instanceof Error ? html`<p class="np-note">${tools.message}</p>` : tools ? html`<${ToolList} switches=${false} tools=${tools} onAddTool=${(name) => { onClose(); onAddTool(name); }}/>` : html`<p class="np-note">Loading…</p>`}`)}
   ${section('account', 'Account', html`<div class="tool-list">
     ${me?.signedIn && row(icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'), me.name || 'Signed in', me.email,

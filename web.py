@@ -215,7 +215,7 @@ async def use_ai(engine: Engine, setup, ai: str) -> dict:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None, link=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
@@ -228,6 +228,7 @@ class WebApp:
         self.connections = connections
         self.jobs = jobs  # (list, set): the engine's standing jobs
         self.phone = phone  # Ken on your phone (bot.py's Phone)
+        self.link = link  # Ken for Mac linked to their Ken in the cloud (mac_link.MacLink); None in the cloud
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
         self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
@@ -450,6 +451,28 @@ class WebApp:
         if request.method == "PUT":
             return _json(self.privacy[1](bool((await self._body(request)).get("share"))))
         return _json(self.privacy[0]())
+
+    async def mac_link(self, request):
+        """Settings → Cloud on the Mac: the link to their Ken in the cloud, and what it may use here.
+        POST {action: link, code} | {action: unlink} | {action: switch, id, on} | {action: folders, folders: [...]}."""
+        if not self.link:
+            return _json({"error": "not found"}, 404)
+        if request.method == "GET":
+            return _json(self.link.status())
+        body = await self._body(request)
+        action = body.get("action")
+        try:
+            if action == "link":
+                return _json(await self.link.link(str(body.get("code", ""))))
+            if action == "unlink":
+                return _json(await self.link.unlink())
+            if action == "switch":
+                return _json(self.link.set_switch(str(body.get("id", "")), bool(body.get("on"))))
+            if action == "folders" and isinstance(body.get("folders"), list):
+                return _json(self.link.set_folders(body["folders"]))
+        except ValueError as exc:
+            return _json({"error": str(exc)}, 400)
+        return _json({"error": "unknown action"}, 400)
 
     async def phone_status(self, request):
         return _json(self.phone.status() if self.phone else {})
@@ -1410,6 +1433,8 @@ class WebApp:
         r.add_get("/api/privacy", self.privacy_settings)
         r.add_put("/api/privacy", self.privacy_settings)
         r.add_get("/api/phone", self.phone_status)
+        r.add_get("/api/link", self.mac_link)
+        r.add_post("/api/link", self.mac_link)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
         r.add_post("/api/telegram/update", self.telegram_update)
