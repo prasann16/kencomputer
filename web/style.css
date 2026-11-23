@@ -684,3 +684,12 @@ ol.conn-steps li { margin: 2px 0; }
 .chat-list.side .chat-row-top b { font-weight: 500; }
 .side-settings { display: inline-flex; align-items: center; gap: 10px; }
 .side-settings svg { width: 18px; height: 18px; color: var(--muted); }
+
+/* An agent's ⋯ in the sidebar: shows on hover (or while its menu is open), over the row's right end */
+.chat-row-wrap { position: relative; }
+.row-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0; }
+.row-more .proj-more { background: var(--hover); border-radius: var(--r-md); }
+.chat-row-wrap:hover .row-more, .row-more:focus-within { opacity: 1; }
+.chat-row-wrap:has(.pop-menu) { z-index: 5; }
+.chat-row-wrap:has(.pop-menu) .row-more { opacity: 1; }
+.chat-row-wrap:has(.row-more):hover .chat-row-top small, .chat-row-wrap:has(.row-more:focus-within) .chat-row-top small { visibility: hidden; }
