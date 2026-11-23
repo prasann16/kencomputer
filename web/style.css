@@ -375,6 +375,8 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .ai-uses .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
 .ai-uses .ai-name:not(:has(.ai-dot)) { padding-left: 15px; }
 .ai-uses .ai-note { font-size: var(--text-ui); color: var(--faint); }
+.conn-list.ai-uses > .ai-auto > .ai-name { flex: 1; font-weight: 400; color: var(--muted); padding-left: 15px; }
+.ai-uses .ai-auto { justify-content: space-between; }
 .ai-uses .ai-limits { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; padding-left: calc(9.5em + var(--s3)); }
 .ai-uses .ai-limit { display: flex; align-items: center; gap: var(--s3); font-size: var(--text-ui); color: var(--muted); }
 .ai-uses .ai-limit-name { flex: 0 0 7.5em; }
