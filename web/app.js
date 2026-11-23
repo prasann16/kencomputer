@@ -1118,6 +1118,7 @@ function Glyph(name) {
     plus: 'M12 5v14M5 12h14',
     play: 'M8 5v14l11-7z',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+    brain: 'M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V6a2 2 0 0 0-3-2Zm6 0a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1V6a2 2 0 0 1 3-2Z',
   };
   return html`<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${paths[name] || paths.file}/></svg>`;
 }
@@ -1477,8 +1478,8 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
   if (agentsUI) return html`<header class="chat-top">
     <a class="chat-back" href=${brain ? chatHref(pid) : '#/chats'} aria-label=${brain ? 'Back to the chat' : 'All chats'}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></a>
     <a class="chat-title narrow-only" href=${chatHref(pid, !brain)} title=${brain ? 'Back to the chat' : 'Open its Brain'}><i class="chat-dot" style=${{ background: title?.color || 'var(--ink)' }}></i><b>${title ? title.name : 'Ken'}</b>${brain && html`<small class="narrow-only">Brain</small>`}</a>
-    ${brain && html`<a class="clear-button wide-only" href=${chatHref(pid)}>‹ Back to chat</a>`}
-    ${side && !brain && html`<a class="clear-button wide-only chat-brain" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>`}
+    ${brain && !side && html`<a class="clear-button wide-only" href=${chatHref(pid)}>‹ Back to chat</a>`}
+    ${side && html`<span class="chat-name wide-only"><a href=${chatHref(pid)}><b>${title ? title.name : 'Ken'}</b></a><a class=${'icon-btn chat-brain' + (brain ? ' on' : '')} href=${chatHref(pid, !brain)} aria-label=${brain ? 'Back to the chat' : 'Brain'} title=${brain ? 'Back to the chat' : 'Brain: its goal, memory and files'}>${Glyph('brain')}</a></span>`}
     ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}
     <div class="chat-tools">${!brain && !title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}
       ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}${!side && html`<a class="clear-button" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>`}</span>`}
