@@ -190,8 +190,20 @@ function usePopover() {
 // The sidebar: their Library at the top (with a peek at the newest), their chats, Settings at the foot.
 function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, library, libraryOn, peek, agents }) {
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
+  // Without the Library (it's only on for some accounts): the chat list as it was, unchanged.
+  if (!libraryOn) {
+    return html`<aside class="chat-list" aria-label="Chats">
+      <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Chats</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+      <nav class="chat-rows">${list.map((c) => html`<a class=${'chat-row' + (open && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
+        <i class="chat-dot" style=${{ background: c.color || 'var(--ink)' }}></i>
+        <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
+        <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
+        ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>`)}</nav>
+      <div class="chat-list-foot"><button class="settings-link" onClick=${onSettings}>Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
+    </aside>`;
+  }
   const pics = (peek || []).filter((it) => it.kind !== 'file' && (it.thumb || libraryPicture.get(it.id))).slice(0, 4);
-  return html`<aside class="chat-list" aria-label="Ken">
+  return html`<aside class="chat-list side" aria-label="Ken">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b>${agents && html`<button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>`}</div>
     ${libraryOn && html`<a class=${'side-library' + (library ? ' sel' : '')} href="#/library">
       <span class="side-library-head">${Glyph('photos')}<b>Library</b>${peek?.length > 0 && html`<small>${peek.length}</small>`}</span>
