@@ -814,11 +814,3 @@ ol.conn-steps li { margin: 2px 0; }
 /* Library: Add's menu (with Google Photos on) and the line while they pick there */
 .lib-add-menu { right: 0; left: auto; top: calc(100% + 6px); min-width: 210px; }
 .lib-google { margin: 0 var(--s5) var(--s3); padding: 10px 14px; border-radius: 12px; background: var(--well); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-
-/* New sidebar: the chat's name at the top left, its Brain one quiet icon away */
-.chat-name { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.chat-name > a:first-child { color: var(--ink); text-decoration: none; font-size: var(--text-md, 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-name b { font-weight: 600; }
-.chat-brain { color: var(--muted); }
-.chat-brain:hover, .chat-brain.on { color: var(--ink); background: var(--well); }
-.chat-brain svg { width: 19px; height: 19px; }
