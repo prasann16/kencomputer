@@ -331,8 +331,8 @@ function LibraryPage({ toast }) {
       <div class="library-title"><h1>Library</h1>${lib_ && !lib_.off && html`<p class="library-sub">${count} ${what} Ken can use · ${gbLabel(lib_.used)} of ${gbLabel(lib_.allowance)}</p>`}</div>
       ${count > 0 && html`<button class="clear-button narrow-only library-select" onClick=${() => { setSelecting(!selecting); setPicked(new Set()); }}>${selecting ? 'Done' : 'Select'}</button>`}
       <div class="library-add pop">
-        <button class="btn primary" disabled=${!!sending || google} onClick=${() => setAdding(!adding)}>${Glyph('plus')} Add</button>
-        ${adding && html`<div class="pop-menu" role="menu">
+        <button class="btn primary" disabled=${!!sending || google} onClick=${() => (lib_?.google ? setAdding(!adding) : chooser.current.click())}>${Glyph('plus')} Add</button>
+        ${adding && lib_?.google && html`<div class="pop-menu" role="menu">
           <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); chooser.current.click(); }}>From this computer</button>
           <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); fromGoogle(); }}>From Google Photos</button>
         </div>`}
