@@ -1121,12 +1121,11 @@ def build_system() -> str:
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
-    # Ken knows their agents (and how to pass work on) once they have any, or while agents are tried out
-    if ENGINE.list_agents() or (KEN_HOME / "beta-agents").exists():
-        try:
-            system += "\n\n" + ENGINE.chief_brief(read_chat=f"{KEN_CMD} --chat")
-        except Exception as e:
-            log.warning("agent listing failed: %s", e)
+    # Ken knows their agents (and how to pass work on, or make one)
+    try:
+        system += "\n\n" + ENGINE.chief_brief(read_chat=f"{KEN_CMD} --chat")
+    except Exception as e:
+        log.warning("agent listing failed: %s", e)
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="

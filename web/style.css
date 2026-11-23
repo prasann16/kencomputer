@@ -678,3 +678,9 @@ ol.conn-steps li { margin: 2px 0; }
 .conversation-thread > div[data-key] { animation: msg-in .22s ease-out both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { .chat-skeleton i, .conversation-thread > div[data-key] { animation: none; } }
+
+/* Sidebar: their chats, Settings at the foot on a phone (the top bar has it on a wide screen) */
+.chat-list.side .chat-row { padding: 10px 12px; }
+.chat-list.side .chat-row-top b { font-weight: 500; }
+.side-settings { display: inline-flex; align-items: center; gap: 10px; }
+.side-settings svg { width: 18px; height: 18px; color: var(--muted); }

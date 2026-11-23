@@ -189,14 +189,13 @@ function usePopover() {
 // a chat of its own for one part of their life. Beside the chat on a wide screen; a phone shows it alone at #/chats.
 function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport }) {
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
-  return html`<aside class="chat-list" aria-label="Chats">
-    <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Chats</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+  return html`<aside class="chat-list side" aria-label="Ken">
+    <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <nav class="chat-rows">${list.map((c) => html`<a class=${'chat-row' + (open && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
-      <i class="chat-dot" style=${{ background: c.color || 'var(--ink)' }}></i>
       <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
       <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
       ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>`)}</nav>
-    <div class="chat-list-foot"><button class="settings-link" onClick=${onSettings}>Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
+    <div class="chat-list-foot side-foot"><button class="settings-link side-settings narrow-only" onClick=${onSettings}>${Glyph('settings')}Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
   </aside>`;
 }
 
@@ -1174,10 +1173,11 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
     <a class="chat-back" href=${brain ? chatHref(pid) : '#/chats'} aria-label=${brain ? 'Back to the chat' : 'All chats'}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></a>
     <a class="chat-title narrow-only" href=${chatHref(pid, !brain)} title=${brain ? 'Back to the chat' : 'Open its Brain'}><i class="chat-dot" style=${{ background: title?.color || 'var(--ink)' }}></i><b>${title ? title.name : 'Ken'}</b>${brain && html`<small class="narrow-only">Brain</small>`}</a>
     ${brain && html`<a class="clear-button wide-only" href=${chatHref(pid)}>‹ Back to chat</a>`}
+    ${!brain && html`<a class="clear-button wide-only chat-brain" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>`}
     ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}
     <div class="chat-tools">${!brain && !title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}
-      ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}<a class="clear-button" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a></span>`}
-      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/></div>
+      ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</span>`}
+      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/><button class="clear-button wide-only" onClick=${onSettings}>Settings</button></div>
   </header>`;
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && window.kenDesktop?.popupMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
