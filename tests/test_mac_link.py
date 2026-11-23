@@ -77,6 +77,27 @@ async def test_unlink_tells_the_site_and_forgets_the_token(link):
     assert not link.linked() and "token" not in link.file.read_text()
 
 
+async def test_unlinking_turns_every_switch_off_so_a_new_link_starts_from_nothing(link, tmp_path):
+    await linked(link, [tmp_path], files=True)
+    await link.unlink(client=fake_site(lambda r: httpx.Response(200, json={"ok": True})))
+    await linked(link)
+    assert link.caps_on() == [] and link.state()["folders"] == [str(tmp_path)]
+
+
+async def test_an_odd_answer_from_the_site_doesnt_stop_it(link, monkeypatch):
+    await linked(link)
+    naps = []
+
+    async def nap(s):
+        naps.append(s)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(mac_link.asyncio, "sleep", nap)
+    with pytest.raises(asyncio.CancelledError):
+        await link.run(client=fake_site(lambda r: httpx.Response(200, json=["not", "a", "dict"])))
+    assert naps == [5] and link.linked()
+
+
 async def test_the_poll_answers_the_cloud_then_stops_when_unlinked_on_the_site(link, tmp_path):
     docs = tmp_path / "Documents"
     docs.mkdir()
@@ -84,12 +105,14 @@ async def test_the_poll_answers_the_cloud_then_stops_when_unlinked_on_the_site(l
     await linked(link, [docs], files=True)
     polls, answers = [], []
 
-    def site(request):
+    async def site(request):
         body = json.loads(request.content)
         if request.url.path == "/mac/poll":
             polls.append(body)
             if len(polls) == 1:
                 return httpx.Response(200, json={"calls": [{"id": "c1", "cap": "files.list", "args": {"path": str(docs)}}]})
+            while not answers:  # the next poll holds, as the site's does, until the answer is in
+                await asyncio.sleep(0.01)
             return httpx.Response(401, json={"error": "unlinked"})
         answers.append(body)
         return httpx.Response(200, json={"ok": True})

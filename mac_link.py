@@ -176,6 +176,7 @@ class MacLink:
         st = self.state()
         for k in ("token", "account", "since"):
             st.pop(k, None)
+        st["switches"] = {}  # a new link starts with everything off again
         self._save(st)
         self.connected = False
         self.problem = why
@@ -227,7 +228,7 @@ class MacLink:
                         task = asyncio.create_task(self._answer(client, auth, call))
                         self._tasks.add(task)
                         task.add_done_callback(self._tasks.discard)
-                except (httpx.HTTPError, ValueError) as e:
+                except Exception as e:  # never stop for good: an odd answer is retried like a lost connection
                     self.connected, self.problem = False, "Can't reach kencomputer.dev right now. Trying again…"
                     log.info("mac link: poll failed (%s); again in %ds", type(e).__name__, delay)
                     await asyncio.sleep(delay)
