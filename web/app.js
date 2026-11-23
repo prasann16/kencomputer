@@ -1125,7 +1125,7 @@ const fileUrl = (f) => `/api/chats/${f.project}/files/${encodeURIComponent(f.nam
 const isVideo = (name) => /\.(mp4|webm|mov)$/i.test(name);
 const isAudio = (name) => /\.(mp3|wav|m4a|ogg|oga|opus|flac|aac|aiff?)$/i.test(name) || /^voice-.*\.webm$/i.test(name);
 const isText = (name) => /\.(txt|md|csv|json|log|py|js|css|html)$/i.test(name);
-const bytes = (n) => n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : (n / 1024 / 1024).toFixed(1) + ' MB';
+const bytes = (n) => n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : n < 1024 ** 3 ? (n / 1024 / 1024).toFixed(1) + ' MB' : (n / 1024 ** 3).toFixed(1) + ' GB';
 
 function ChatVideo({ file }) {
   const [plain, setPlain] = useState(false);
@@ -2341,13 +2341,19 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
 }
 
 
+// Removing an agent deletes its chat. The files it made are kept (their Library, or Removed chats in Ken's Files)
+// unless they tick the box; engine.remove_agent.
 function RemoveProject({ project, onClose, onDone }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const remove = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'DELETE' }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
-  return html`<${Modal} title=${`Remove “${project.name}” from Ken?`} onClose=${onClose}>
-    <p class="np-help">It leaves the sidebar. Its folder and files on your computer aren't touched, and its chat and notes are kept in Ken's folder.</p>
+  const [files, setFiles] = useState(null), [deleteFiles, setDeleteFiles] = useState(false);
+  useEffect(() => { api(`/api/agents/${project.id}/files-size`).then(setFiles).catch(() => setFiles({ count: 0 })); }, [project.id]);
+  const remove = async () => { setBusy(true); try { await api(`/api/agents/${project.id}${deleteFiles ? '?files=delete' : ''}`, { method: 'DELETE' }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
+  const some = files?.count > 0;
+  return html`<${Modal} title=${`Remove “${project.name}”?`} onClose=${onClose}>
+    <p class="np-help">Its chat is deleted.${some ? (files.library ? ' Files it made move to your Library.' : ' Files it made move to Removed chats in Ken’s Files.') : ''}</p>
+    ${some && html`<label class="np-check"><input type="checkbox" checked=${deleteFiles} onChange=${(e) => setDeleteFiles(e.target.checked)}/>Also delete its files (${bytes(files.bytes)})</label>`}
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
-    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${remove}>Remove</button></div>
+    <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy || !files} onClick=${remove}>Remove</button></div>
   <//>`;
 }
 

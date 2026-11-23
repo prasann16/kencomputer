@@ -320,7 +320,7 @@ async def test_remove_project_keeps_its_folder(engine, tmp_path):
     await engine.remove_agent("repo")
     assert [p["id"] for p in engine.list_agents()] == []
     assert (repo / "keep.txt").read_text() == "mine"
-    assert any((tmp_path / "agents/.removed").iterdir())
+    assert not (tmp_path / "agents/repo").exists() and not (tmp_path / "agents/.removed").exists()
 
 
 async def test_ken_knows_where_a_message_came_from(engine):

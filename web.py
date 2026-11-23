@@ -24,7 +24,7 @@ from typing import Callable
 from aiohttp import WSMsgType, web
 
 import runtimes
-from engine import HOME, Engine
+from engine import HOME, Engine, _library_on
 
 log = logging.getLogger("ken")
 
@@ -1205,11 +1205,19 @@ class WebApp:
             return _json({"error": str(e)}, 400)
 
     async def remove_agent(self, request):
+        """Removes it for good; ?files=delete deletes the files it made too (else they're kept: engine.remove_agent)."""
         try:
-            await self.engine.remove_agent(self._agent(request))
+            done = await self.engine.remove_agent(self._agent(request), delete_files=request.query.get("files") == "delete")
         except ValueError as e:
             return _json({"error": str(e)}, 400)
-        return _json({"ok": True})
+        return _json({"ok": True, **done})
+
+    async def agent_files_size(self, request):
+        """What the Remove dialog says: how many files it made, their size, and whether they'd go to the Library."""
+        pid = self._agent(request)
+        size = await asyncio.to_thread(self.engine.agent_files_size, pid)
+        library_on = bool(size["count"]) and await asyncio.to_thread(_library_on)
+        return _json({**size, "library": library_on})
 
     async def put_context(self, request):
         pid = self._agent(request)
@@ -1448,6 +1456,7 @@ class WebApp:
         r.add_get("/api/agents/{pid}", self.agent)
         r.add_patch("/api/agents/{pid}", self.update_agent)
         r.add_delete("/api/agents/{pid}", self.remove_agent)
+        r.add_get("/api/agents/{pid}/files-size", self.agent_files_size)
         r.add_put("/api/agents/{pid}/context", self.put_context)
         r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
         r.add_get("/api/agents/{pid}/keys", self.keys)
