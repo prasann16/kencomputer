@@ -787,8 +787,9 @@ SYSTEM_PROMPT = (
     '"on": false pauses a job without deleting it; "date": "2026-10-31" makes it one-time: it runs that '
     'day only and Ken removes it after (use it for reminders, not "days" plus a date check in the prompt). '
     'A job missed while this computer slept is not run the moment it wakes: they are asked first, one question for '
-    'everything missed, and no answer means it waits for its next time. "missed": "run" on a job makes it catch up '
-    'without asking (only for something light they always want, when they say so); "missed": "skip" never asks. '
+    'everything missed, and no answer means it waits for its next time. That is their setting: /missed (or the '
+    'switch above the job list in Brain) changes it to catching up without asking, and back. One job can differ: '
+    '"missed": "run" catches up without asking, "ask" always asks, "skip" never runs late. '
     "Every install ships with two: morning-brief and nightly-review. "
     "Edit the morning-brief prompt freely as you learn what they want in it. "
     '"days" is "daily", "weekdays", or comma-separated short names like "mon,wed,fri". '
@@ -2002,11 +2003,50 @@ PILE = 3  # this many background jobs lined up at once on a costly model is wort
 PILE_QUIET = 3600  # seconds before the heads-up may come again
 
 
+MISSED_ENV = "KEN_MISSED_JOBS"  # "run": missed jobs catch up without asking; anything else: ask first
+
+
+def missed_setting() -> str:
+    """Their choice for every job that doesn't say otherwise: "ask" (the default) or "run"."""
+    return "run" if os.environ.get(MISSED_ENV, "").strip().lower() == "run" else "ask"
+
+
 def missed_policy(job: dict) -> str:
-    """What a job missed while the computer slept does when it wakes: "ask" first (the default), "run" as before,
-    or "skip". A one-time job is a reminder, so it still runs."""
+    """What a job missed while the computer slept does when it wakes: the job's own "missed" ("ask", "run" or
+    "skip") if it has one, else their setting (missed_setting). A one-time job is a reminder, so it still runs."""
     policy = str(job.get("missed", "")).lower()
-    return policy if policy in ("ask", "run", "skip") else ("run" if job.get("date") else "ask")
+    return policy if policy in ("ask", "run", "skip") else ("run" if job.get("date") else missed_setting())
+
+
+def missed_status() -> dict:
+    """Settings: does Ken ask before running jobs missed while the computer slept? On by default."""
+    return {"ask": missed_setting() == "ask"}
+
+
+def set_missed(ask: bool) -> dict:
+    if ask:
+        drop_env(KEN_HOME / ".env", MISSED_ENV)
+    else:
+        save_env(KEN_HOME / ".env", MISSED_ENV, "run")
+    return missed_status()
+
+
+MISSED_WORDS = {"ask": True, "on": True, "confirm": True, "run": False, "off": False, "auto": False}
+
+
+def missed(arg: str = "") -> dict:
+    """/missed: see or change it. `/missed ask` asks first; `/missed run` catches up without asking."""
+    word = arg.strip().lower()
+    if word and word not in MISSED_WORDS:
+        return {"reply": "Use /missed ask (I check with you first) or /missed run (I catch up without asking).", **missed_status()}
+    status = set_missed(MISSED_WORDS[word]) if word else missed_status()
+    if status["ask"]:
+        reply = ("Jobs missed while this computer slept: I ask you first, one question for all of them. "
+                 "/missed run makes me catch up without asking.")
+    else:
+        reply = ("Jobs missed while this computer slept: I run them when it wakes, one after another, without asking. "
+                 "/missed ask makes me check with you first.")
+    return {"reply": reply, **status}
 
 
 def is_late(job: dict, now: time.struct_time) -> bool:
@@ -2580,7 +2620,7 @@ async def start_engine() -> WebApp | None:
     use_signed_in_account()
     browser = browser_command().get("browser")
     shared = {"browser": SharedServer(browser["command"], browser["args"], browser.get("env"))} if browser else {}
-    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding)
+    web_app = WebApp(ENGINE, KEN_HOME, RUNNING_REV, transcribe if voice_available() else None, COMMANDS, setup, CONNECTIONS, (list_jobs, set_job), PHONE, (privacy_status, set_privacy), shared, apply_onboarding, missed=(missed_status, set_missed))
     if os.environ.get("KEN_NOTIFY_URL"):
         task = asyncio.create_task(notify_app(web_app))
         APP_TASKS.add(task)
@@ -2974,6 +3014,28 @@ async def cmd_decaf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(decaf())
 
 
+async def cmd_missed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tap to choose: ask before running missed jobs, or just run them."""
+    if not authorized(update):
+        return
+    result = missed(" ".join(context.args or []))
+    keyboard = [[InlineKeyboardButton(("👉 " if result["ask"] else "") + "Ask me first", callback_data="missed:ask"),
+                 InlineKeyboardButton(("👉 " if not result["ask"] else "") + "Just run them", callback_data="missed:run")]]
+    await update.effective_message.reply_text(result["reply"], reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def on_missed_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q is None or q.from_user is None or q.from_user.id != ALLOWED_USER_ID:
+        return
+    result = missed(q.data.split(":", 1)[1])
+    await q.answer("Ask first" if result["ask"] else "Just run")
+    try:
+        await q.edit_message_text(result["reply"])
+    except Exception:
+        pass
+
+
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Native picker: tap a model, it switches."""
     if not authorized(update):
@@ -3042,6 +3104,7 @@ def _awake_command(arg: str = "") -> dict:
 COMMANDS = {
     "model": model,
     "usage": usage,
+    "missed": missed,
     "coffee": lambda arg="": {"reply": coffee(), "awake": True},
     "decaf": lambda arg="": {"reply": decaf(), "awake": False},
     "awake": _awake_command,
@@ -3315,11 +3378,12 @@ class Phone:
         app = builder.build()
         app.add_handler(TypeHandler(Update, heard), group=-1)  # every message, before it's handled
         for name, fn in (("start", cmd_start), ("new", cmd_new), ("stop", cmd_stop), ("model", cmd_model),
-                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill), ("usage", cmd_usage)):
+                         ("coffee", cmd_coffee), ("decaf", cmd_decaf), ("kill", cmd_kill), ("usage", cmd_usage), ("missed", cmd_missed)):
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(on_model_pick, pattern=r"^model:"))
         app.add_handler(CallbackQueryHandler(on_approval_pick, pattern=r"^appr:"))
         app.add_handler(CallbackQueryHandler(on_kill_pick, pattern=r"^kill:"))
+        app.add_handler(CallbackQueryHandler(on_missed_pick, pattern=r"^missed:"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_photo))
@@ -3338,6 +3402,7 @@ class Phone:
                 ("new", "Fresh conversation (memory stays)"),
                 ("model", "See or switch the AI model"),
                 ("usage", "How much of your AI plan and memory is used"),
+                ("missed", "Ask before running missed jobs, or just run them"),
                 ("kill", "Turn Ken off in an emergency"),
             ])
         except Exception as e:

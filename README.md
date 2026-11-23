@@ -84,6 +84,7 @@ ken update     pull the latest version and restart
 ken memory     edit what Ken knows about you
 ken setup      connect Telegram and Claude again
 ken config     edit settings
+ken missed     jobs missed while asleep: ask first (default) or run
 ken uninstall  remove Ken (keeps your memory & settings)
 ```
 

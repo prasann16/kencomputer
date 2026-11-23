@@ -184,6 +184,28 @@ def test_settings_privacy_switch_turns_both_kinds_of_sharing_off_and_on(monkeypa
 
 
 
+def test_missed_jobs_setting_asks_by_default_and_can_be_switched_to_run(monkeypatch):
+    monkeypatch.delenv("KEN_MISSED_JOBS", raising=False)
+    assert bot.missed_status() == {"ask": True} and bot.missed_policy(BRIEF) == "ask"  # asks by default
+    assert bot.set_missed(False) == {"ask": False}
+    assert "KEN_MISSED_JOBS=run" in (bot.KEN_HOME / ".env").read_text()  # remembered across restarts
+    assert bot.missed_policy(BRIEF) == "run"
+    assert bot.missed_policy({**BRIEF, "missed": "ask"}) == "ask"  # one job can still differ
+    assert bot.missed_policy({**BRIEF, "missed": "skip"}) == "skip"
+    assert bot.set_missed(True) == {"ask": True} and "KEN_MISSED_JOBS" not in (bot.KEN_HOME / ".env").read_text()
+    assert bot.missed_policy(BRIEF) == "ask"
+
+
+def test_missed_command_shows_and_changes_the_setting(monkeypatch):
+    monkeypatch.delenv("KEN_MISSED_JOBS", raising=False)
+    assert bot.COMMANDS["missed"] is bot.missed
+    assert bot.missed()["ask"] and "/missed run" in bot.missed()["reply"]  # bare: says where it stands
+    off = bot.missed("run")
+    assert not off["ask"] and "without asking" in off["reply"] and bot.missed_setting() == "run"
+    assert not bot.missed("sometimes")["ask"] and bot.missed_setting() == "run"  # a wrong word changes nothing
+    assert bot.missed(" ASK ")["ask"] and bot.missed_setting() == "ask"
+
+
 def test_a_job_says_what_it_does():
     import json
     long = "Read yesterday's errors from PostHog and fix the top ones on a branch. Then message me one line."

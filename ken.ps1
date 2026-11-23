@@ -60,6 +60,19 @@ switch ($Command) {
     & (Join-Path $App "install.ps1")
   }
   "config" { notepad (Join-Path $KenHome ".env") }
+  "missed" {
+    # Jobs missed while this computer slept: ask before running them (the default), or just run them.
+    $envFile = Join-Path $KenHome ".env"
+    $choice = $Arg
+    if ($choice -in "ask", "run") {
+      $lines = @(Get-Content $envFile -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch "^KEN_MISSED_JOBS=" })
+      if ($choice -eq "run") { $lines += "KEN_MISSED_JOBS=run" }
+      [IO.File]::WriteAllLines($envFile, [string[]]$lines, (New-Object Text.UTF8Encoding $false))  # no BOM
+      Stop-Ken; Start-Sleep 2; Start-Ken
+    } elseif ($choice) { "Use: ken missed ask   or   ken missed run"; break }
+    if (Select-String -Path $envFile -Pattern "^KEN_MISSED_JOBS=run" -Quiet -ErrorAction SilentlyContinue) { "Missed jobs: run without asking.  (ken missed ask to change)" }
+    else { "Missed jobs: Ken asks you first.  (ken missed run to change)" }
+  }
   "memory" { notepad (Join-Path $KenHome "work\SOUL.md") }
   "uninstall" {
     $a = Read-Host "Remove Ken from this computer? Your memory & settings in $KenHome stay. [y/N]"
@@ -84,6 +97,7 @@ ken - your AI's computer
   ken start/stop
   ken setup      connect Telegram and Claude again
   ken config     edit settings (.env)
+  ken missed     jobs missed while asleep: ask first, or run (ken missed ask|run)
   ken memory     edit your assistant's soul file (identity + memory)
   ken uninstall  remove Ken (keeps your memory & settings)
 "@

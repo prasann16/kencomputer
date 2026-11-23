@@ -215,7 +215,7 @@ async def use_ai(engine: Engine, setup, ai: str) -> dict:
 
 
 class WebApp:
-    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None) -> None:
+    def __init__(self, engine: Engine, home: Path, rev: str = "", transcribe: Callable[[str], str] | None = None, commands: dict[str, Callable] | None = None, setup=None, connections=None, jobs=None, phone=None, privacy=None, shared=None, onboarding=None, missed=None) -> None:
         self.engine = engine
         self.token = load_token(home)
         self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
@@ -229,6 +229,7 @@ class WebApp:
         self.jobs = jobs  # (list, set): the engine's standing jobs
         self.phone = phone  # Ken on your phone (bot.py's Phone)
         self.privacy = privacy  # (status, set): share anonymous crash reports and usage
+        self.missed = missed  # (status, set): ask before running jobs missed while the computer slept
         self.shared = shared or {}  # MCP servers every chat shares (ken_mcp.SharedServer), at /mcp/<name>
         self.onboarding = onboarding or (lambda facts: {"covered": engine.apply_onboarding(facts)})  # bot.py adds jobs + checklist
         self.runner: web.AppRunner | None = None
@@ -448,6 +449,14 @@ class WebApp:
         if request.method == "PUT":
             return _json(self.privacy[1](bool((await self._body(request)).get("share"))))
         return _json(self.privacy[0]())
+
+    async def missed_settings(self, request):
+        """Ask before running jobs missed while the computer slept: read it, or {ask: bool} to change it."""
+        if not self.missed:
+            return _json({"ask": True})
+        if request.method == "PUT":
+            return _json(self.missed[1](bool((await self._body(request)).get("ask"))))
+        return _json(self.missed[0]())
 
     async def phone_status(self, request):
         return _json(self.phone.status() if self.phone else {})
@@ -1407,6 +1416,8 @@ class WebApp:
         r.add_post("/api/ui-error", self.ui_error)
         r.add_get("/api/privacy", self.privacy_settings)
         r.add_put("/api/privacy", self.privacy_settings)
+        r.add_get("/api/missed", self.missed_settings)
+        r.add_put("/api/missed", self.missed_settings)
         r.add_get("/api/phone", self.phone_status)
         r.add_post("/api/phone", self.phone_change)
         r.add_delete("/api/phone", self.phone_change)
