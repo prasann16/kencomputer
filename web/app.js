@@ -2122,7 +2122,9 @@ function App() {
   const loadModelCatalog=()=>api('/api/models').then(setModelCatalog).catch(()=>{});
   const runtimeVersion=useRef(0);
   const [changingBrain,setChangingBrain]=useState(false);
-  const loadModel=async()=>{const target=pidRef.current, version=++runtimeVersion.current;try{const r=await api(`/api/chats/${target}/runtime`);if(pidRef.current===target && version===runtimeVersion.current)setModel({pid:target,...r});}catch(e){toast(e.message);}};
+  // Each chat's model as last seen, so the top bar shows it at once when a chat opens (no blink while Ken answers).
+  const seenModels=useRef(cached('models')||{});
+  const loadModel=async()=>{const target=pidRef.current, version=++runtimeVersion.current;try{const r=await api(`/api/chats/${target}/runtime`);seenModels.current={...seenModels.current,[target]:r};keep('models',seenModels.current);if(pidRef.current===target && version===runtimeVersion.current)setModel({pid:target,...r});}catch(e){toast(e.message);}};
   const changeRuntime=async(change)=>{
     if(changingBrain)return;
     const target=pidRef.current; ++runtimeVersion.current; setChangingBrain(true);
@@ -2294,7 +2296,7 @@ function App() {
   useEffect(() => {
     // Another chat: show its last look at once (if this browser has one) while it loads.
     setChat((c) => { if (c && c.pid === pid) return c; const k = cached('chat:' + pid); return k && k.pid === pid ? { ...k, cached: true, busy: false } : c; });
-    setModel(null); loadModel(); load(); loadProjectMeta(pid);
+    setModel(seenModels.current[pid] ? { pid, ...seenModels.current[pid] } : null); loadModel(); load(); loadProjectMeta(pid);
   }, [pid]);
   useEffect(() => {
     let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer, heard = Date.now();
