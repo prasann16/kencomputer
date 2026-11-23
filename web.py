@@ -377,6 +377,8 @@ class WebApp:
                 return _json(await self.setup.save_api_key(str(b.get("key", "")), backend=b.get("backend")))
             if b.get("action") == "disconnect":
                 return _json(await self.setup.disconnect(backend=b.get("backend")))
+            if b.get("action") == "auto-credits":  # Settings → AI: keep going on Ken AI credits at a plan's limit
+                return _json(self._until(self.setup.keep_going_on_credits(bool(b.get("on")))))
             if b.get("action") == "use":  # Settings → AI (or asking Ken: `--use`): "credits", "claude" or "codex"
                 return _json(self._until(await use_ai(self.engine, self.setup, str(b.get("ai", "")))))
             if b.get("code"):
