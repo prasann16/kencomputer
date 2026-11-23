@@ -406,7 +406,7 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .settings-page { position: fixed; inset: 0; z-index: 30; overflow-y: auto; background: var(--bg); font-size: var(--text-body); line-height: 1.6; }
 .sp-wrap { max-width: calc(var(--page) + 2 * var(--s5)); margin: 0 auto; padding: 0 var(--s5) 72px; }
 .sp-top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; margin: 0 calc(-1 * var(--s5)); padding: 14px var(--s5); background: var(--bg); }
-.sp-brand { display: inline-flex; align-items: center; gap: 10px; font: 600 20px/1 var(--sans); letter-spacing: -.01em; color: var(--ink); }
+.sp-brand { display: inline-flex; align-items: center; gap: 10px; font: 600 20px/1 var(--sans); letter-spacing: -.01em; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; }
 .sp-title { margin: var(--s7) 0 var(--s6); font: 500 var(--text-2xl)/1.15 var(--sans); letter-spacing: -.03em; }
 .sp-section { margin: 0 0 36px; }
 .sp-section h2 { margin: 0 0 6px; font: 600 var(--text-lg)/1.3 var(--sans); letter-spacing: -.01em; }
@@ -429,6 +429,8 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .ai-uses .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
 .ai-uses .ai-name:not(:has(.ai-dot)) { padding-left: 15px; }
 .ai-uses .ai-note { font-size: var(--text-ui); color: var(--faint); }
+.conn-list.ai-uses > .ai-auto > .ai-name { flex: 1; font-weight: 400; color: var(--muted); padding-left: 15px; }
+.ai-uses .ai-auto { justify-content: space-between; }
 .ai-uses .ai-limits { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; padding-left: calc(9.5em + var(--s3)); }
 .ai-uses .ai-limit { display: flex; align-items: center; gap: var(--s3); font-size: var(--text-ui); color: var(--muted); }
 .ai-uses .ai-limit-name { flex: 0 0 7.5em; }

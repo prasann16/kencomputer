@@ -2028,9 +2028,9 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
   const current = wanted === 'feedback' ? 'account' : tabsList.some(([id]) => id === wanted) ? wanted : tabsList[0][0];
   const section = (id, title, body) => id !== current ? '' : html`<section class="sp-section" id=${'set-' + id}><h2>${title}</h2>${body}</section>`;
   // Until Ken has said what it is (in the cloud or on a Mac), its sections aren't known: a calm line, not the wrong ones.
-  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
+  if (!Object.keys(meta).length) return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap"><header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1><${WaitingForKen}/></div></div>`;
   return html`<div class="settings-page" role="region" aria-label="Settings"><div class="sp-wrap">
-  <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
+  <header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn primary sm" onClick=${onClose}>Back to Ken</button></header><h1 class="sp-title">Settings</h1>
   <nav class="sp-tabs" role="tablist" aria-label="Settings">${tabsList.map(([id, label]) => html`<button role="tab" aria-selected=${current === id} class=${current === id ? 'on' : ''} onClick=${() => { setTab(id); setError(''); }}>${label}</button>`)}</nav>
   ${HOSTED && current === 'plan' && (meta.usage ? html`<${PlanUsage} usage=${meta.usage} accountUrl=${meta.account_url}/>` : meta.account_url && html`<p class="np-note"><a class="text-action" href="/account/card?back=ken">Plan and billing</a></p>`)}
   ${section('claude', 'AI that Ken uses', html`<p class="np-help">${HOSTED ? 'Ken runs on your own Claude or ChatGPT when one is connected, and on Ken AI credits when not or when you pick them.' : 'Ken runs on your Claude or ChatGPT subscription.'}</p>
@@ -2039,8 +2039,10 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       // Exactly one row is "in use": their own subscription (the chat's chosen brain if both), else Ken AI credits.
       const own = Object.fromEntries(['claude', 'codex'].map((id) => { const a = setup?.providers?.[id] || {}; return [id, !!a.connected && a.how !== 'included']; }));
       // Ken AI credits are in use when the chat runs on Claude without their own Claude, or they picked credits here.
-      const onCredits = HOSTED && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
-      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED ? 'credits' : '';
+      // credits_off: their own Claude stopped working; Ken AI credits wait until they pick them.
+      const creditsOff = !!setup?.providers?.claude?.credits_off;
+      const onCredits = HOSTED && !creditsOff && brain === 'claude' && (!own.claude || setup?.providers?.claude?.use_credits);
+      const inUse = onCredits ? 'credits' : own[brain] ? brain : own.claude ? 'claude' : own.codex ? 'codex' : HOSTED && !creditsOff ? 'credits' : '';
       // Hosted: one tap moves between their own account and Ken AI credits, without signing out of anything.
       const use = (id, label) => html`<button class="text-action" onClick=${() => api('/api/setup', { json: { action: 'use', ai: id } }).then((r) => { onConnected(r); toast(`Ken now uses ${label}.`); }).catch((e) => setError(e.message))}>Use ${id === 'credits' ? 'Ken AI credits' : `my own ${label}`}</button>`;
       const name = (id, label) => html`<span class="ai-name">${inUse === id ? html`<i class="ai-dot" aria-hidden="true"></i>` : ''}${label}</span>`;
@@ -2050,6 +2052,13 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
       const usage = meta.usage || {};
       if (HOSTED && (usage.credits_left || usage.free)) rows.push(html`<div>${name('credits', 'Ken AI credits')}<span class="ai-state">${usage.credits_left ? `${usage.credits_left} left` : ''}${inUse === 'credits' ? `${usage.credits_left ? ' · ' : ''}in use${setup?.providers?.claude?.credits_until ? ` until ${setup.providers.claude.credits_until}` : ''}` : ''}</span>
         <span class="ai-actions">${inUse !== 'credits' && use('credits', 'Ken AI credits')}${usage.topup_url ? html`<a class="text-action" href=${usage.topup_url}>Add credits</a>` : usage.free && html`<a class="text-action" href="/account/plans">Get more</a>`}</span></div>`);
+      // Their own Claude or ChatGPT at its limit: carry on with Ken AI credits until it resets (off unless they turn it on).
+      // Shown once their Ken knows the setting (it reports auto_credits); a Ken that hasn't updated yet doesn't.
+      const known = typeof setup?.providers?.claude?.auto_credits === 'boolean';
+      const auto = !!setup?.providers?.claude?.auto_credits;
+      const keepGoing = (on) => api('/api/setup', { json: { action: 'auto-credits', on } }).then((r) => { onConnected(r); toast(on ? 'When your plan hits its limit, Ken keeps going on Ken AI credits.' : 'When your plan hits its limit, Ken stops and tells you.'); }).catch((err) => setError(err.message));
+      if (HOSTED && known && (usage.credits_left || usage.free) && (own.claude || own.codex)) rows.push(html`<div class="ai-auto"><span class="ai-name">Keep going on Ken AI credits when your plan hits its limit</span>
+        <input class="job-switch" type="checkbox" role="switch" aria-label="Keep going on Ken AI credits when your plan hits its limit" checked=${auto} onChange=${(e) => keepGoing(e.target.checked)}/></div>`);
       return rows;
     })()}</div>
     ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
@@ -2142,7 +2151,7 @@ function SendBigFile({ token, onClose }) {
   };
   const pct = Math.round((progress || 0) * 100);
   return html`<div class="settings-page send-page" role="region" aria-label="Send files to Ken"><div class="sp-wrap">
-    <header class="sp-top"><span class="sp-brand"><img src="/ken.svg" alt="" width="26" height="26"/>Ken</span><button class="btn sm ghost" onClick=${onClose}>Close</button></header>
+    <header class="sp-top"><button class="sp-brand" title="Back to Ken" onClick=${onClose}><img src="/ken.svg" alt="" width="26" height="26"/>Ken</button><button class="btn sm ghost" onClick=${onClose}>Close</button></header>
     ${done ? html`<h1 class="sp-title">Ken has them</h1><p class="np-help">Ken is on it, and will answer you in Telegram.</p><div class="row np-actions"><button class="btn primary" onClick=${onClose}>Done</button></div>`
       : error && !info ? html`<h1 class="sp-title">This link doesn't work</h1><p class="connect-error" role="alert">${error}</p>`
       : !info ? html`<p class="np-note">Loading…</p>`

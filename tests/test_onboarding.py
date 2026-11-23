@@ -234,3 +234,26 @@ async def test_a_sign_in_claude_no_longer_accepts_is_forgotten(tmp_path, monkeyp
     assert await setup.forget_if_dead()
     assert not setup.status()["claude"] and "CLAUDE_CODE_OAUTH_TOKEN" not in (tmp_path / ".env").read_text()
     assert not await setup.forget_if_dead()  # nothing left to check
+
+
+async def test_a_dead_sign_in_never_moves_them_to_ken_ai_credits_by_itself(tmp_path, monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "KEN_USE_CREDITS", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.setenv(name, "x")  # so whatever this sets is undone after the test
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("KEN_INCLUDED_AI_URL", "https://credits.example/v1")
+    monkeypatch.setenv("KEN_INCLUDED_AI_TOKEN", "included-key")
+    setup, calls = make(tmp_path)
+    onboarding.save_env(tmp_path / ".env", "CLAUDE_CODE_OAUTH_TOKEN", TOKEN)
+    onboarding.use_included_ai()
+
+    async def refused(**_):
+        return "Claude didn’t accept that."
+
+    monkeypatch.setattr(onboarding, "check_claude", refused)
+    assert await setup.forget_if_dead()
+    assert not onboarding.included_ai_in_use() and setup.status()["credits_off"] and not setup.status()["claude"]
+    await setup.use_credits(True)  # they pick Ken AI credits in Settings → AI
+    assert onboarding.included_ai_in_use() and "credits_off" not in setup.status()
+    await setup.use_credits(False)
+    await setup.disconnect()  # disconnecting by hand is their choice: credits as before
+    assert onboarding.included_ai_in_use()
