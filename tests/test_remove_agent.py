@@ -106,6 +106,24 @@ async def test_the_code_folder_is_never_touched(engine, tmp_path):
     assert (repo / "keep.txt").read_text() == "mine" and sorted(p.name for p in repo.iterdir()) == ["keep.txt"]
 
 
+async def test_a_file_that_cant_be_moved_stops_the_removal(engine, tmp_path, monkeypatch):
+    import shutil
+    pid, d, _, _ = made_agent(engine, tmp_path)
+    real_move = shutil.move
+
+    def move(src, dst):
+        if src.endswith("cut.mp4"):
+            raise OSError("disk full")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(shutil, "move", move)
+    with pytest.raises(ValueError, match="nothing was removed"):
+        await engine.remove_agent(pid)
+    assert (d / "files" / "report.pdf").read_bytes() == b"%PDF report" and (d / "videos" / "cut.mp4").exists()
+    assert engine.messages(pid) and engine.kv_get(f"session:{pid}") == "claude-sid"
+    assert not (engine.files_dir(HOME) / REMOVED_CHATS / "Reels").exists()
+
+
 async def test_a_second_removed_chat_of_the_same_name_gets_its_own_folder(engine, tmp_path):
     pid, _, _, _ = made_agent(engine, tmp_path)
     await engine.remove_agent(pid)

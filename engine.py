@@ -434,6 +434,23 @@ def _codex_cwd(rollout: Path) -> str:
         return ""
 
 
+def _forget_sessions(pid: str, real_dir: str, home: Path, sids: list[str], codex: bool) -> None:
+    """A removed agent's conversations as the AI keeps them: Claude Code's folder for its path, and Codex's session
+    files that ran there or carry its session ids. Never another folder's."""
+    enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))  # noqa: E731 — how Claude Code names them
+    store = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    for cwd in {real_dir, os.path.realpath(home) + f"/projects/{pid}"}:
+        shutil.rmtree(store / enc(cwd), ignore_errors=True)
+    sessions = Path(os.environ.get("KEN_CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    if codex and sessions.is_dir():
+        for f in sessions.rglob("rollout-*.jsonl"):
+            try:
+                if any(f.name.endswith(f"-{s}.jsonl") for s in sids) or _codex_cwd(f) == real_dir:
+                    f.unlink()
+            except OSError:
+                continue
+
+
 def _library_on() -> bool:
     import library
     return library.on()
@@ -853,19 +870,24 @@ class Engine:
         """Remove an agent for good: its chat, notes, memory, keys, settings and jobs are deleted. The files it made
         are kept unless `delete_files`: into their Library when it's on (uploaded in the background), else into
         Removed chats/<name>/ in Ken's own Files. The code or info folder it was pointed at is never touched."""
+        def refuse_if_busy():
+            if self.chat_busy(pid) or self.db.execute(
+                    "SELECT 1 FROM runs WHERE project=? AND status IN ('running','queued') LIMIT 1", (pid,)).fetchone():
+                raise ValueError("This agent is working. Stop it first.")
+
         meta = self.get_agent(pid)
-        if self.chat_busy(pid) or self.db.execute(
-                "SELECT 1 FROM runs WHERE project=? AND status IN ('running','queued') LIMIT 1", (pid,)).fetchone():
-            raise ValueError("This agent is working. Stop it first.")
+        refuse_if_busy()
         d = self._adir(pid)
         code = self.code_dir(meta)
         if code is not None and (code.resolve() == d.resolve() or d.resolve() in code.resolve().parents):
             raise ValueError("Its code folder is inside its own folder. Point it at another folder first.")
-        files = [] if delete_files else self.agent_files(pid)
-        to_library = bool(files) and await asyncio.to_thread(_library_on)
+        to_library = not delete_files and bool(self.agent_files(pid)) and await asyncio.to_thread(_library_on)
         s = self.chats.pop(pid, None)
         if s is not None:
             await s.close()
+        refuse_if_busy()  # nothing may start between here and deleting it: no more waiting from here on
+        files = [] if delete_files else self.agent_files(pid)
+        to_library = to_library and bool(files)
         where = None
         if files:
             if to_library:  # held here until each one is safely in their Library
@@ -875,17 +897,25 @@ class Engine:
                 into = where / "files"
             else:
                 where = into = self._removed_folder(meta["name"])
+            moved = []
             for path, rel in files:
                 try:
                     dest = _unique(into / rel)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(path), str(dest))
-                except OSError as e:
+                    moved.append((path, dest))
+                except OSError as e:  # never delete a file that was meant to be kept: put them back, the agent stays
                     log.warning("couldn't keep %s from %s: %s", rel, pid, e)
+                    for back, there in reversed(moved):
+                        with contextlib.suppress(OSError):
+                            shutil.move(str(there), str(back))
+                    shutil.rmtree(where, ignore_errors=True)
+                    raise ValueError(f"Couldn't move its file {rel}, so nothing was removed. Try again.") from None
         real = os.path.realpath(d)
         shutil.rmtree(d, ignore_errors=True)  # links inside go as links; what they point to is never touched
         self.emit("project.removed", project=pid)
-        await asyncio.to_thread(self._forget_chat, pid, real)
+        sids, codex = self._forget_chat(pid)
+        await asyncio.to_thread(_forget_sessions, pid, real, self.home, sids, codex)
         if to_library and where is not None:
             self._bg.append(asyncio.create_task(self._send_to_library(where)))
         out = {"files": len(files), "to": ("library" if to_library else "folder") if files else ("deleted" if delete_files else None)}
@@ -925,9 +955,9 @@ class Engine:
         d.mkdir(parents=True)
         return d
 
-    def _forget_chat(self, pid: str, real_dir: str) -> None:
+    def _forget_chat(self, pid: str) -> tuple[list[str], bool]:
         """Everything Ken kept about a removed agent outside its folder: its messages, its jobs' steps, approvals,
-        settings, keys, and the AI's own record of its conversations (Claude Code's and Codex's session files)."""
+        settings and keys. Returns its AI session ids, and whether it used Codex, for _forget_sessions."""
         sids = [s for s in (self.kv_get(f"session:{pid}"), self.kv_get(f"session:codex:{pid}")) if s]
         codex = bool(self.kv_get(f"session:codex:{pid}")) or "codex" in (self.kv_get(f"backend:{pid}"), self.kv_get(f"brain:{pid}"))
         runs = [r["id"] for r in self.db.execute("SELECT id FROM runs WHERE project=?", (pid,)).fetchall()]
@@ -941,18 +971,7 @@ class Engine:
         for m in (self.chat_locks, self.chat_tools, self._aside, self.origins):
             m.pop(pid, None)
         self._turn_ended(pid)
-        enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))  # noqa: E731 — how Claude Code names them
-        store = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
-        for cwd in {real_dir, os.path.realpath(self.home) + f"/projects/{pid}"}:
-            shutil.rmtree(store / enc(cwd), ignore_errors=True)
-        sessions = Path(os.environ.get("KEN_CODEX_HOME") or Path.home() / ".codex") / "sessions"
-        if codex and sessions.is_dir():
-            for f in sessions.rglob("rollout-*.jsonl"):
-                try:
-                    if any(f.name.endswith(f"-{s}.jsonl") for s in sids) or _codex_cwd(f) == real_dir:
-                        f.unlink()
-                except OSError:
-                    continue
+        return sids, codex
 
     async def _send_to_library(self, staging: Path) -> None:
         """A removed agent's files, into their Library one by one; each local copy goes once it's safely there.
@@ -978,7 +997,8 @@ class Engine:
                 shutil.move(str(path), str(dest))
             except OSError as e:
                 log.warning("couldn't keep %s: %s", path.name, e)
-        shutil.rmtree(staging, ignore_errors=True)
+        if not root.is_dir() or not any(p.is_file() and not p.is_symlink() for p in root.rglob("*")):
+            shutil.rmtree(staging, ignore_errors=True)  # else what's left is tried again on the next start
 
     def get_autonomy(self, pid: str) -> dict:
         try:
