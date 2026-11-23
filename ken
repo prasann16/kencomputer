@@ -56,6 +56,20 @@ case "${1:-help}" in
     grep -q '^ANTHROPIC_API_KEY=.' "$KEN_HOME/.env" 2>/dev/null && export KEN_AUTH_MODE=api
     KEN_SETUP=1 bash "$KEN_HOME/app/install.sh" ;;
   config) "${EDITOR:-nano}" "$KEN_HOME/.env" ;;
+  missed)
+    # Jobs missed while this computer slept: ask before running them (the default), or just run them.
+    case "${2:-}" in
+      ask|run)
+        touch "$KEN_HOME/.env"
+        grep -v '^KEN_MISSED_JOBS=' "$KEN_HOME/.env" > "$KEN_HOME/.env.tmp" || true
+        [ "$2" = "run" ] && echo "KEN_MISSED_JOBS=run" >> "$KEN_HOME/.env.tmp"
+        chmod 600 "$KEN_HOME/.env.tmp"; mv "$KEN_HOME/.env.tmp" "$KEN_HOME/.env"
+        svc restart 2>/dev/null || true ;;
+      "") ;;
+      *) echo "Use: ken missed ask   or   ken missed run"; exit 1 ;;
+    esac
+    if grep -qi '^KEN_MISSED_JOBS=run' "$KEN_HOME/.env" 2>/dev/null; then echo "Missed jobs: run without asking.  (ken missed ask to change)"
+    else echo "Missed jobs: Ken asks you first.  (ken missed run to change)"; fi ;;
   memory) "${EDITOR:-nano}" "$KEN_HOME/work/SOUL.md" ;;
   uninstall)
     read -r -p "Remove Ken from this computer? Your memory & settings in ~/.ken stay. [y/N] " a
@@ -79,6 +93,7 @@ ken — your AI's computer
   ken start/stop
   ken setup      connect Telegram and Claude again
   ken config     edit settings (.env)
+  ken missed     jobs missed while asleep: ask first, or run (ken missed ask|run)
   ken memory     edit your assistant's soul file (identity + memory)
   ken uninstall  remove Ken (keeps your memory & settings)
 EOF

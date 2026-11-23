@@ -318,7 +318,7 @@ function Chip({ project }) {
 }
 
 const durationLabel = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current reply'], ['/model', 'See or switch the AI model'], ['/usage', 'How much of your AI plan and memory is used'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
+const COMMANDS = [['/new', 'Fresh conversation · memory stays'], ['/stop', 'Stop Ken’s current reply'], ['/model', 'See or switch the AI model'], ['/usage', 'How much of your AI plan and memory is used'], ['/missed', 'Ask before running missed jobs, or just run them'], ['/coffee', 'Keep this Mac awake'], ['/decaf', 'Let this Mac sleep normally']];
 const MAC_ONLY = ['/coffee', '/decaf'];
 
 function waveformPeaks(values, count = 48) {
@@ -1546,6 +1546,17 @@ function jobWhen(j) {
 }
 
 // To change what a job does, tell Ken.
+// Their say over jobs missed while the computer slept: ask first (the default), or catch up without asking.
+function MissedSwitch() {
+  const [missed, setMissed] = useState(null);
+  useEffect(() => { api('/api/missed').then(setMissed).catch(() => {}); }, []);
+  const set = (ask) => api('/api/missed', { method: 'PUT', json: { ask } }).then(setMissed).catch(() => {});
+  return missed && html`<div class="job-row">
+    <div class="job-name"><b>Ask before running missed jobs</b><span>${missed.ask ? 'After this computer sleeps through jobs, Ken asks once before catching up.' : 'Ken catches up on missed jobs when this computer wakes, one after another, without asking.'}</span></div>
+    <input class="job-switch" type="checkbox" role="switch" aria-label=${missed.ask ? 'On' : 'Off'} checked=${missed.ask} onChange=${(e) => set(e.target.checked)}/>
+  </div>`;
+}
+
 function JobList({ jobs, change }) {
   const name = (j) => (!j.agent && JOB_NAMES[j.name]) || j.name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const about = (j) => (j.agent_name ? j.agent_name + ' · ' : '') + ((!j.agent && JOB_HELP[j.name]) || j.summary || '');
@@ -1951,7 +1962,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     pid === 'home' && { key: 'skills', title: 'Skills', summary: a.skills.some((s) => !s.app) ? a.skills.filter((s) => !s.app).map((s) => s.name).join(', ') : 'None yet', body: html`
         <p class="np-help">Skills teach Ken a specific job, like making videos. To add one, just ask Ken in the chat.</p>
         ${a.skills.filter((s) => !s.app).map((s) => html`<div class="skill-row"><button class="skill-open" onClick=${() => api(`/api/skills/${encodeURIComponent(s.id)}`).then(setSkill).catch((e) => setError(e.message))}><b>${s.name}</b><span>${s.about}</span></button><button class="text-action" disabled=${busy} onClick=${() => save(() => api(`/api/skills/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).then(() => api(`/api/about/${pid}`)))}>Remove</button></div>`)}` },
-    jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`<${JobList} jobs=${jobs} change=${job}/>` },
+    jobs.length > 0 && { key: 'jobs', title: 'Scheduled jobs', summary: jobs.filter((j) => j.on).map((j) => `${jobName(j)} ${j.time}`).join(' · ') || 'All off', body: html`${pid === 'home' && html`<${MissedSwitch}/>`}<${JobList} jobs=${jobs} change=${job}/>` },
   ].filter(Boolean);
   const open = parts.find((p) => p.key === section);
   return frame(null, html`
