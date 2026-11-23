@@ -831,3 +831,8 @@ ol.conn-steps li { margin: 2px 0; }
   .chat-ava { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; background: var(--well); color: var(--ink); font: 600 19px/1 var(--sans); font-style: normal; }
   img.chat-ava { object-fit: contain; padding: 9px; box-sizing: border-box; }
 }
+
+/* A running job in the ⏳ list opens when tapped, like Watch */
+.run-open { all: unset; display: block; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.run-open:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+.run-open:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
