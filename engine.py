@@ -83,6 +83,44 @@ ROOM_CHECK = 5
 RUN_LIMIT = 60 * 60
 
 
+def plain_text(text: str) -> str:
+    """Ken's markdown as plain words, for a one-line preview (the chat list): no **, `, # or [label](link)."""
+    lines = [re.sub(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", "", re.sub(r"^\s*[-*•]\s+", "• ", re.sub(r"^\s*#+\s*", "", line)))
+             for line in text.split("\n")]
+    s = re.sub(r"!?\[([^\]]+)\]\([^)\s]+\)", r"\1", "\n".join(lines))
+    s = re.sub(r"(\*\*|__)(.+?)\1", r"\2", s)
+    s = re.sub(r"(^|[^\w*])\*(?!\s)([^*\n]+?)\*(?!\w)", r"\1\2", s)
+    s = re.sub(r"`+([^`]*)`+", r"\1", s)
+    s = re.sub(r"~~(.+?)~~", r"\1", s)
+    return re.sub(r"\n{2,}", "\n", s).strip()
+
+
+
+def chat_transcript(home: Path, agent: str, count: int = 40) -> str:
+    """An agent's recent chat as plain lines, for Ken (`--chat <agent>`): read-only, never changes it."""
+    want = agent.strip().lower()
+    names = {}
+    for d in sorted((home / "agents").glob("*/agent.json")):
+        try:
+            names[d.parent.name] = json.loads(d.read_text()).get("name") or d.parent.name
+        except (OSError, ValueError):
+            names[d.parent.name] = d.parent.name
+    pid = next((p for p, n in names.items() if want in (p, n.lower(), slugify(n))), None)
+    if pid is None:
+        return f"No agent called {agent!r}. Their agents: " + (", ".join(f"{n} ({p})" for p, n in names.items()) or "none") + "."
+    db = sqlite3.connect(f"file:{home / 'app.db'}?mode=ro", uri=True)
+    try:
+        rows = db.execute("SELECT ts, data FROM (SELECT id, ts, data FROM events WHERE project=? AND type='message' "
+                          "ORDER BY id DESC LIMIT ?) ORDER BY id", (pid, max(1, min(count, 200)))).fetchall()
+    finally:
+        db.close()
+    lines = []
+    for ts, data in rows:
+        m = json.loads(data)
+        who = names[pid] if m.get("role") == "ken" else "Ken (passing on)" if m.get("via") == "ken" else "Them"
+        said = (m.get("text") or "").strip() or ("📎 " + ", ".join(m.get("files") or []))
+        lines.append(f"[{time.strftime('%a %d %b %H:%M', time.localtime(ts))}] {who}: {said[:4000]}")
+    return f"{names[pid]}'s chat, last {len(lines)} messages:\n" + "\n".join(lines) if lines else f"{names[pid]}'s chat is empty."
 
 class NoAnswer(TimeoutError):
     """The AI said nothing at all for NO_ANSWER_LIMIT seconds after it was asked."""
@@ -709,7 +747,7 @@ class Engine:
     def create_agent(self, name: str, path: str = "", context: str = "", blurb: str = "", backend=None) -> dict:
         if backend is not None and (not isinstance(backend, str) or backend not in self.brains):
             raise ValueError("Choose Claude or Codex.")
-        name = name.strip()[:60]
+        name = name.strip()[:60] or ("New agent" if context.strip() else "")  # it names itself as it sets up
         if not name:
             raise ValueError("an agent needs a name")
         path = path.strip()
@@ -926,8 +964,10 @@ class Engine:
         return (
             f"{self.agent_base()}\n\n{runtime}\n\n=== You are {p['name']}, one of their agents ===\n"
             "They set you up in Ken for one job, described in CONTEXT.md below. Ken, their main assistant, "
-            "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents "
-            f"or Ken's memory: everything you know lives in your folder, {d}.\n"
+            "is your chief of staff and may hand you work. Stay on your job. You don't see their other agents. "
+            f"What's known about them in general (who they are, how they write, their people and projects) is in Ken's "
+            f"memory, {self.home / 'memory'}: read a note there when it helps, never write there. It holds:\n"
+            f"{memory_listing(self.home / 'memory')}\nEverything of your own lives in your folder, {d}.\n"
             f"- CONTEXT.md: who you are, your goal, your rules (below). Read with every message; keep it current.\n"
             f"- memory/: your notes, one topic per file, its first line saying what it holds. Now:\n{memory_listing(d / 'memory')}\n"
             f"- jobs.json: your schedule, a JSON array like {{\"name\": \"daily-report\", \"time\": \"08:00\", \"days\": \"daily\", \"prompt\": \"...\"}} "
@@ -938,7 +978,7 @@ class Engine:
             "\"mcp\" adds any MCP server, in Claude Code's mcpServers format, to give yourself a new tool (it's ready "
             f"from the next message). Now: {', '.join(tools['use']) or 'no built-ins'}; extra servers: {extra}.\n"
             f"- files/: what they drop into this chat.\n"
-            f"- Keys: {self._keys_line(pid)} They add keys in this agent's Keys (the ⋯ menu next to its name). When you "
+            f"- Keys: {self._keys_line(pid)} They add keys on this agent's Brain page, under Accounts & passwords. When you "
             "need a login or API key, ask them to add it there under a name you suggest (like STRIPE_KEY), or a whole "
             "file like a service-account JSON. Never ask for a secret in this chat, never print one, never copy one "
             "anywhere else.\n"
@@ -995,32 +1035,51 @@ class Engine:
             line += "files " + ", ".join(str(self.keys_dir(pid) / "files" / f) for f in files) + ". "
         return line
 
-    def chief_brief(self) -> str:
-        """What Ken, as chief of staff, knows about every agent."""
+    def chief_brief(self, read_chat: str = "") -> str:
+        """What Ken, as chief of staff, knows about every agent. `read_chat`: the command that shows an agent's chat."""
         r = self.requests_dir
         lines = [
             "=== Their agents: you are their chief of staff ===",
-            f"Each agent is a chat with one job and its own folder, {self.agents_dir}/<id>/ (CONTEXT.md, memory/, "
-            "jobs.json, tools.json, files/). An agent sees only its own folder; you see all of them, so open an "
-            "agent's files whenever you need the detail, and keep an eye on whether they're getting their jobs done. "
-            f'To hand an agent work in the background, write {{"type": "run", "agent": "<id>", "title": "...", "prompt": "..."}} into {r}/. '
-            'When they want a new agent, write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
+            "Besides this chat they have agents: each is its own chat in the app with one job, its own notes and its "
+            f"own schedule, in {self.agents_dir}/<id>/ (CONTEXT.md, memory/, jobs.json, files/). You see every agent; "
+            "they each see only their own folder (and read your memory). You're the one they can always just talk to:",
+            "- Asked what an agent is up to or what it found: answer from the list below; for more, "
+            + (f"run `{read_chat} <id>` (add a number for more than the last 40 messages) to read its chat, and " if read_chat else "")
+            + f"open its notes and files ({self.agents_dir}/<id>/).",
+            f'- Asked to tell an agent something or give it work: write {{"type": "message", "agent": "<id>", "text": "what '
+            f'they asked, in full"}} into {r}/. It lands in that agent\'s chat, which does the work there, and a line here '
+            "that opens it says it was sent, so just confirm in a few words and don't do the work yourself.",
+            '- Asked for a new agent: write {"type": "agent", "name": "...", "context": "what it is for, in their words", '
             '"path": "the code or info folder its job is about, if any"}; it opens its own chat and sets itself up there.',
+            "- When they ask you for something that's clearly an agent's job, do it, then offer once in a line to have "
+            "that agent take it from now on. Never move anything without their yes, and don't offer the same thing twice.",
+            "- An agent's routine work stays in its own chat: don't relay it here. In the morning brief, add one line "
+            "for an agent only when it finished something or is waiting on them.",
+            "- Agents keep their own notes: in your nightly review, also skim each agent's memory/ and file in your own "
+            "memory anything about them in general (a move, a preference, a new person) that it lacks. What's only "
+            "about that agent's job stays with the agent.",
+            "Their agents now:",
         ]
         running = self.list_runs(active=True)
+        approvals = self.pending_approvals()
         for a in self.list_agents():
             pid = a["id"]
             about = next((ln.strip() for ln in self.get_context(pid).splitlines() if ln.strip() and not ln.startswith("#")), "")
             jobs = [j.get("name", "?") for j in self.agent_jobs(pid)]
             last = self._last_message_ts(pid)
             busy = sum(1 for x in running if x["project"] == pid) + (1 if self.chat_busy(pid) else 0)
+            waiting = sum(1 for x in approvals if x["project"] == pid)
+            said = self.messages(pid, 1)
+            said = plain_text(said[0]["text"] or "").replace("\n", " ")[:160] if said and said[0]["role"] == "ken" else ""
             lines.append(
                 f"- {a['name']} ({pid}): {about[:200] or 'no context yet'}"
                 + (f" · last active {time.strftime('%a %d %b %H:%M', time.localtime(last))}" if last else " · not used yet")
                 + (f" · {busy} working now" if busy else "")
                 + (f" · jobs: {', '.join(jobs)}" if jobs else "")
+                + (f" · {waiting} waiting for their OK" if waiting else "")
+                + (f' · last said: "{said}"' if said else "")
             )
-        if len(lines) == 2:
+        if not self.list_agents():
             lines.append("They have no agents yet.")
         return "\n".join(lines)
 
@@ -1966,10 +2025,12 @@ class Engine:
         """A new agent's first turn: it reads what it's for and sets itself up, in its own chat."""
         await self.send_message(pid, "", log_user=False, prompt=(
             "(You were just created; CONTEXT.md holds what they asked for. Set yourself up now: rewrite CONTEXT.md "
-            "into a clear brief of your job, goal and rules. If the job has a rhythm, put jobs in jobs.json. Write "
-            "tools.json with only the built-in tools you need, plus any MCP server that would help. Then tell them in "
+            "into a clear brief of your job, goal and rules. If the job has a rhythm, propose the schedule in your message "
+            "and put it in jobs.json only once they say yes. Write "
+            "tools.json with only the built-in tools you need, plus any MCP server that would help. If you're still called "
+            f'"New agent", give yourself a short name (one to three words) as "name" in {self._adir(pid) / "agent.json"}. Then tell them in '
             "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
-            "key, a link), one thing at a time. Keys go in this agent's Keys (the ⋯ menu next to its name), never in this chat.)"
+            "key, a link), one thing at a time. Keys go on this agent's Brain page, under Accounts & passwords, never in this chat.)"
         ))
 
     async def files_dropped(self, pid: str, names: list[str]) -> None:
@@ -2158,10 +2219,23 @@ class Engine:
             return
         if kind in ("agent", "project"):  # "project": what agents were called before
             a = self.create_agent(req.get("name", ""), req.get("path", ""), req.get("context", ""), req.get("blurb", ""))
+            # Where they asked for it, a line that opens it: an agent Ken made is one tap away, not a hunt in the list.
+            self.log_message(HOME, "ken", f'{a["name"]} now has its own chat.', agent_made=a["id"])
             self._bg.append(asyncio.create_task(self.setup_agent(a["id"])))
             return
         if kind == "stop":
             self._bg.append(asyncio.create_task(self.stop_run(str(req.get("run", "")), by="Ken")))
+            return
+        if kind == "message":  # Ken passing something on: it lands in the agent's chat, and a line here opens it
+            aid = self.find_agent(str(req.get("agent", "")))
+            text = str(req.get("text", "")).strip()
+            if not aid or not text:
+                raise ValueError("a message needs an agent and some text")
+            name = self.get_agent(aid)["name"]
+            self.log_message(aid, "you", text, via="ken")
+            self.log_message(HOME, "ken", f"Sent to {name}.", agent_made=aid)
+            self._bg.append(asyncio.create_task(self.send_message(aid, text, log_user=False, prompt=(
+                f"(From Ken, their chief of staff, passing on what they asked in Ken's chat:)\n{text}"))))
             return
         pid = str(req.get("agent", req.get("project", ""))) or HOME
         if kind == "run" and pid.lower() == "ken":
@@ -2654,7 +2728,7 @@ class Engine:
             last = self.messages(pid, 1)
             preview = ""
             if last:
-                preview = last[0]["text"] or ("📎 " + ", ".join(last[0].get("files") or []))
+                preview = plain_text(last[0]["text"] or "") or ("📎 " + ", ".join(last[0].get("files") or []))
             out.append({"id": pid, "name": name, "color": color, "last": preview[:120],
                         "last_ts": last[0]["ts"] if last else 0, "busy": self.chat_busy(pid)})
         return out

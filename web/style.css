@@ -15,15 +15,65 @@
 .proj-dot { display: inline-block; width: 8px; height: 8px; flex-shrink: 0; border-radius: 3px; }
 .proj-more { display: grid; place-items: center; width: 28px; height: 28px; margin-left: 2px; padding: 0; border: 0; border-radius: var(--r-pill); background: none; color: var(--faint); }
 .proj-more:hover { background: var(--hover); color: var(--ink); }
+/* With agents: a list of chats beside the chat (alone on a phone), and one row on top of the chat. */
+.chat-list { display: flex; flex-direction: column; flex-shrink: 0; width: 300px; min-height: 0; background: var(--side); }
+.chat-list-head { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; height: 68px; padding: 0 var(--s3) 0 var(--s5); font-size: var(--text-lg); -webkit-app-region: drag; }
+.chat-list-head .icon-btn { margin-left: auto; -webkit-app-region: no-drag; }
+.chat-rows { display: flex; flex: 1; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: 0 var(--s2); }
+.chat-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3); border-radius: var(--r-md); color: var(--ink); text-decoration: none; }
+.chat-row:hover { background: var(--hover); }
+.chat-row.sel { background: var(--selected); }
+.chat-dot { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; }
+.chat-row-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-row-top { display: flex; align-items: baseline; gap: var(--s2); }
+.chat-row-top b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-row-top small { margin-left: auto; color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
+.chat-row-last { overflow: hidden; min-height: 1.3em; color: var(--muted); font-size: var(--text-sm); white-space: nowrap; text-overflow: ellipsis; }
+.chat-unread { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--recording); }
+.chat-list-foot { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: var(--s2) var(--s3) var(--s3); }
+.chat-top { position: relative; z-index: 10; display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; height: 68px; padding: 0 var(--s4) 0 var(--s5); -webkit-app-region: drag; }
+.chat-top > * { -webkit-app-region: no-drag; }
+.chat-back { display: none; place-items: center; width: 36px; height: 36px; margin-left: -10px; border-radius: var(--r-pill); color: var(--muted); }
+.chat-back:hover { background: var(--hover); color: var(--ink); }
+.chat-title { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; height: 38px; padding: 0 var(--s3); margin-left: calc(-1 * var(--s3)); border-radius: var(--r-pill); color: var(--ink); text-decoration: none; }
+.chat-title:hover { background: var(--hover); }
+.chat-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-title small { color: var(--faint); font-size: var(--text-sm); }
+.chat-tools { display: flex; align-items: center; gap: var(--s1); flex-shrink: 0; margin-left: auto; }
+a.clear-button { text-decoration: none; }
+.chat-top > .clear-button { margin-left: calc(-1 * var(--s4)); }
+.chat-tools .chat-tools { margin: 0; }
+@media (min-width: 761px) { .narrow-only { display: none !important; } }
+.pop { position: relative; }
+.pop-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 220px; padding: 6px; border-radius: var(--r-lg); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line), var(--float); }
+.pop-row { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-md); background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.pop-row:hover { background: var(--hover); }
+.pop-row.danger { color: var(--danger); }
+.pop-model { padding: 0 0 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.pop-model .model-select { width: 100%; max-width: none; }
+@media (max-width: 760px) {
+  .wide-only { display: none !important; }
+  .shell.with-chats .chat-list { width: 100%; }
+  .shell.with-chats:not(.on-list) .chat-list, .shell.with-chats.on-list .main { display: none; }
+  .chat-back { display: grid; }
+  .chat-top { height: 56px; padding: 0 var(--s3) 0 var(--s4); padding-top: env(safe-area-inset-top); box-sizing: content-box; }
+  .chat-list-head { height: 56px; padding-top: env(safe-area-inset-top); box-sizing: content-box; }
+  .chat-top .ken-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}
+.agent-ideas { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 var(--s4); }
+.agent-ideas .chip { min-height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: none; color: var(--ink); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.agent-ideas .chip:hover { background: var(--hover); }
+.agent-ideas .chip.on { border-color: var(--ink); background: var(--hover); }
 .header-actions { display: flex; align-items: center; gap: var(--s1); margin-left: auto; }
 .chat-header > .settings-link { margin-left: auto; }
 .chat-header > .header-actions + .settings-link { margin-left: var(--s1); } /* Settings sits right next to the model menu and Clear */
 .chat-header > .report-link { margin-left: auto; }
 .chat-header > .header-actions + .report-link { margin-left: var(--s1); }
 .chat-header > .report-link + .settings-link { margin-left: 0; } /* the flag sits just before Settings */
-.chat-header > /* The header's words (model, Clear, Settings) are quiet pills. */
+/* The header's words (model, Clear, Settings) are quiet pills. */
 .settings-link, .clear-button, .model-select { display: inline-flex; align-items: center; height: 38px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill);
   background: none; color: var(--muted); font: 500 var(--text-ui)/1 var(--sans); cursor: pointer; transition: background .15s, color .15s; }
+.phone-cta { gap: var(--s2); }
 .settings-link:hover, .clear-button:hover, .model-select:hover { background-color: var(--well); color: var(--ink); } /* only the colour: the menu's arrow is its background image */
 .clear-button:disabled, .model-select:disabled { opacity: .5; cursor: default; }
 .model-select { max-width: 220px; padding-right: 32px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis;
@@ -43,11 +93,6 @@
 .coffee.on { color: var(--coffee); }
 .coffee.on:hover { background: var(--ask-soft); }
 /* Ken on the phone (Telegram, or Phone on the Mac): as quiet as the coffee; filled once linked. */
-.phone-link { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: var(--r-pill); background: none; color: var(--faint); cursor: pointer; transition: color .2s, background .2s; }
-.phone-link:hover { background: var(--well); color: var(--muted); }
-.phone-link.on { color: var(--ink-2); }
-.phone-link.on .phone-body { fill: currentColor; }
-.phone-link.on .phone-ear, .phone-link.on .phone-dot { stroke: var(--bg); fill: var(--bg); }
 .coffee .steam { opacity: 0; transition: opacity .3s; }
 .coffee.on .steam { opacity: 1; animation: ken-steam 2.4s ease-in-out infinite; }
 @keyframes ken-steam { 0%, 100% { opacity: .35; transform: translateY(.6px); } 50% { opacity: 1; transform: translateY(-.6px); } }
@@ -61,6 +106,7 @@
 .txt { min-width: 0; max-width: 100%; font-size: var(--text-body); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .txt b { font-weight: 600; }
 .msg.err .txt { color: var(--danger); }
+.agent-open { display: inline-block; margin-top: var(--s1); }
 .from-run { margin-bottom: var(--s2); font: 500 var(--text-sm)/1.5 var(--sans); color: var(--muted); }
 /* Theirs: a dark bubble on the right, like the website's chats. */
 .msg.you { justify-content: flex-end; }
@@ -97,6 +143,13 @@
 .msg-media .media-save { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s2); font-size: 0.875rem; color: var(--muted); text-decoration: none; }
 .msg-media .media-save svg { width: 16px; height: 16px; }
 .msg-media .media-save:hover { color: var(--ink); }
+.file-card { display: flex; align-items: center; gap: var(--s3); max-width: min(100%, 420px); padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card); color: var(--ink); text-decoration: none; }
+.file-card:hover { border-color: var(--line-strong); }
+.file-card > svg { flex: none; width: 20px; height: 20px; color: var(--muted); }
+.file-card-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9375rem; }
+.file-card-get { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.875rem; color: var(--muted); }
+.file-card-get svg { width: 16px; height: 16px; }
+.msg-media + .msg-media { margin-top: var(--s2); }
 .img img { display: block; max-width: min(320px, 100%); max-height: 280px; border-radius: var(--r-md); }
 /* Copy: under Ken's reply, on hover with a mouse. */
 .copy-msg { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin: 4px 0 0 -6px; padding: 0; border: 0; border-radius: var(--r-pill);
@@ -295,6 +348,7 @@
 .knows-page { flex: 1; min-height: 0; overflow-y: auto; }
 .knows-inner { max-width: calc(var(--page) + 2 * var(--s6)); margin: 0 auto; padding: var(--s8) var(--s6) 64px; }
 .knows-inner h1 { margin: 0 0 var(--s2); font: 500 var(--text-2xl)/1.15 var(--sans); letter-spacing: -.03em; }
+.knows-inner h1 + .brain-cards { margin-top: var(--s6); }
 .brain-intro { margin: 0 0 var(--s7); color: var(--muted); font-size: var(--text-body); }
 .brain-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--s3); }
 .brain-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 132px; padding: var(--s5) 22px; border: 0; border-radius: var(--r-card);
@@ -352,7 +406,7 @@ textarea.about-editor { width: 100%; height: min(56vh, 520px); font: var(--text-
 .settings-page { position: fixed; inset: 0; z-index: 30; overflow-y: auto; background: var(--bg); font-size: var(--text-body); line-height: 1.6; }
 .sp-wrap { max-width: calc(var(--page) + 2 * var(--s5)); margin: 0 auto; padding: 0 var(--s5) 72px; }
 .sp-top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; margin: 0 calc(-1 * var(--s5)); padding: 14px var(--s5); background: var(--bg); }
-.sp-brand { display: inline-flex; align-items: center; gap: 10px; font: 600 20px/1 var(--sans); letter-spacing: -.01em; color: var(--ink); }
+.sp-brand { display: inline-flex; align-items: center; gap: 10px; font: 600 20px/1 var(--sans); letter-spacing: -.01em; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; }
 .sp-title { margin: var(--s7) 0 var(--s6); font: 500 var(--text-2xl)/1.15 var(--sans); letter-spacing: -.03em; }
 .sp-section { margin: 0 0 36px; }
 .sp-section h2 { margin: 0 0 6px; font: 600 var(--text-lg)/1.3 var(--sans); letter-spacing: -.01em; }
@@ -464,6 +518,7 @@ ol.conn-steps li { margin: 2px 0; }
 .apps-reconnect small { font-size: var(--text-sm); font-weight: 400; color: var(--muted); }
 /* Telegram (hosted): a code to scan from a computer; a button on the phone. */
 .phone-tabs { margin: 0 0 var(--s4); }
+.apps-tabs { margin: var(--s2) 0 var(--s4); }
 .tg-connect { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: var(--s6); border-radius: var(--r-card); background: var(--well); text-align: center; }
 .tg-connect .np-help { margin: 0; }
 .tg-qr { width: 200px; height: 200px; padding: var(--s2); border-radius: var(--r-md); background: #fff; }
@@ -545,19 +600,6 @@ ol.conn-steps li { margin: 2px 0; }
   /* The model on the left, as wide as its name; phone and Clear on the right. */
   .header-actions .model-select { order: -1; margin-right: auto; max-width: 62vw; field-sizing: content; }
   .conversation-thread { padding: var(--s4) var(--s4) var(--s6); gap: var(--s6); }
-  .chat-bottom { padding: var(--s2) var(--s3); padding-bottom: max(var(--s3), env(safe-area-inset-bottom)); }
-  .msg.you .stack { max-width: 90%; }
-  .update-ready, .update-failed { margin: 0 var(--s3) var(--s2); }
-  .modal { padding: var(--s6) var(--s5); }
-  .scrim.center { padding: var(--s3); }
-  .sp-wrap { padding: 0 var(--s4) 48px; }
-  .sp-top { margin: 0 calc(-1 * var(--s4)); padding: var(--s3) var(--s4); }
-  .knows-inner { padding: var(--s4) var(--s4) 48px; }
-  .apps-grid { grid-template-columns: 1fr; }
-  .conn .conn-list, .conn-form, .conn-steps { margin-left: 0; }
-  .run { flex-wrap: wrap; }
-  .connect .btn { min-width: 0; width: 100%; max-width: 320px; }
-  .drawer header, .drawer .log { padding-left: var(--s4); padding-right: var(--s4); }
 }
 
 /* Settings tabs: one section at a time. */
@@ -605,7 +647,7 @@ ol.conn-steps li { margin: 2px 0; }
 .report-attach { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .report-files { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s3); }
 .report-files figure { position: relative; margin: 0; }
-.report-files img, .report-files video { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.report-files img, .report-files video { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--r-md); background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
 .report-files figcaption { margin-top: 4px; font-size: var(--text-sm); color: var(--muted); }
 .report-x { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--ink); color: var(--bg); opacity: .85; }
 .report-x:hover { opacity: 1; }
@@ -636,3 +678,18 @@ ol.conn-steps li { margin: 2px 0; }
 .conversation-thread > div[data-key] { animation: msg-in .22s ease-out both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { .chat-skeleton i, .conversation-thread > div[data-key] { animation: none; } }
+
+/* Sidebar: their chats, Settings at the foot on a phone (the top bar has it on a wide screen) */
+.chat-list.side .chat-row { padding: 10px 12px; }
+.chat-list.side .chat-row-top b { font-weight: 500; }
+.side-settings { display: inline-flex; align-items: center; gap: 10px; }
+.side-settings svg { width: 18px; height: 18px; color: var(--muted); }
+
+/* An agent's ⋯ in the sidebar: shows on hover (or while its menu is open), over the row's right end */
+.chat-row-wrap { position: relative; }
+.row-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0; }
+.row-more .proj-more { background: var(--hover); border-radius: var(--r-md); }
+.chat-row-wrap:hover .row-more, .row-more:focus-within { opacity: 1; }
+.chat-row-wrap:has(.pop-menu) { z-index: 5; }
+.chat-row-wrap:has(.pop-menu) .row-more { opacity: 1; }
+.chat-row-wrap:has(.row-more):hover .chat-row-top small, .chat-row-wrap:has(.row-more:focus-within) .chat-row-top small { visibility: hidden; }

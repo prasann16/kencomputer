@@ -227,6 +227,14 @@ async def test_chat_list_and_reset(engine):
     assert engine.kv_get("session:p") is None
 
 
+def test_chat_list_preview_is_plain():
+    from engine import plain_text
+
+    md = "## Today\n**Calendar:** nothing today.\n\n**Inbox**\n- one from `Sam` about [the deal](https://x.y)\n|a|b|\n|---|---|"
+    assert plain_text(md) == "Today\nCalendar: nothing today.\nInbox\n• one from Sam about the deal\n|a|b|"
+    assert plain_text("2 * 3 * 4 and *really* ~~no~~") == "2 * 3 * 4 and really no"
+
+
 async def test_web_auth_and_chats(engine, tmp_path, aiohttp_client):
     from web import WebApp
 
@@ -243,6 +251,11 @@ async def test_web_auth_and_chats(engine, tmp_path, aiohttp_client):
     assert (await client.get("/api/chats/myreader/files/..%2Fproject.json")).status == 404
     assert (await client.get("/app.js")).status == 200
     assert (await client.get("/..%2Fbot.py")).status == 404
+    # An agent made from what it's for alone is "New agent" until it names itself; agents are on for everyone.
+    r = await client.post("/api/chats", json={"name": "", "context": "Keep my admin on track"})
+    assert (await r.json())["name"] == "New agent"
+    assert (await client.post("/api/chats", json={"name": "", "context": ""})).status == 400
+    assert (await (await client.get("/api/meta")).json())["agents"] is True
 
 
 async def test_approve_starts_work_and_result_lands_in_chat(engine):
@@ -350,8 +363,11 @@ def test_agent_sees_only_its_folder_and_ken_sees_every_agent(engine):
     engine.create_agent("Reader", context="Grow MyReader revenue.")
     engine.create_agent("Brand", context="Grow my X following.")
     (engine.agents_dir / "brand/jobs.json").write_text('[{"name": "daily-post", "time": "09:00"}]')
+    (engine.home / "memory").mkdir(exist_ok=True)
+    (engine.home / "memory" / "voice.md").write_text("How they write\n")
     mine = engine.system("reader")
     assert "Grow MyReader revenue." in mine and "KEN AT WORK" in mine
+    assert "voice.md — How they write" in mine and "never write there" in mine  # Ken's memory: read, never written
     assert "Brand" not in mine and "X following" not in mine and "KEN SOUL" not in mine
     brief = engine.chief_brief()
     assert "Reader (reader): Grow MyReader revenue." in brief and "jobs: daily-post" in brief
@@ -378,8 +394,43 @@ async def test_ken_creates_an_agent_that_sets_itself_up(engine):
         if engine.brain.asks:
             break
     assert engine.get_agent("brand")
+    made = engine.messages(HOME)[-1]  # where they asked: a line that opens the new agent
+    assert made["agent_made"] == "brand" and "Brand" in made["text"]
     ask = engine.brain.asks[0]
     assert "You were just created" in ask["prompt"] and "Grow my X following." in ask["system"]
+
+
+async def test_ken_passes_work_to_an_agent_in_its_chat(engine):
+    engine.create_agent("Brand", context="Grow my X following.")
+    engine.log_message("brand", "ken", "**Done:** posted the thread.")
+    brief = engine.chief_brief()
+    assert 'last said: "Done: posted the thread."' in brief and '"type": "message"' in brief
+    engine.handle_request({"type": "message", "agent": "Brand", "text": "Add TikTok too."})
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if engine.brain.asks:
+            break
+    passed = next(m for m in engine.messages("brand") if m.get("via") == "ken")
+    assert passed["role"] == "you" and passed["text"] == "Add TikTok too."
+    sent = next(m for m in engine.messages(HOME) if m.get("agent_made"))  # in Ken's chat: a line that opens the agent
+    assert sent["agent_made"] == "brand" and sent["text"] == "Sent to Brand."
+    assert "From Ken" in engine.brain.asks[0]["prompt"] and "Add TikTok too." in engine.brain.asks[0]["prompt"]
+    with pytest.raises(ValueError):
+        engine.handle_request({"type": "message", "agent": "nobody", "text": "hi"})
+
+
+def test_ken_reads_an_agents_chat(engine):
+    from engine import chat_transcript
+
+    engine.create_agent("Personal brand")
+    engine.log_message("personal-brand", "you", "Find me viral reels")
+    engine.log_message("personal-brand", "you", "Add TikTok too.", via="ken")
+    engine.log_message("personal-brand", "ken", "Found 3.")
+    out = chat_transcript(engine.home, "Personal Brand")
+    assert "Them: Find me viral reels" in out and "Ken (passing on): Add TikTok too." in out and "Personal brand: Found 3." in out
+    assert "last 1 messages" in chat_transcript(engine.home, "personal-brand", 1)
+    assert "No agent called" in chat_transcript(engine.home, "nobody")
+    assert "--chat <id>" in engine.chief_brief(read_chat="ken --chat")
 
 
 async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path):

@@ -95,6 +95,17 @@ if sys.argv[1:2] == ["--use"]:  # they asked Ken to switch AI: the same switch a
         print("Couldn't switch just now. Try once more; if it still fails, tell them plainly.")
     raise SystemExit(1)
 
+if sys.argv[1:2] == ["--chat"]:  # Ken reading one of their agents' chats (read-only)
+    import os
+    from pathlib import Path
+
+    from engine import chat_transcript
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: --chat <agent> [how many messages]")
+    print(chat_transcript(Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))), sys.argv[2],
+                          int(sys.argv[3]) if sys.argv[3:4] and sys.argv[3].isdigit() else 40))
+    raise SystemExit(0)
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -108,6 +119,13 @@ if sys.argv[1:2] == ["--apps-file"]:  # hosted Ken: a file here, ready for an ap
 if getattr(sys, "frozen", False) and "-c" in sys.argv[1:]:
     exec(sys.argv[sys.argv.index("-c") + 1])
     raise SystemExit(0)
+
+# A command this version doesn't have (Ken trying one from a newer version before it updated): say so and stop,
+# never start a second Ken. Ken itself starts with no options.
+_unknown = [a for a in sys.argv[1:] if a.startswith("--") and not a.startswith("--multiprocessing")]
+if _unknown and __name__ == "__main__":  # imported (the tests), the options are someone else's
+    print(f"This Ken doesn't have {_unknown[0]} (yet). Nothing was started.")
+    raise SystemExit(2)
 
 import asyncio
 import html
@@ -1060,7 +1078,15 @@ def browser_prompt() -> str:
 
 def agent_tools_prompt(only) -> str:
     """What an agent's built-in tools add to its instructions."""
-    return "\n\n".join(x for x in (browser_prompt() if "browser" in only else "", video_prompt(), CONNECTIONS.prompt(only)) if x)
+    return "\n\n".join(x for x in (browser_prompt() if "browser" in only else "", agent_apps_prompt(), video_prompt(), CONNECTIONS.prompt(only)) if x)
+
+
+def agent_apps_prompt() -> str:
+    """Their apps, connected once in Settings, work for every agent as they do for Ken."""
+    if not apps_mcp():
+        return ""
+    import apps
+    return (HOSTED_APPS_PROMPT if apps.hosted() else APPS_PROMPT) + (" " + APPS_FILES_PROMPT if apps.files_ready() else "")
 
 
 def build_system() -> str:
@@ -1095,6 +1121,11 @@ def build_system() -> str:
     connected = CONNECTIONS.prompt()
     if connected:
         system += "\n\n" + connected
+    # Ken knows their agents (and how to pass work on, or make one)
+    try:
+        system += "\n\n" + ENGINE.chief_brief(read_chat=f"{KEN_CMD} --chat")
+    except Exception as e:
+        log.warning("agent listing failed: %s", e)
     pending = unresolved_setup()
     if pending:
         system += f"\n\n=== setup items still unresolved ({SETUP_FILE}) ===\n" + ", ".join(pending) + "\n=== end setup ==="
