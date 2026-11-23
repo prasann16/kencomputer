@@ -55,7 +55,7 @@ async def test_a_code_links_and_the_token_is_only_readable_by_them(link):
     await linked(link)
     st = link.status()
     assert st["linked"] and st["account"] == "sam@example.com"
-    assert [s["on"] for s in st["switches"]] == [False]  # everything off until they turn it on
+    assert [s["on"] for s in st["switches"]] == [False, False]  # everything off until they turn it on
     assert stat.S_IMODE(link.file.stat().st_mode) == 0o600
     assert "t" * 64 not in json.dumps(st)  # the screen never gets the token
 

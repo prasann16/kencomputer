@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -34,7 +35,9 @@ MAX_SCANNED = 20_000
 
 SWITCHES = {
     "files": "Files in folders you choose",
+    "whatsapp": "WhatsApp (read)",
 }
+WHATSAPP_EVERY = 5 * 60  # new WhatsApp messages are read this often while the switch is on
 
 
 class Refused(Exception):
@@ -60,8 +63,14 @@ def computer_name() -> str:
 
 
 class MacLink:
-    def __init__(self, home: Path, site: str | None = None, name: Callable[[], str] = computer_name) -> None:
+    def __init__(self, home: Path, site: str | None = None, name: Callable[[], str] = computer_name,
+                 whatsapp_db: Callable[[], Path] | None = None) -> None:
+        self.home = home
         self.file = home / "mac-link.json"
+        self.whatsapp_db = whatsapp_db  # WhatsApp Desktop's database (whatsapp.desktop_db); tests pass a copy
+        self.whatsapp_problem = ""  # "access": Full Disk Access is off for Ken · "missing": no WhatsApp Desktop
+        self._whatsapp_due = 0.0
+        self._whatsapp_now = asyncio.Event()
         self.site = (site or os.environ.get("KEN_SITE_URL") or SITE).rstrip("/")
         self.name = name
         self.connected = False
@@ -74,6 +83,9 @@ class MacLink:
             "files.list": Cap("files", self._list),
             "files.find": Cap("files", self._find),
             "files.get": Cap("files", self._get),
+            "whatsapp.chats": Cap("whatsapp", self._wa_chats),
+            "whatsapp.search": Cap("whatsapp", self._wa_search),
+            "whatsapp.read": Cap("whatsapp", self._wa_read),
         }
 
     # ------------------------------------------------------------------ what's saved: the token and their switches
@@ -109,7 +121,7 @@ class MacLink:
         return {"linked": bool(st.get("token")), "account": st.get("account", ""), "since": st.get("since"),
                 "online": self.connected, "problem": self.problem,
                 "switches": [{"id": k, "label": label, "on": self.switches()[k]} for k, label in SWITCHES.items()],
-                "folders": st["folders"]}
+                "folders": st["folders"], "whatsapp": self._whatsapp_status()}
 
     def set_switch(self, which: str, on: bool) -> dict:
         if which not in SWITCHES:
@@ -117,6 +129,9 @@ class MacLink:
         st = self.state()
         st["switches"][which] = bool(on)
         self._save(st)
+        if which == "whatsapp":
+            self._whatsapp_due, self.whatsapp_problem = 0.0, ""  # read it now, not in 5 minutes
+            self._whatsapp_now.set()
         return self.status()
 
     def set_folders(self, folders: list) -> dict:
@@ -312,6 +327,71 @@ class MacLink:
         if size > MAX_FILE:
             raise Refused(f"{path.name} is {size // (1024 * 1024)} MB, too big to fetch from the Mac (1 MB at most for now).")
         return {"name": path.name, "size": size, "data": base64.b64encode(path.read_bytes()).decode()}
+
+
+    # ------------------------------------------------------------------ WhatsApp (read), synced into Ken's own store
+
+    def _whatsapp_status(self) -> dict:
+        import whatsapp
+        return {"problem": self.whatsapp_problem, "synced": whatsapp.synced_at(self.home)}
+
+    def sync_whatsapp(self) -> int | None:
+        """New WhatsApp messages into Ken's store, if the switch is on. None when it couldn't (whatsapp_problem says why)."""
+        import whatsapp
+        if not self.switches().get("whatsapp"):
+            return None
+        try:
+            added = whatsapp.sync_desktop(self.home, (self.whatsapp_db or whatsapp.desktop_db)())
+            self.whatsapp_problem = ""
+            return added
+        except whatsapp.NeedsAccess:
+            self.whatsapp_problem = "access"
+        except whatsapp.NotThere:
+            self.whatsapp_problem = "missing"
+        except Exception as e:
+            log.warning("whatsapp: sync failed: %s", e)
+            self.whatsapp_problem = "failed"
+        return None
+
+    async def keep_whatsapp(self) -> None:
+        """While the WhatsApp switch is on: new messages about every 5 minutes (at once when it's turned on)."""
+        while True:
+            if self.switches().get("whatsapp") and time.time() >= self._whatsapp_due:
+                self._whatsapp_due = time.time() + WHATSAPP_EVERY
+                added = await asyncio.to_thread(self.sync_whatsapp)
+                if added:
+                    log.info("whatsapp: %d new message(s)", added)
+            self._whatsapp_now.clear()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._whatsapp_now.wait(), 15)
+
+    def open_full_disk_access(self) -> None:
+        """System Settings → Privacy & Security → Full Disk Access, where they turn Ken on."""
+        import whatsapp
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", whatsapp.FULL_DISK_ACCESS])
+
+    def _wa_ready(self) -> None:
+        if self.whatsapp_problem == "access":
+            raise Refused("Ken for Mac can't read WhatsApp yet: they need to turn on Full Disk Access for Ken (Ken for Mac → Settings → Cloud shows how).")
+        if self.whatsapp_problem == "missing":
+            raise Refused("WhatsApp Desktop isn't on their Mac, so there are no messages to read.")
+
+    def _wa_chats(self, args: dict) -> dict:
+        import whatsapp
+        self._wa_ready()
+        return {"chats": whatsapp.chats(self.home)}
+
+    def _wa_search(self, args: dict) -> dict:
+        import whatsapp
+        self._wa_ready()
+        return {"messages": whatsapp.search(self.home, str(args.get("words", "")), str(args.get("chat", "")),
+                                            int(args.get("days") or 0), int(args.get("limit") or 50))}
+
+    def _wa_read(self, args: dict) -> dict:
+        import whatsapp
+        self._wa_ready()
+        return {"messages": whatsapp.read(self.home, str(args.get("chat", "")), int(args.get("count") or 40))}
 
 
 # ---------------------------------------------------------------------- the cloud side: `ken --mac …`

@@ -1711,6 +1711,12 @@ function HostedPhone() {
 
 // Ken for Mac linked to their Ken in the cloud (mac_link.py; the site's maclink.ts). The Mac connects out to the site
 // only; the cloud Ken can use what's switched on here, nothing else. Mac: Settings → Cloud. Cloud: Settings → Your Mac.
+// WhatsApp (read) on the Mac, when it can't read: why, in plain words. "access": macOS's Full Disk Access is off for Ken.
+const WHATSAPP_PROBLEM = {
+  access: 'To read WhatsApp, your Mac needs your permission. In System Settings → Privacy & Security → Full Disk Access, turn on Ken. Then quit Ken and open it again.',
+  missing: 'WhatsApp isn’t on this Mac. Install WhatsApp from the App Store, sign in, and Ken will pick it up.',
+  failed: 'Couldn’t read WhatsApp just now. Ken tries again every few minutes.',
+};
 function CloudLink({ toast }) {
   const [st, setSt] = useState(null), [code, setCode] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = () => api('/api/link').then(setSt).catch((e) => setError(e.message));
@@ -1730,10 +1736,14 @@ function CloudLink({ toast }) {
     <p class="np-note">${st.online ? 'Connected. Ken in the cloud can reach this Mac while it’s on and Ken is open.' : st.problem || 'Connecting…'}</p>
     <p class="np-help">What Ken in the cloud may use on this Mac. All off until you turn them on. It can only look, never send or change anything.</p>
     <div class="tool-list">${st.switches.map((sw) => html`<div class="conn"><div class="conn-row"><div class="conn-text"><b>${sw.label}</b>
-      <span>${sw.id === 'files' ? (st.folders.length ? 'Only these folders, and what’s inside them:' : 'Pick the folders Ken may read. Nothing outside them.') : ''}</span></div>
+      <span>${sw.id === 'files' ? (st.folders.length ? 'Only these folders, and what’s inside them:' : 'Pick the folders Ken may read. Nothing outside them.')
+        : sw.id === 'whatsapp' ? 'Ken can search and read your WhatsApp chats from WhatsApp on this Mac. It can’t send anything. Older chats: in WhatsApp on your phone, open a chat, choose Export chat, and send the file to Ken.' : ''}</span></div>
       <div class="conn-right"><input class="job-switch" type="checkbox" role="switch" aria-label=${sw.label} checked=${sw.on} disabled=${busy} onChange=${(e) => act({ action: 'switch', id: sw.id, on: e.target.checked })}/></div></div>
       ${sw.id === 'files' && html`<div class="conn-body">${st.folders.map((f) => html`<div class="row"><span class="np-note">${f}</span><button class="text-action" disabled=${busy} onClick=${() => act({ action: 'folders', folders: st.folders.filter((x) => x !== f) })}>Remove</button></div>`)}
-        ${window.kenDesktop?.pickFolder && html`<button class="btn sm light" disabled=${busy} onClick=${addFolder}>Add a folder…</button>`}</div>`}</div>`)}</div>
+        ${window.kenDesktop?.pickFolder && html`<button class="btn sm light" disabled=${busy} onClick=${addFolder}>Add a folder…</button>`}</div>`}
+      ${sw.id === 'whatsapp' && sw.on && html`<div class="conn-body">${WHATSAPP_PROBLEM[st.whatsapp?.problem]
+        ? html`<p class="np-help" role="alert">${WHATSAPP_PROBLEM[st.whatsapp.problem]}</p>${st.whatsapp.problem === 'access' && html`<button class="btn sm primary" disabled=${busy} onClick=${() => act({ action: 'open-access' })}>Open System Settings</button>`}`
+        : html`<p class="np-note">${st.whatsapp?.synced ? `Up to date as of ${new Date(st.whatsapp.synced * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Checked every 5 minutes.` : 'Reading your chats…'}</p>`}</div>`}</div>`)}</div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}`;
 }
 
