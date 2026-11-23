@@ -339,7 +339,7 @@ class MacLink:
     def sync_whatsapp(self) -> int | None:
         """New WhatsApp messages into Ken's store, if the switch is on. None when it couldn't (whatsapp_problem says why)."""
         import whatsapp
-        if not self.switches().get("whatsapp"):
+        if not self.switches().get("whatsapp") or not self.linked():
             return None
         try:
             added = whatsapp.sync_desktop(self.home, (self.whatsapp_db or whatsapp.desktop_db)())
@@ -357,7 +357,7 @@ class MacLink:
     async def keep_whatsapp(self) -> None:
         """While the WhatsApp switch is on: new messages about every 5 minutes (at once when it's turned on)."""
         while True:
-            if self.switches().get("whatsapp") and time.time() >= self._whatsapp_due:
+            if self.linked() and self.switches().get("whatsapp") and time.time() >= self._whatsapp_due:
                 self._whatsapp_due = time.time() + WHATSAPP_EVERY
                 added = await asyncio.to_thread(self.sync_whatsapp)
                 if added:

@@ -61,22 +61,45 @@ def open_store(home: Path) -> sqlite3.Connection:
 
 def _copy(src: Path, into: Path) -> Path:
     """The database and its -wal/-shm, copied under the same names (the newest messages are often only in the -wal)."""
+    # No exists() first: without Full Disk Access it can say False, and that would read as "no WhatsApp".
     try:
-        if not src.exists():
-            raise NotThere()
         dest = into / src.name
         shutil.copyfile(src, dest)
         for extra in ("-wal", "-shm"):
             side = src.with_name(src.name + extra)
-            if side.exists():
+            try:
                 shutil.copyfile(side, into / side.name)
+            except FileNotFoundError:
+                pass
         return dest
+    except FileNotFoundError:
+        raise NotThere() from None
     except PermissionError:
         raise NeedsAccess() from None
     except OSError as e:
         if getattr(e, "errno", None) == 1:  # EPERM: macOS privacy protection
             raise NeedsAccess() from None
         raise
+
+
+def _signature(src: Path) -> str:
+    """Size and time of the database and its -wal, to tell whether anything changed."""
+    parts = []
+    for p in (src, src.with_name(src.name + "-wal")):
+        try:
+            st = p.stat()
+            parts.append(f"{st.st_size}:{st.st_mtime_ns}")
+        except FileNotFoundError:
+            if p == src:
+                raise NotThere() from None
+            parts.append("-")
+        except PermissionError:
+            raise NeedsAccess() from None
+        except OSError as e:
+            if getattr(e, "errno", None) == 1:
+                raise NeedsAccess() from None
+            raise
+    return " ".join(parts)
 
 
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -89,6 +112,12 @@ def sync_desktop(home: Path, src: Path | None = None, batch: int = 5000) -> int:
     store = open_store(home)
     try:
         last = int((store.execute("SELECT v FROM kv WHERE k='desktop_pk'").fetchone() or ["0"])[0])
+        # Unchanged since last time (the database and its -wal): nothing new, and nothing to copy.
+        seen = _signature(src)
+        if seen == (store.execute("SELECT v FROM kv WHERE k='desktop_seen'").fetchone() or [""])[0]:
+            store.execute("INSERT OR REPLACE INTO kv VALUES ('desktop_synced', ?)", (str(time.time()),))
+            store.commit()
+            return 0
         with tempfile.TemporaryDirectory(prefix="ken-wa-") as tmp:
             copy = _copy(src, Path(tmp))
             wa = sqlite3.connect(copy)  # a plain open of the copy, so its -wal is read too
@@ -131,6 +160,7 @@ def sync_desktop(home: Path, src: Path | None = None, batch: int = 5000) -> int:
             finally:
                 wa.close()
         store.execute("INSERT OR REPLACE INTO kv VALUES ('desktop_synced', ?)", (str(time.time()),))
+        store.execute("INSERT OR REPLACE INTO kv VALUES ('desktop_seen', ?)", (seen,))
         store.commit()
         return added
     finally:

@@ -61,7 +61,7 @@ def make_chatstorage(path: Path) -> sqlite3.Connection:
     return db
 
 
-def test_new_messages_come_from_a_copy_with_names_dates_and_who_said_it(home, tmp_path):
+def test_new_messages_come_from_a_copy_with_names_dates_and_who_said_it(home, tmp_path, monkeypatch):
     src = tmp_path / "wa" / "ChatStorage.sqlite"
     src.parent.mkdir()
     wa = make_chatstorage(src)
@@ -77,7 +77,11 @@ def test_new_messages_come_from_a_copy_with_names_dates_and_who_said_it(home, tm
     wa.execute("INSERT INTO ZWAMESSAGE VALUES (6, 1, NULL, 0, ?, 0, 'Bring the good plates', NULL, NULL)", (time.time() - EPOCH,))
     wa.commit()
     assert whatsapp.sync_desktop(home, src) == 1
-    assert whatsapp.sync_desktop(home, src) == 0
+    copies = []
+    monkeypatch.setattr(whatsapp, "_copy", lambda *a: copies.append(a))
+    assert whatsapp.sync_desktop(home, src) == 0 and copies == []  # nothing changed: not even copied
+    monkeypatch.undo()
+    monkeypatch.setattr(whatsapp, "desktop_db", lambda: (_ for _ in ()).throw(AssertionError("real WhatsApp")))
     assert whatsapp.search(home, "plates")[0]["chat"] == "Mum"
     assert [c["chat"] for c in whatsapp.chats(home)] == ["Mum", "Lisbon trip"]
     wa.close()
@@ -108,7 +112,34 @@ def test_the_original_is_never_written(home, tmp_path):
 
 def mac(home, db):
     link = mac_link.MacLink(home, site="https://site.test", name=lambda: "Mac", whatsapp_db=lambda: db)
+    link._save({**link.state(), "token": "t" * 64, "account": "sam@example.com"})  # linked
     return link
+
+
+def test_unlinked_means_no_reading_even_if_the_switch_was_on(home, tmp_path):
+    src = tmp_path / "ChatStorage.sqlite"
+    make_chatstorage(src).close()
+    link = mac(home, src)
+    link.set_switch("whatsapp", True)
+    link._forget("")  # unlinked (which also turns the switch off) …
+    st = link.state()  # … and even with the switch somehow still on
+    st["switches"]["whatsapp"] = True
+    link._save(st)
+    assert link.sync_whatsapp() is None and whatsapp.synced_at(home) is None
+
+
+def test_denied_when_opening_the_file_is_full_disk_access_not_missing(home, tmp_path, monkeypatch):
+    src = tmp_path / "ChatStorage.sqlite"
+    make_chatstorage(src).close()
+    real_open = open
+
+    def guarded(path, *a, **k):
+        if str(path).startswith(str(tmp_path / "ChatStorage.sqlite")):
+            raise PermissionError(1, "Operation not permitted", str(path))
+        return real_open(path, *a, **k)
+    monkeypatch.setattr("builtins.open", guarded)
+    with pytest.raises(whatsapp.NeedsAccess):
+        whatsapp.sync_desktop(home, src)
 
 
 async def test_off_means_whatsapp_is_never_looked_at(home):
