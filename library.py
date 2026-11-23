@@ -154,16 +154,17 @@ def photo_facts(path: Path) -> dict:
     return facts
 
 
-def make_thumb(source: str | Path, out: Path, video: bool = False, token: str = "", at: float = 0) -> bool:
+def make_thumb(source: str | Path, out: Path, video: bool = False, token: str = "", at: float = 0, size: int = 0) -> bool:
     """A JPEG about THUMB_PX on its short side, cropped by the app to a square. A video's from a frame a little in."""
+    px = size or THUMB_PX
     if video:
         cmd = ["ffmpeg", "-v", "error", "-y", "-ss", str(at), "-headers", f"Authorization: Bearer {token}\r\n", "-i", str(source),
-               "-frames:v", "1", "-vf", f"scale='if(gt(iw,ih),-2,{THUMB_PX})':'if(gt(iw,ih),{THUMB_PX},-2)'", "-q:v", "4", str(out)]
+               "-frames:v", "1", "-vf", f"scale='if(gt(iw,ih),-2,{px})':'if(gt(iw,ih),{px},-2)'", "-q:v", "4", str(out)]
     else:
         tool = shutil.which("magick") or shutil.which("convert")
         if not tool:
             return False
-        cmd = [tool, f"{source}[0]", "-auto-orient", "-thumbnail", f"{THUMB_PX}x{THUMB_PX}^", "-quality", "80", "-strip", str(out)]
+        cmd = [tool, f"{source}[0]", "-auto-orient", "-thumbnail", f"{px}x{px}^", "-quality", "80", "-strip", str(out)]
     try:
         subprocess.run(cmd, capture_output=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
@@ -253,7 +254,8 @@ def main(args: list[str], home: Path) -> int:
        ken --library get <id> [<id> …] [--seconds A-B]   → a copy in ~/.ken/work/library/ (only part of a video with --seconds)
        ken --library thumb <id> [<id> …]                → its small thumbnail, to look at quickly
        ken --library note <id> <what's in it>
-       ken --library add <file> [<file> …]              → saved into their Library"""
+       ken --library add <file> [<file> …]              → saved into their Library
+       ken --library show <id> [<id> …]                 → those photos or clips appear in the chat, for them to see"""
     if not args or args[0] in ("-h", "--help", "help"):
         print(main.__doc__)
         return 0
@@ -306,6 +308,20 @@ def main(args: list[str], home: Path) -> int:
                     ok = _download(url, token, out)
                 print(f"{item_id}: {out}" if ok else f"{item_id}: couldn't fetch it")
             print("Delete these copies when the task is done; the originals stay in their Library.")
+            return 0
+        if cmd == "show" and rest:
+            ids = [a for a in rest if re.fullmatch(r"[0-9a-f]{16}", a)][:12]
+            found = {x["id"]: x for x in call("find?limit=500").get("items", [])}
+            items = [{"id": i, "kind": found[i].get("kind", "photo"), "name": found[i].get("name", ""), "place": found[i].get("place") or ""} for i in ids if i in found]
+            if not items:
+                print("None of those are in their Library.")
+                return 1
+            req = home / "requests" / f"{int(time.time() * 1000)}-show.json"
+            req.parent.mkdir(parents=True, exist_ok=True)
+            tmp = req.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"type": "library_show", "agent": os.environ.get("KEN_CHAT", "home"), "items": items}))
+            tmp.rename(req)
+            print(f"Showing {len(items)} in the chat.")
             return 0
         if cmd == "note" and len(rest) >= 2:
             call("note", {"id": rest[0], "note": " ".join(rest[1:])})

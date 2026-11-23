@@ -2421,7 +2421,9 @@ def library_prompt() -> str:
         f"`{KEN_CMD} --library get <id> …` (add `--seconds 12-20` for just part of a long video), and delete those copies "
         f"when you're done. After you've looked at one, save a line on what's in it: `{KEN_CMD} --library note <id> "
         "<what's in it>`, so the next search finds it. Something you made that they'll want to keep (a finished reel): "
-        f"`{KEN_CMD} --library add <file>`. Never remove anything from it; they do that in the app's Library."
+        f"`{KEN_CMD} --library add <file>`. To show them the ones you picked (so they see the photos, not names or ids): "
+        f"`{KEN_CMD} --library show <id> …`, then say what you chose and why. Never remove anything from it; they do "
+        "that in the app's Library."
     )
 
 
@@ -2577,6 +2579,8 @@ async def notify_telegram(app) -> None:
                 mark = "✓" if ev.get("status") == "done" else "✕"
                 await send_outbound(app.bot, f"{mark} {name} · {ev.get('title', '')}\n{(ev.get('summary') or '')[:600]}",
                                     reply_to=ev.get("origin"), quiet=hush)
+            elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("role") == "ken" and ev.get("library"):
+                await send_library(app.bot, ev["library"], quiet=hush)  # Ken showing photos from their Library
             elif ev["type"] == "message" and ev.get("project") == HOME and ev.get("via") in ("app", "background"):
                 words, files = (ev.get("text") or "").strip(), ev.get("files") or []
                 quiet = hush or ev.get("via") == "app"  # they're in the app: it shows on Telegram without a buzz
@@ -2591,6 +2595,43 @@ async def notify_telegram(app) -> None:
                     await flush_outbox(app.bot, ALLOWED_USER_ID, quiet)  # files Ken made for it come along
         except Exception as e:
             log.warning("telegram notify failed: %s", e)
+
+
+async def send_library(bot, items: list[dict], quiet: bool = False) -> None:
+    """Photos or clips Ken picked from their Library, as pictures in Telegram (a video as its still, with its place)."""
+    import library
+    from telegram import InputMediaPhoto
+
+    work = KEN_HOME / "work" / "library-tg"
+    work.mkdir(parents=True, exist_ok=True)
+
+    def fetch(it: dict) -> Path | None:
+        url, token = library.file_url(it["id"])
+        out = work / f"{it['id']}.jpg"
+        if it["kind"] == "video":
+            return out if library.make_thumb(url, out, video=True, token=token, at=1) else None
+        if it["kind"] != "photo":
+            return None
+        original = work / f"{it['id']}-original{Path(it.get('name') or 'x.jpg').suffix or '.jpg'}"
+        ok = library._download(url, token, original) and library.make_thumb(original, out, size=1600)
+        original.unlink(missing_ok=True)
+        return out if ok else None
+
+    paths = [p for p in await asyncio.gather(*(asyncio.to_thread(fetch, it) for it in items[:10])) if p]
+    try:
+        if len(paths) == 1:
+            with open(paths[0], "rb") as fh:
+                await bot.send_photo(ALLOWED_USER_ID, fh, disable_notification=quiet)
+        elif paths:
+            handles = [open(p, "rb") for p in paths]
+            try:
+                await bot.send_media_group(ALLOWED_USER_ID, [InputMediaPhoto(h) for h in handles], disable_notification=quiet)
+            finally:
+                for h in handles:
+                    h.close()
+    finally:
+        for p in paths:
+            p.unlink(missing_ok=True)
 
 
 APP_TASKS: set = set()

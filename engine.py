@@ -449,6 +449,22 @@ def _owned(p: Path) -> bool:
     return getuid is None or p.stat().st_uid == getuid()
 
 
+def clean_library(items) -> list[dict]:
+    """Library items on a message (theirs, or ones Ken shows): ids and enough to describe them, nothing else."""
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict) and re.fullmatch(r"[0-9a-f]{16}", str(it.get("id", ""))):
+            out.append({"id": it["id"], "kind": it.get("kind") if it.get("kind") in ("photo", "video", "file") else "photo",
+                        "name": str(it.get("name") or "")[:120], "place": str(it.get("place") or "")[:80]})
+    return out[:50]
+
+
+def library_note(items: list[dict]) -> str:
+    """How Ken hears about Library items they attached: what each is and its id, to fetch with the Library commands."""
+    said = "; ".join(f"{it['kind']}{' from ' + it['place'] if it.get('place') else ''} (id {it['id']})" for it in items)
+    return f"They attached {len(items)} from their Library: {said}. Get them with the Library commands."
+
+
 class Engine:
     def __init__(self, home: Path, brain: Brain, *, brains: dict[str, Brain] | None = None) -> None:
         self.home = Path(home)
@@ -1321,6 +1337,10 @@ class Engine:
         self._adir(pid)
         return self.home / "credentials" / "agents" / pid
 
+    def _session_env(self, pid: str) -> dict:
+        """What a chat's AI session runs with: its keys, and which chat it is (so `ken --library show` lands there)."""
+        return {**self._key_values(pid), "KEN_CHAT": pid}
+
     def _key_values(self, pid: str) -> dict:
         try:
             data = json.loads((self.keys_dir(pid) / "keys.json").read_text())
@@ -1577,14 +1597,14 @@ class Engine:
             if pid == HOME:
                 s = brain.session(cwd=str(self.home_cwd), system=lambda: self.system(pid), resume=self.kv_get(self.session_key(pid)),
                                   model_fn=lambda: self.model_for(pid),
-                                  mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+                                  mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._session_env(pid))
             else:
                 s = brain.session(
                     cwd=str(self.workdir(self.get_agent(pid))), system=lambda: self.system(pid),
                     resume=self.kv_get(self.session_key(pid)),
                     model_fn=lambda: self.model_for(pid),
                     mcp_fn=lambda: self.agent_tools(pid),
-                    env_fn=lambda: self._key_values(pid),
+                    env_fn=lambda: self._session_env(pid),
                 )
             if s.session_id and getattr(s, "spent", {}) is None and (saved := self.kv_get(f"spent:{s.session_id}")):
                 s.spent = json.loads(saved)  # what it had used before, so its next message counts only itself
@@ -1635,7 +1655,7 @@ class Engine:
             self._share_skills(cwd)
         session = self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid) + note, model_fn=lambda: self.model_for(pid),
-            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._session_env(pid))
         said: list[str] = []
 
         async def on_text(t: str) -> None:
@@ -1687,6 +1707,7 @@ class Engine:
         job: dict | None = None,
         origin: int | None = None,
         steer: bool = False,
+        library: list[dict] | None = None,
     ) -> bool:
         """Talk to Ken (or Ken-on-a-project). Replies stream to every screen;
         `listener` also gets each finished utterance (Telegram uses it).
@@ -1700,6 +1721,9 @@ class Engine:
         if log_user:
             self.log_message(pid, "you", text, files=files, **({"via": via} if via else {}))
         body = prompt if prompt is not None else text
+        library = clean_library(library)
+        if library and prompt is None:
+            body += "\n\n(" + library_note(library) + ")"
         if files and prompt is None:
             files = [await self._readable_picture(pid, f) for f in files]
             said = [f for f in files if re.match(r"voice-.*\.(m4a|webm|ogg|oga|mp3|wav)$", f, re.I)] if text.strip() else []
@@ -1935,7 +1959,7 @@ class Engine:
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         new = lambda resume=None: self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), resume=resume, model_fn=lambda: self.model_for(pid),
-            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._session_env(pid))
         if back := self.back_from_credits():
             self.log_message(pid, "ken", back)
         session = new()
@@ -2157,7 +2181,7 @@ class Engine:
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         session = self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), model_fn=lambda: self.model_for(pid),
-            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._key_values(pid))
+            mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._session_env(pid))
         async def ignore(_: str) -> None:
             pass
 
@@ -2243,6 +2267,11 @@ class Engine:
         if pid != HOME:
             pid = self.find_agent(pid) or pid
             self.get_agent(pid)
+        if kind == "library_show":  # Ken showing the photos or clips it picked from their Library, in the chat
+            items = clean_library(req.get("items"))
+            if items:
+                self.log_message(pid, "ken", str(req.get("text", ""))[:2000], library=items, via="library")
+            return
         if kind == "run":
             waiting = sum(1 for r in self.list_runs(project=HOME, active=True) if r["status"] == "queued")
             if pid == HOME and waiting >= 2 * (os.cpu_count() or 1):
@@ -2365,7 +2394,7 @@ class Engine:
                 system=lambda: self.system(pid) + note,
                 model_fn=lambda: self.model_for(pid),
                 mcp_fn=lambda: self.agent_tools(pid),
-                env_fn=lambda: self._key_values(pid),
+                env_fn=lambda: self._session_env(pid),
             )
             session = new()
             self.run_sessions[rid] = session
