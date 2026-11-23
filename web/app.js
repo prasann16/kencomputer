@@ -468,7 +468,7 @@ function LibraryViewer({ items, at, onAt, onClose, onDownload, onRemove }) {
 }
 
 // ⋯ at the top of a chat: its model, Brain, Clear, and for an agent Rename and Remove.
-function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connected, onClear, clearing, onPick, onSettings }) {
+function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connected, onClear, clearing, onPick }) {
   const [open, setOpen, box] = usePopover();
   const pick = (id) => { setOpen(false); onPick(id); };
   return html`<div class=${'pop' + (onPick ? '' : ' narrow-only')} ref=${box}><button class="proj-more" aria-label="Chat options" title="Chat options" aria-haspopup="menu" aria-expanded=${open} onClick=${() => setOpen(!open)}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
@@ -479,7 +479,6 @@ function ChatMenu({ pid, brain, model, catalog, onRuntime, changingBrain, connec
       ${onPick && html`${window.kenDesktop?.openFolder && html`<button role="menuitem" class="pop-row" onClick=${() => pick('open')}>Open in Finder</button>`}
         <button role="menuitem" class="pop-row" onClick=${() => pick('rename')}>Rename…</button>
         <button role="menuitem" class="pop-row danger" onClick=${() => pick('remove')}>Remove…</button>`}
-      ${onSettings && html`<button role="menuitem" class="pop-row narrow-only" onClick=${() => { setOpen(false); onSettings(); }}>Settings</button>`}
     </div>`}</div>`;
 }
 
@@ -1478,7 +1477,7 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
     ${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}
     <div class="chat-tools">${!brain && !title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}
       ${!brain && html`<span class="chat-tools wide-only">${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}${!side && html`<a class="clear-button" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>`}</span>`}
-      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null} onSettings=${side ? onSettings : null}/>${side && onReport && html`<button class="report-link wide-only" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}${side && html`<button class="clear-button wide-only" onClick=${onSettings}>Settings</button>`}</div>
+      <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/>${side && html`<button class="clear-button wide-only" onClick=${onSettings}>Settings</button>`}</div>
   </header>`;
   return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
       ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && window.kenDesktop?.popupMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`

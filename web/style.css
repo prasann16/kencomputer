@@ -686,7 +686,6 @@ ol.conn-steps li { margin: 2px 0; }
 .side-library svg { width: 18px; height: 18px; color: var(--muted); }
 .side-library b { flex: 1; font-weight: 500; }
 .side-library small { color: var(--faint); font-size: var(--text-xs); }
-@media (min-width: 761px) { .side-foot .report-link { display: none; } }
 .side-label { margin: 0; padding: 0 var(--s5) 6px; color: var(--faint); font-size: var(--text-xs); font-weight: 500; }
 .chat-list.side .chat-row { padding: 10px 12px; }
 .chat-list.side .chat-row-top b { font-weight: 500; }
