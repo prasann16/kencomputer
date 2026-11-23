@@ -4,7 +4,7 @@ One rule: anything in Ken's workspace folders goes 7 days after it last changed.
 where Ken works (work), what it hands back (outbox) and each helper agent's files folder, all inside Ken's own
 folder (~/.ken). Never the brain (memory, soul, skills), settings, logins, schedules, chat history or installed tools,
 and never anything outside ~/.ken: a person's own files are only ever copied in. (Pieces of an upload that never
-finished go after a day; nobody can use them.) Links are removed as links; what they point to is never touched.
+finished go after a day; nobody can use them. Removed chats/ in the inbox stays: the files of an agent they removed.) Links are removed as links; what they point to is never touched.
 """
 import logging
 import os
@@ -16,6 +16,7 @@ log = logging.getLogger("ken.workspace")
 DAY = 86400
 KEEP_DAYS, UPLOAD_DAYS = 7, 1
 EVERY = 6 * 3600  # how often the sweep runs
+KEPT = "Removed chats"  # in the inbox: the files of an agent they removed (engine.REMOVED_CHATS), never swept
 
 
 def roots(home: Path) -> list[Path]:
@@ -41,6 +42,8 @@ def sweep(home: Path, now: float | None = None) -> dict:
             continue
         for dirpath, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
             here = Path(dirpath)
+            if KEPT in here.relative_to(root).parts[:1]:
+                continue  # a removed agent's files, kept for them on purpose
             for name in filenames + [d for d in dirnames if (here / d).is_symlink()]:
                 path = here / name
                 try:

@@ -410,6 +410,35 @@ def safe_filename(name: str) -> str:
     return name[:180]
 
 
+# What Ken keeps in an agent's folder to run it, as against the files it made: removing an agent deletes these.
+AGENT_BOOKKEEPING = {"agent.json", "project.json", "CONTEXT.md", "jobs.json", "tools.json", "autonomy.json", "memory"}
+# Its settings in app.db's kv, each "<prefix>:<agent id>".
+AGENT_KV = ("backend", "brain", "session", "session:codex", "thread", "primer", "rolled", "jobs:said", "onboarding:said", "voice:said")
+REMOVED_CHATS = "Removed chats"  # in Ken's own Files: a removed agent's files, when their Library isn't on
+
+
+def _unique(p: Path) -> Path:
+    stem, suffix, n = p.stem, p.suffix, 2
+    while p.exists() or p.is_symlink():
+        p, n = p.with_name(f"{stem} {n}{suffix}"), n + 1
+    return p
+
+
+def _codex_cwd(rollout: Path) -> str:
+    """The folder a Codex conversation ran in, from the first line of its session file."""
+    with open(rollout, encoding="utf-8", errors="replace") as f:
+        line = f.readline(1 << 20)
+    try:
+        return str(json.loads(line).get("payload", {}).get("cwd") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
+def _library_on() -> bool:
+    import library
+    return library.on()
+
+
 def memory_listing(folder: Path) -> str:
     """Each note's filename and first line: enough to know what's there without opening it."""
     lines = []
@@ -532,6 +561,10 @@ class Engine:
         self._bg.append(asyncio.create_task(self._watch_requests()))
         from workspace import keep_tidy  # old uploads, raw videos and renders go by themselves (workspace.py)
         self._bg.append(asyncio.create_task(keep_tidy(self.home)))
+        removing = self.home / "removing"  # a removed agent's files a restart stopped on their way to the Library
+        for staging in sorted(removing.iterdir()) if removing.is_dir() else []:
+            if staging.is_dir() and not staging.is_symlink():
+                self._bg.append(asyncio.create_task(self._send_to_library(staging)))
 
     async def close(self) -> None:
         """Stop what's running before the process exits so tools are not orphaned. A chat reply stopped this way keeps
@@ -816,19 +849,136 @@ class Engine:
         self.emit("project.updated", project=pid)
         return self.get_agent(pid)
 
-    async def remove_agent(self, pid: str) -> None:
-        """Take an agent off the list. Its chat and notes move to agents/.removed (recoverable);
-        the folder it worked in is never touched."""
-        self.get_agent(pid)
-        if self.chat_busy(pid):
+    async def remove_agent(self, pid: str, delete_files: bool = False) -> dict:
+        """Remove an agent for good: its chat, notes, memory, keys, settings and jobs are deleted. The files it made
+        are kept unless `delete_files`: into their Library when it's on (uploaded in the background), else into
+        Removed chats/<name>/ in Ken's own Files. The code or info folder it was pointed at is never touched."""
+        meta = self.get_agent(pid)
+        if self.chat_busy(pid) or self.db.execute(
+                "SELECT 1 FROM runs WHERE project=? AND status IN ('running','queued') LIMIT 1", (pid,)).fetchone():
             raise ValueError("This agent is working. Stop it first.")
+        d = self._adir(pid)
+        code = self.code_dir(meta)
+        if code is not None and (code.resolve() == d.resolve() or d.resolve() in code.resolve().parents):
+            raise ValueError("Its code folder is inside its own folder. Point it at another folder first.")
+        files = [] if delete_files else self.agent_files(pid)
+        to_library = bool(files) and await asyncio.to_thread(_library_on)
         s = self.chats.pop(pid, None)
         if s is not None:
             await s.close()
-        trash = self.agents_dir / ".removed"
-        trash.mkdir(exist_ok=True)
-        self._adir(pid).rename(trash / f"{pid}-{int(time.time())}")
+        where = None
+        if files:
+            if to_library:  # held here until each one is safely in their Library
+                where = self.home / "removing" / f"{pid}-{int(time.time() * 1000)}"
+                (where / "files").mkdir(parents=True)
+                (where / "chat.json").write_text(json.dumps({"name": meta["name"]}))
+                into = where / "files"
+            else:
+                where = into = self._removed_folder(meta["name"])
+            for path, rel in files:
+                try:
+                    dest = _unique(into / rel)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(path), str(dest))
+                except OSError as e:
+                    log.warning("couldn't keep %s from %s: %s", rel, pid, e)
+        real = os.path.realpath(d)
+        shutil.rmtree(d, ignore_errors=True)  # links inside go as links; what they point to is never touched
         self.emit("project.removed", project=pid)
+        await asyncio.to_thread(self._forget_chat, pid, real)
+        if to_library and where is not None:
+            self._bg.append(asyncio.create_task(self._send_to_library(where)))
+        out = {"files": len(files), "to": ("library" if to_library else "folder") if files else ("deleted" if delete_files else None)}
+        if files and not to_library:
+            out["folder"] = str(where)
+        return out
+
+    def agent_files(self, pid: str) -> list[tuple[Path, str]]:
+        """The files an agent made (or was sent): everything in its folder but Ken's bookkeeping (who it is, its
+        memory, jobs, tools and rules) and hidden entries (unfinished uploads, Codex's skills link). Links are never
+        followed. Each with where it goes: its path in the folder, without the leading files/."""
+        d = self._adir(pid)
+        out = []
+        for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
+            here = Path(dirpath)
+            top = here == d
+            dirnames[:] = [n for n in dirnames if not n.startswith(".") and not (top and n in AGENT_BOOKKEEPING)]
+            for n in filenames:
+                p = here / n
+                if n.startswith(".") or (top and n in AGENT_BOOKKEEPING) or p.is_symlink() or not p.is_file():
+                    continue
+                parts = p.relative_to(d).parts
+                out.append((p, "/".join(parts[1:] if parts[0] == "files" and len(parts) > 1 else parts)))
+        return sorted(out, key=lambda x: x[1])
+
+    def agent_files_size(self, pid: str) -> dict:
+        files = self.agent_files(pid)
+        return {"count": len(files), "bytes": sum(p.lstat().st_size for p, _ in files)}
+
+    def _removed_folder(self, name: str) -> Path:
+        """Removed chats/<name>/ in Ken's own Files (a new one if a chat of that name was removed before)."""
+        base = self.files_dir(HOME) / REMOVED_CHATS
+        clean = safe_filename(name) or "Chat"
+        d, n = base / clean, 2
+        while d.exists():
+            d, n = base / f"{clean} {n}", n + 1
+        d.mkdir(parents=True)
+        return d
+
+    def _forget_chat(self, pid: str, real_dir: str) -> None:
+        """Everything Ken kept about a removed agent outside its folder: its messages, its jobs' steps, approvals,
+        settings, keys, and the AI's own record of its conversations (Claude Code's and Codex's session files)."""
+        sids = [s for s in (self.kv_get(f"session:{pid}"), self.kv_get(f"session:codex:{pid}")) if s]
+        codex = bool(self.kv_get(f"session:codex:{pid}")) or "codex" in (self.kv_get(f"backend:{pid}"), self.kv_get(f"brain:{pid}"))
+        runs = [r["id"] for r in self.db.execute("SELECT id FROM runs WHERE project=?", (pid,)).fetchall()]
+        self.db.execute("DELETE FROM events WHERE project=?", (pid,))
+        self.db.executemany("DELETE FROM events WHERE run=?", [(r,) for r in runs])
+        self.db.execute("DELETE FROM runs WHERE project=?", (pid,))
+        self.db.execute("DELETE FROM approvals WHERE project=?", (pid,))
+        keys = [f"{k}:{pid}" for k in AGENT_KV] + [f"spent:{s}" for s in sids]
+        self.db.executemany("DELETE FROM kv WHERE k=?", [(k,) for k in keys])
+        shutil.rmtree(self.home / "credentials" / "agents" / pid, ignore_errors=True)
+        for m in (self.chat_locks, self.chat_tools, self._aside, self.origins):
+            m.pop(pid, None)
+        self._turn_ended(pid)
+        enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))  # noqa: E731 — how Claude Code names them
+        store = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+        for cwd in {real_dir, os.path.realpath(self.home) + f"/projects/{pid}"}:
+            shutil.rmtree(store / enc(cwd), ignore_errors=True)
+        sessions = Path(os.environ.get("KEN_CODEX_HOME") or Path.home() / ".codex") / "sessions"
+        if codex and sessions.is_dir():
+            for f in sessions.rglob("rollout-*.jsonl"):
+                try:
+                    if any(f.name.endswith(f"-{s}.jsonl") for s in sids) or _codex_cwd(f) == real_dir:
+                        f.unlink()
+                except OSError:
+                    continue
+
+    async def _send_to_library(self, staging: Path) -> None:
+        """A removed agent's files, into their Library one by one; each local copy goes once it's safely there.
+        Whatever couldn't go lands in Removed chats/<name>/ instead. Picked up again after a restart."""
+        import library
+        try:
+            name = json.loads((staging / "chat.json").read_text()).get("name") or "Chat"
+        except (OSError, ValueError):
+            name = "Chat"
+        folder = None
+        root = staging / "files"
+        for path in sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink()) if root.is_dir() else []:
+            try:
+                await asyncio.to_thread(library.add, path)
+                path.unlink(missing_ok=True)
+                continue
+            except Exception as e:
+                log.warning("couldn't add %s to the Library: %s", path.name, e)
+            try:
+                folder = folder or self._removed_folder(name)
+                dest = _unique(folder / path.relative_to(root))
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(dest))
+            except OSError as e:
+                log.warning("couldn't keep %s: %s", path.name, e)
+        shutil.rmtree(staging, ignore_errors=True)
 
     def get_autonomy(self, pid: str) -> dict:
         try:
