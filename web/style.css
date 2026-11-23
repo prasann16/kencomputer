@@ -243,6 +243,8 @@ a.clear-button { text-decoration: none; }
 .composer textarea { order: 2; flex: 1; min-width: 0; align-self: center; max-height: 200px; margin: 0; padding: 8px 4px; border: 0; outline: none; background: transparent;
   color: var(--ink); font-size: var(--text-body); line-height: 24px; resize: none; }
 .composer textarea::placeholder { color: var(--faint); }
+/* Always at least one whole line (it sizes itself to its text; measured while hidden it would be 0 and clip) */
+.composer textarea { box-sizing: border-box; min-height: 40px; }
 .composer .attach-button { order: 1; }
 .composer .icon-btn:not(.attach-button) { order: 3; }
 .composer .icon-btn.hot { order: 4; }

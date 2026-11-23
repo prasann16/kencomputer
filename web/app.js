@@ -767,7 +767,7 @@ function Composer({ placeholder, onSend, onVoice, onAttach, voice, busy, onStop,
 
   useEffect(() => {
     const el = ta.current;
-    if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 200) + 'px'; }
+    if (el && el.offsetParent) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 200) + 'px'; }  // not while hidden: it would measure 0
   }, [text]);
 
   const attach = async (list) => {
