@@ -810,3 +810,12 @@ ol.conn-steps li { margin: 2px 0; }
 /* Library: Add's menu (with Google Photos on) and the line while they pick there */
 .lib-add-menu { right: 0; left: auto; top: calc(100% + 6px); min-width: 210px; }
 .lib-google { margin: 0 var(--s5) var(--s3); padding: 10px 14px; border-radius: 12px; background: var(--well); color: var(--muted); font-size: var(--text-sm); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* An agent's ⋯ in the sidebar: shows on hover (or while its menu is open), over the row's right end */
+.chat-row-wrap { position: relative; }
+.row-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0; }
+.row-more .proj-more { background: var(--hover); border-radius: var(--r-md); }
+.chat-row-wrap:hover .row-more, .row-more:focus-within { opacity: 1; }
+.chat-row-wrap:has(.pop-menu) { z-index: 5; }
+.chat-row-wrap:has(.pop-menu) .row-more { opacity: 1; }
+.chat-row-wrap:has(.row-more):hover .chat-row-top small, .chat-row-wrap:has(.row-more:focus-within) .chat-row-top small { visibility: hidden; }
