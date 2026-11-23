@@ -224,6 +224,41 @@ def process_new(limit: int = 50, log=None) -> int | None:
     return done
 
 
+# ------------------------------------------------------------------ watching copies of chat videos
+
+def _previews(path: str, data=None, method: str = "GET", headers: dict | None = None, timeout: int = 30) -> dict:
+    where = site()
+    if not where:
+        raise Off()
+    url = where[0].rsplit("/library", 1)[0] + "/previews/" + path
+    req = urllib.request.Request(url, data=data, method=method, headers={"Authorization": f"Bearer {where[1]}", "User-Agent": "Ken", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # not on for them
+            raise Off() from None
+        raise RuntimeError(f"{path.split('?')[0]}: {e.code}") from None
+
+
+def name_watching_copy(key: str, refs: list[str]) -> None:
+    """Which watching copy the chat's name for a video plays now (`refs`: a path as Ken named it, or
+    chat:<pid>/<name>). Sent before the copy is made too, so a new version never plays the old one."""
+    _previews("names", json.dumps({"key": key, "refs": refs}).encode(), "POST", {"Content-Type": "application/json"})
+
+
+def store_watching_copy(copy: Path, refs: list[str], upload: bool = True) -> None:
+    """A video's small watching copy (web.py _preview) kept by the site next to their Library, so the phone and the web
+    play it from storage at once instead of waking this computer to stream it (ken-hosted previews.ts). Off (Library
+    not on for them, or not hosted): raises Off."""
+    key = copy.stem
+    if upload and not _previews(f"has?key={key}").get("has"):
+        with copy.open("rb") as f:
+            _previews(f"file?key={key}", f, "PUT", {"Content-Type": "video/mp4", "Content-Length": str(copy.stat().st_size)}, timeout=300)
+    if refs:
+        name_watching_copy(key, refs)
+
+
 # ------------------------------------------------------------------ Ken's command line
 
 def _day(s: str) -> int | None:
