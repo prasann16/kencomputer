@@ -2615,7 +2615,11 @@ function App() {
   }, [pid]);
   useEffect(() => {
     let ws, timer, pending, closed = false, rev = null, retry = 0, resting = false, hiddenTimer, heard = Date.now();
-    const busy = new Set();  // chats Ken is answering right now: their tab keeps listening
+    // Chats Ken is answering right now, with when it started: their tab keeps listening. Forgotten when the line drops
+    // (a "done" sent while it was down, or Ken restarting mid-reply, never arrives) and after REPLY_MS whatever happens,
+    // so a tab left open can't keep the computer awake for hours waiting for a reply that isn't coming.
+    const busy = new Map(), REPLY_MS = 10 * 60000;
+    const answering = () => { for (const [p, since] of busy) if (Date.now() - since > REPLY_MS) busy.delete(p); return busy.size > 0; };
     const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { load(); setTick((t) => t + 1); }, 100); };
     const connect = () => {
       ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/events'); heard = Date.now();
@@ -2632,7 +2636,7 @@ function App() {
         if (ev.type === 'chat.tool') { setActivity((a) => ({ ...a, [project]: ev.text })); return; }
         if (ev.type === 'chat.busy') {
           generation.current++;
-          if (ev.busy) busy.add(project); else busy.delete(project);
+          if (ev.busy) busy.set(project, Date.now()); else busy.delete(project);
           setChat((c) => c && c.pid === project ? { ...c, busy: ev.busy } : c);
           if (!ev.busy) { setStream((s) => ({ ...s, [project]: '' })); setActivity((a) => ({ ...a, [project]: '' })); }
           return;
@@ -2648,7 +2652,7 @@ function App() {
         }
         refresh();
       };
-      ws.onclose = () => { setOnline(false); if (!closed && !resting) timer = setTimeout(connect, Math.min(8000, 500 * 2 ** retry++)); };
+      ws.onclose = () => { setOnline(false); busy.clear(); if (!closed && !resting) timer = setTimeout(connect, Math.min(8000, 500 * 2 ** retry++)); };
     };
     connect();
     // Ken pings every 20 seconds: a line that's gone quiet for 50 was cut on the way without a close, so start again.
@@ -2670,7 +2674,7 @@ function App() {
     TOUCH.forEach((t) => addEventListener(t, touched, { passive: true, capture: true }));
     addEventListener('mousemove', mousemove, { passive: true });
     const idleCheck = setInterval(() => {
-      if (HOSTED && !napping && !busy.size && Date.now() - lastTouch > IDLE_MS) { napping = true; rest(); }
+      if (HOSTED && !napping && !answering() && Date.now() - lastTouch > IDLE_MS) { napping = true; rest(); }
     }, 30000);
     document.addEventListener('visibilitychange', visibility);
     return () => { closed = true; clearInterval(watchdog); clearInterval(idleCheck); clearTimeout(timer); clearTimeout(pending); clearTimeout(hiddenTimer); document.removeEventListener('visibilitychange', visibility);
