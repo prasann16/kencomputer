@@ -264,3 +264,54 @@ def test_reel_render_caches_clear_at_the_start_of_each_day(tmp_path):
     fill()
     assert not bot.clear_reel_caches_daily(state, day2, tmp_path)  # same day: today's edits keep their files
     assert (reel / ".layers" / "graphics" / "a.mov").exists()
+
+
+NIGHTLY = next(j for j in json.loads(open(os.path.join(os.path.dirname(__file__), "..", "jobs.default.json")).read())
+               if j["name"] == "nightly-review")
+
+
+def epoch(hhmm, day="2026-10-05"):
+    return time.mktime(at(hhmm, day))
+
+
+def test_only_the_shipped_nightly_review_waits_for_a_day_to_file():
+    assert bot.reads_the_day(NIGHTLY)
+    assert not bot.reads_the_day({**NIGHTLY, "prompt": "Every night, send me a short poem."})  # their own job: always runs
+    assert not bot.reads_the_day({**NIGHTLY, "agent": "money"})
+    assert not bot.reads_the_day(BRIEF)
+
+
+def test_a_quiet_day_skips_the_nightly_review():
+    asked = []
+    def never(since):
+        asked.append(since)
+        return False
+    assert bot.quiet_night(NIGHTLY, epoch("00:00", "2026-10-06"), never)
+    assert asked == [epoch("00:00", "2026-10-05")]  # the whole day that just ended
+    assert not bot.quiet_night(NIGHTLY, epoch("00:00", "2026-10-06"), lambda since: True)
+    assert not bot.quiet_night(BRIEF, epoch("07:00"), never)
+
+
+def test_a_sleeping_computer_isnt_woken_for_a_quiet_night():
+    jobs = [{**BRIEF}, {**NIGHTLY}]
+    now = epoch("15:00")
+    assert bot.next_job_time(jobs, {}, now, talked=lambda since: True) == epoch("00:00", "2026-10-06")
+    assert bot.next_job_time(jobs, {}, now, talked=lambda since: False) == epoch("07:00", "2026-10-06")
+    assert bot.next_job_time(jobs, {}, now) == epoch("00:00", "2026-10-06")  # no check asked: as before
+
+
+def test_what_counts_as_talking_to_ken():
+    from engine import HOME
+    db = bot.ENGINE.db
+    since = time.time() - 1
+    assert not bot.talked_since(since)
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="Good morning! Here's your day.", job="morning-brief")
+    bot.ENGINE.emit("message", project="money", role="you", text="Check the invoices.", via="ken")  # Ken, not them
+    assert not bot.talked_since(since)
+    bot.ENGINE.emit("message", project=HOME, role="ken", text="You: hi\nKen: hey", call={"seconds": 40}, via="voice")
+    assert bot.talked_since(since)  # a voice call
+    db.execute("DELETE FROM events")
+    bot.ENGINE.emit("message", project="money", role="you", text="", files=["receipt.jpg"], via="telegram")
+    assert bot.talked_since(since)  # a photo, in one of their agents' chats
+    assert not bot.talked_since(time.time() + 60)
+    db.execute("DELETE FROM events")
