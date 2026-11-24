@@ -25,3 +25,11 @@ def test_an_open_tab_cant_wait_forever_for_a_reply():
     js = (WEB / "app.js").read_text()
     assert "busy.clear()" in js.split("ws.onclose = () =>", 1)[1].split("\n", 1)[0]  # the line drops: forget it
     assert "REPLY_MS = 10 * 60000" in js and "!answering() && Date.now() - lastTouch > IDLE_MS" in js  # and after 10 min
+
+
+def test_sign_out_and_delete_come_even_if_settings_opened_before_ken_answered():
+    # Settings can open before /api/meta says Ken is in the cloud (a reload on #/settings, Ken waking). Asking who's
+    # signed in only at opening left Sign out and Delete account missing: it must ask again once meta.hosted arrives.
+    js = (WEB / "app.js").read_text()
+    line = next(l for l in js.splitlines() if "/account/me.json" in l)
+    assert "if (meta.hosted)" in line and line.rstrip().endswith("}, [meta.hosted]);")
