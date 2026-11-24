@@ -1898,7 +1898,9 @@ const fullName = (e) => { const el = e.currentTarget; el.parentElement.classList
 
 function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta = {}, tab, brain }) {
   const [offAsk, setOffAsk] = useState(false), [me, setMe] = useState(null);
-  useEffect(() => { if (HOSTED) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, []);
+  // Who's signed in (Sign out, Delete account). Asked once Ken says it's in the cloud: Settings can open before that
+  // answer (a reload on #/settings, Ken waking), and asked only at opening, the two buttons never came.
+  useEffect(() => { if (meta.hosted) fetch('/account/me.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : null).then(setMe).catch(() => {}); }, [meta.hosted]);
   const [appearance, setAppearance] = useState(() => window.kenTheme.preference);
   useEffect(() => {
     const changed = () => setAppearance(window.kenTheme.preference);
