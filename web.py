@@ -24,7 +24,7 @@ from typing import Callable
 from aiohttp import WSMsgType, web
 
 import runtimes
-from engine import HOME, Engine
+from engine import HOME, Engine, _library_on
 
 log = logging.getLogger("ken")
 
@@ -221,6 +221,8 @@ class WebApp:
         self.previews = home / ".previews"  # small copies of videos for watching on a phone (_preview)
         self._preview_locks: dict[str, asyncio.Lock] = {}
         self._warming = asyncio.Semaphore(1)  # made ahead one at a time, so Ken's own editing keeps the computer
+        self._storing = asyncio.Semaphore(1)  # watching copies go up to the site one at a time (_store)
+        self._store_off_until = 0.0  # the site said no (their Library is off): don't ask again for a while
         self.rev = rev
         self.transcribe = transcribe
         self.commands = commands or {}
@@ -809,7 +811,9 @@ class WebApp:
         b = await self._body(request)
         text = str(b.get("text", "")).strip()
         files = [str(f) for f in b.get("files", []) if isinstance(f, str)]
-        if not text and not files:
+        from engine import clean_library
+        library = clean_library(b.get("library"))
+        if not text and not files and not library:
             return _json({"error": "empty message"}, 400)
         client_id = b.get("client_id", "")
         if not isinstance(client_id, str) or len(client_id) > 100:
@@ -824,6 +828,8 @@ class WebApp:
                 return _json({"ok": True, "message": {"id": row["id"], "ts": row["ts"], "project": pid, **json.loads(row["data"])}})
         voice = b.get("voice")
         extra = {"client_id": client_id} if client_id else {}
+        if library:
+            extra["library"] = library
         if voice is not None:
             if not text:
                 return _json({"error": "No words were detected. Your recording has not been sent to Ken."}, 422)
@@ -837,7 +843,7 @@ class WebApp:
                 return _json({"error": "invalid voice waveform"}, 400)
             extra["voice"] = {"seconds": seconds, "peaks": voice["peaks"]}
         message = self.engine.log_message(pid, "you", text, files=files, via="app", **extra)
-        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True))
+        self._spawn(self.engine.send_message(pid, text, [] if voice is not None else files, log_user=False, via="app", steer=True, library=library))
         return _json({"ok": True, "message": message})
 
     async def retry(self, request):
@@ -994,7 +1000,7 @@ class WebApp:
         if not path.is_file():
             raise web.HTTPNotFound()
         if "preview" in request.query:
-            path = await self._preview(path)
+            path = self._stored(await self._preview(path), [request.query.get("path", "")])
         return self._serve(path, download="download" in request.query)
 
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
@@ -1004,8 +1010,9 @@ class WebApp:
     async def _start_warming(self, app) -> None:
         self._warmer = asyncio.create_task(self._warm_previews())
 
-    def _videos_named(self, text: str) -> list[Path]:
-        found: list[Path] = []
+    def _videos_named(self, text: str) -> list[tuple[Path, list[str]]]:
+        """The videos a reply names, each with how the reply named it (the apps ask for it by that name)."""
+        found: dict[Path, list[str]] = {}
         for m in self.NAMED_RE.finditer(text or ""):
             ref = next(g for g in m.groups() if g).strip().rstrip(".,;:!?")
             if Path(ref).suffix.lower() not in self.PREVIEW_SUFFIXES:
@@ -1014,9 +1021,11 @@ class WebApp:
                 path = self.engine.shared_file(ref)
             except KeyError:
                 continue
-            if path.is_file() and path not in found:
-                found.append(path)
-        return found[:3]
+            if path.is_file() and (path in found or len(found) < 3):
+                found.setdefault(path, [])
+                if ref not in found[path]:
+                    found[path].append(ref)
+        return list(found.items())
 
     async def _warm_previews(self) -> None:
         """A video Ken names in a reply gets its watching copy made right then, not when someone first presses play: by
@@ -1027,28 +1036,88 @@ class WebApp:
                 event = await q.get()
                 if event.get("type") != "message" or event.get("role") == "you":
                     continue
-                for path in self._videos_named(str(event.get("text") or "")):
-                    self._spawn(self._warm(path))
+                for path, refs in self._videos_named(str(event.get("text") or "")):
+                    self._spawn(self._warm(path, refs))
         finally:
             self.engine.unsubscribe(q)
 
-    async def _warm(self, path: Path) -> None:
+    async def _warm(self, path: Path, refs: list[str] | None = None) -> None:
+        await self._name_first(path, refs or [])
         async with self._warming:
             try:
-                await self._preview(path)
+                self._stored(await self._preview(path), refs or [])
             except Exception:  # only a head start: the phone asking makes it anyway
                 log.debug("preview warm-up failed for %s", path.name, exc_info=True)
+
+    STORED_DAYS = 25  # the site keeps them 30 (ken-hosted previews.ts); past this, check it's still there
+
+    def _stored(self, copy: Path, refs: list[str]) -> Path:
+        """Hosted, with their Library on: the watching copy also goes up to the site's storage, so the phone and the web
+        play it from there at once, without waking this computer (library.store_watching_copy). In the background; if
+        it fails, playing works as before. Returns the copy, for serving."""
+        if copy.parent == self.previews and copy.suffix == ".mp4" and time.time() >= self._store_off_until:
+            import library
+            if library.site():
+                self._spawn(self._store(copy, [r for r in refs if r]))
+        return copy
+
+    async def _name_first(self, path: Path, refs: list[str]) -> None:
+        """Before making the copy: the site's name for this video points at the version Ken just named, so a re-edit at
+        the same path never plays the old copy (until the new one is up, it plays from here, as before)."""
+        import library
+        key = self._preview_key(path)
+        if not refs or not key or time.time() < self._store_off_until or not library.site():
+            return
+        try:
+            if set(refs) <= set(json.loads((self.previews / f"{key}.stored").read_text()).get("refs", [])):
+                return
+        except (OSError, ValueError):
+            pass
+        try:
+            await asyncio.to_thread(library.name_watching_copy, key, refs)
+        except library.Off:
+            self._store_off_until = time.time() + 3600
+        except Exception:
+            log.debug("naming the watching copy of %s failed", path.name, exc_info=True)
+
+    async def _store(self, copy: Path, refs: list[str]) -> None:
+        import library
+        marker = copy.with_suffix(".stored")
+        try:
+            was = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            was = {}
+        fresh = time.time() - was.get("at", 0) < self.STORED_DAYS * 86400
+        named = set(was.get("refs", []))
+        if fresh and set(refs) <= named:
+            return
+        async with self._storing:
+            try:
+                await asyncio.to_thread(library.store_watching_copy, copy, refs, not fresh)
+            except library.Off:
+                self._store_off_until = time.time() + 3600
+                return
+            except Exception:
+                log.debug("storing the watching copy of %s failed", copy.name, exc_info=True)
+                return
+        marker.write_text(json.dumps({"at": was["at"] if fresh else time.time(), "refs": sorted(named | set(refs))[-20:]}))
+
+    def _preview_key(self, path: Path) -> str | None:
+        """The watching copy's name: one per version of the file. None when it gets none (not a video, no ffmpeg)."""
+        if path.suffix.lower() not in self.PREVIEW_SUFFIXES or not shutil.which("ffmpeg"):
+            return None
+        import hashlib
+        st = path.stat()
+        return hashlib.sha256(f"{path}:{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:20]
 
     async def _preview(self, path: Path) -> Path:
         """A video's watching copy (?preview=1): what Telegram does, for the app and the web. Full-quality originals are
         big and often not saved streaming-ready, so a phone couldn't play them; this copy is at most 1280 px on its long
         side, H.264, streaming-ready, a few MB. Made once per version of the file (a few seconds), then kept a week.
         Saving or sharing still gets the original. A file that isn't a video, or that ffmpeg can't read, is served as is."""
-        if path.suffix.lower() not in self.PREVIEW_SUFFIXES or not shutil.which("ffmpeg"):
+        key = self._preview_key(path)
+        if not key:
             return path
-        import hashlib
-        st = path.stat()
-        key = hashlib.sha256(f"{path}:{st.st_mtime_ns}:{st.st_size}".encode()).hexdigest()[:20]
         out = self.previews / f"{key}.mp4"
         async with self._preview_locks.setdefault(key, asyncio.Lock()):
             if out.exists():
@@ -1057,6 +1126,7 @@ class WebApp:
             for old in self.previews.glob("*.mp4"):  # a week unwatched: gone (they're remade on demand)
                 if time.time() - old.stat().st_atime > 7 * 86400:
                     old.unlink(missing_ok=True)
+                    old.with_suffix(".stored").unlink(missing_ok=True)
             part = out.with_suffix(".part.mp4")
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-y", "-v", "error", "-i", str(path),
@@ -1094,7 +1164,7 @@ class WebApp:
         except KeyError:
             raise web.HTTPNotFound()
         if "preview" in request.query and path.is_file():
-            path = await self._preview(path)
+            path = self._stored(await self._preview(path), [f"chat:{pid}/{request.match_info['name']}"])
         return self._serve(path)
 
     async def unclear(self, request):
@@ -1135,11 +1205,19 @@ class WebApp:
             return _json({"error": str(e)}, 400)
 
     async def remove_agent(self, request):
+        """Removes it for good; ?files=delete deletes the files it made too (else they're kept: engine.remove_agent)."""
         try:
-            await self.engine.remove_agent(self._agent(request))
+            done = await self.engine.remove_agent(self._agent(request), delete_files=request.query.get("files") == "delete")
         except ValueError as e:
             return _json({"error": str(e)}, 400)
-        return _json({"ok": True})
+        return _json({"ok": True, **done})
+
+    async def agent_files_size(self, request):
+        """What the Remove dialog says: how many files it made, their size, and whether they'd go to the Library."""
+        pid = self._agent(request)
+        size = await asyncio.to_thread(self.engine.agent_files_size, pid)
+        library_on = bool(size["count"]) and await asyncio.to_thread(_library_on)
+        return _json({**size, "library": library_on})
 
     async def put_context(self, request):
         pid = self._agent(request)
@@ -1378,6 +1456,7 @@ class WebApp:
         r.add_get("/api/agents/{pid}", self.agent)
         r.add_patch("/api/agents/{pid}", self.update_agent)
         r.add_delete("/api/agents/{pid}", self.remove_agent)
+        r.add_get("/api/agents/{pid}/files-size", self.agent_files_size)
         r.add_put("/api/agents/{pid}/context", self.put_context)
         r.add_put("/api/agents/{pid}/autonomy", self.put_autonomy)
         r.add_get("/api/agents/{pid}/keys", self.keys)
