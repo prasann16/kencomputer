@@ -2271,6 +2271,36 @@ def clear_reel_caches_daily(state: dict, now: time.struct_time, work: Path | Non
     return True
 
 
+# The nightly review files the day that just ended into Ken's memory. A day they never talked to Ken has nothing to
+# file, so that night it's skipped: no "Nothing new to file today", and a computer in the cloud isn't woken for it.
+# Only the shipped review, which reads the day's transcript: a nightly job they rewrote into something else always runs.
+def reads_the_day(job: dict) -> bool:
+    return job.get("name") == "nightly-review" and not job.get("agent") and "/.ken/history" in str(job.get("prompt", ""))
+
+
+def talked_since(since: float) -> bool:
+    """Whether they said anything to Ken since then, in any chat: typed or a file (app, phone or Telegram), or a voice
+    call. Read from the stored messages, not the transcript file, which also holds Ken's own job messages. Ken passing
+    work to one of their agents isn't them talking. Can't tell: yes, so the review runs."""
+    try:
+        for (data,) in ENGINE.db.execute("SELECT data FROM events WHERE type='message' AND ts >= ?", (since,)):
+            d = json.loads(data)
+            if (d.get("role") == "you" and d.get("via") != "ken") or d.get("call"):
+                return True
+        return False
+    except Exception as e:
+        log.warning("couldn't read the day's messages: %s", e)
+        return True
+
+
+def quiet_night(job: dict, at: float, talked=talked_since) -> bool:
+    """The nightly review running at `at` has no day to file: nothing said since the start of the day before."""
+    if not reads_the_day(job):
+        return False
+    t = time.localtime(at)
+    return not talked(time.mktime((t.tm_year, t.tm_mon, t.tm_mday - 1, 0, 0, 0, 0, 0, -1)))
+
+
 async def scheduler() -> None:
     while True:
         try:
@@ -2293,6 +2323,11 @@ async def scheduler() -> None:
                         state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)  # skipped, not caught up later
                         JOB_STATE_FILE.write_text(json.dumps(state))
                         continue
+                    if quiet_night(job, time.time()):
+                        state[job_key(job)] = time.strftime("%Y-%m-%d %H:%M", now)  # skipped tonight, not caught up later
+                        JOB_STATE_FILE.write_text(json.dumps(state))
+                        log.info("nightly review skipped: they didn't talk to Ken yesterday")
+                        continue
                     if USAGE.disk_full:
                         continue  # the disk is nearly full: nothing runs until they've said what to do (see Usage.disk_check)
                     if asking_ai():
@@ -2314,14 +2349,22 @@ async def scheduler() -> None:
         await asyncio.sleep(20)
 
 
-def next_job_time(jobs: list[dict], state: dict, now: float, hours: int = 48) -> float | None:
+def next_job_time(jobs: list[dict], state: dict, now: float, hours: int = 48, talked=None) -> float | None:
     """When the next scheduled job comes due (epoch seconds, on the minute), looking `hours` ahead; None if none.
-    A job that's due already (missed while the computer slept) counts as now."""
+    A job that's due already (missed while the computer slept) counts as now. With `talked` (see talked_since), a
+    nightly review with no day to file doesn't count: if they talk to Ken later, the computer is awake and asks again."""
+    seen: dict[float, bool] = {}
+
+    def talked_once(since: float) -> bool:
+        if since not in seen:
+            seen[since] = talked(since)
+        return seen[since]
+
     start = int(now // 60) * 60
     for minute in range(hours * 60 + 1):
         at = start + minute * 60
         local = time.localtime(at)
-        if any(_job_due(job, local, state) for job in jobs):
+        if any(_job_due(job, local, state) and not (talked and quiet_night(job, at, talked_once)) for job in jobs):
             return float(at)
     return None
 
@@ -2333,7 +2376,7 @@ def upcoming_job() -> float | None:
         state = json.loads(JOB_STATE_FILE.read_text())
     except Exception:
         state = {}
-    return next_job_time(all_jobs(), state, time.time())
+    return next_job_time(all_jobs(), state, time.time(), talked=talked_since)
 
 
 def computer_stats() -> dict:
