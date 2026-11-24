@@ -317,7 +317,7 @@ async def test_remove_project_keeps_its_folder(engine, tmp_path):
     await engine.remove_agent("repo")
     assert [p["id"] for p in engine.list_agents()] == []
     assert (repo / "keep.txt").read_text() == "mine"
-    assert any((tmp_path / "agents/.removed").iterdir())
+    assert not (tmp_path / "agents/repo").exists() and not (tmp_path / "agents/.removed").exists()
 
 
 async def test_ken_knows_where_a_message_came_from(engine):
@@ -444,8 +444,8 @@ async def test_keys_reach_only_their_agent_and_never_the_screen(engine, tmp_path
     if os.name != "nt":  # Windows has no owner-only file modes; the user's own folder keeps them private there
         assert oct((store / "keys.json").stat().st_mode & 0o777) == "0o600" and oct(store.stat().st_mode & 0o777) == "0o700"
     session = engine._chat_session("reader")
-    assert session is not first and session.env_fn() == {"STRIPE_KEY": "rk_live_supersecret123"}
-    assert engine._chat_session("brand").env_fn() == {}
+    assert session is not first and session.env_fn() == {"STRIPE_KEY": "rk_live_supersecret123", "KEN_CHAT": "reader"}
+    assert engine._chat_session("brand").env_fn() == {"KEN_CHAT": "brand"}
     prompt = engine.system("reader")
     assert "$STRIPE_KEY" in prompt and "firebase.json" in prompt and "supersecret" not in prompt
     assert "$STRIPE_KEY" not in engine.system("brand")
@@ -459,7 +459,7 @@ async def test_ken_itself_gets_keys_tools_and_an_editable_about(engine):
     engine.tools = lambda only, backend: {t: {} for t in sorted(only)}
     engine.set_key(HOME, "OPENAI_KEY", "sk-proj-abcdef123456")
     s = engine._chat_session(HOME)
-    assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}
+    assert s.env_fn() == {"OPENAI_KEY": "sk-proj-abcdef123456", "KEN_CHAT": "home"} and set(s.mcp_fn()) == {"browser", "email", "calendar"}
     assert "$OPENAI_KEY" in engine.system(HOME) and "abcdef" not in engine.system(HOME)
     assert engine.mask(HOME, "sk-proj-abcdef123456") == "••••••"
     engine.set_tools_use(HOME, ["browser"])  # an old switch: Ken itself still uses everything connected
@@ -854,3 +854,21 @@ async def test_an_iphone_photo_reaches_ken_as_a_jpg(engine, tmp_path, monkeypatc
     await engine.send_message(HOME, "How's this", files=["IMG_5672.heic"])
     assert "IMG_5672.jpg" in engine.brain.asks[-1]["prompt"]
     assert (engine.files_dir(HOME) / "IMG_5672.jpg").read_text().strip() == "jpg"
+
+
+async def test_library_photos_they_attach_and_ken_shows(engine):
+    a, b = "a" * 16, "b" * 16
+    # Theirs, attached to a message: Ken hears what they are and their ids (never the links).
+    await engine.send_message(HOME, "Make a reel from these", library=[{"id": a, "kind": "video", "place": "Porto", "url": "https://x"}, {"id": "nope"}])
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if engine.brain.asks:
+            break
+    prompt = engine.brain.asks[0]["prompt"]
+    assert "from their Library" in prompt and f"id {a}" in prompt and "Porto" in prompt and "https://x" not in prompt
+    # Ken showing the ones it picked: they land in the chat it's in, as pictures.
+    engine.create_agent("Brand", context="Posts.")
+    engine.handle_request({"type": "library_show", "agent": "brand", "items": [{"id": b, "kind": "photo", "name": "IMG_1.HEIC"}, {"id": "../x"}]})
+    shown = engine.messages("brand")[-1]
+    assert shown["role"] == "ken" and shown["library"] == [{"id": b, "kind": "photo", "name": "IMG_1.HEIC", "place": ""}]
+    assert engine._session_env("brand")["KEN_CHAT"] == "brand"
