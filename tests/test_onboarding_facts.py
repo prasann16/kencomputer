@@ -84,3 +84,14 @@ async def test_the_api_applies_once_with_the_brief_job_and_the_checklist(engine,
     assert again == {"ok": True, "already": True}
     await client.post("/api/onboarding", json={"id": "onb-2", "facts": {"brief": "no"}})
     assert next(j for j in json.loads(jobs.read_text()) if j["name"] == "morning-brief")["on"] is False
+
+
+def test_the_chat_name_comes_from_the_soul_title_or_is_ken(engine):
+    soul = engine.context_file(HOME)
+    soul.parent.mkdir(parents=True, exist_ok=True)
+    for title, name in (("# You are Ken (until Sam names you)", "Ken"), ("# You are Jarvis", "Jarvis"),
+                        ("# You are Juno, Sam's assistant.", "Juno, Sam's assistant"), ("# Jarvis's soul", "Ken"), ("", "Ken")):
+        soul.write_text(f"{title}\n\nYou help Sam.\n")
+        assert engine.home_name() == name, title
+    soul.unlink()
+    assert engine.home_name() == "Ken"
