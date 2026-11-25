@@ -33,6 +33,40 @@ log = logging.getLogger("ken")
 HOME = "home"  # the conversation with Ken itself
 WHERE = {"app": "written in the Ken app on this computer", "telegram": "written on their phone (Telegram)",
          "voice": "said out loud on a voice call, passed on by your voice side, which speaks your answer back to them: keep it short and speakable"}
+# An agent's picture: the emoji it picks for itself as it sets up ("emoji" in agent.json). Until then, or for one
+# made before this, a guess from its name and brief; no match, and the apps show its first letter.
+EMOJI_GUESSES = [
+    (r"insta|reel|tiktok|photo|camera", "📸"), (r"video|youtube|film", "🎬"), (r"twitter|tweet|\bx\b|post|social|linkedin", "📣"),
+    (r"inbox|mail|email|newsletter", "✉️"), (r"calendar|meeting|schedule", "📅"), (r"stock|invest|trade|crypto|market", "📈"),
+    (r"money|budget|finance|expense|invoice|tax", "💰"), (r"news|digest|brief", "📰"), (r"research|study|learn|read", "📚"),
+    (r"code|ship|github|deploy|bug|dev", "💻"), (r"fit|gym|workout|run|health", "💪"), (r"food|recipe|meal|cook", "🍳"),
+    (r"travel|trip|flight|hotel", "✈️"), (r"shop|price|deal|buy", "🛍️"), (r"write|blog|story|draft", "✍️"),
+    (r"sales|lead|customer|crm|outreach", "🤝"), (r"support|help ?desk|ticket", "🛟"), (r"music|song|playlist", "🎵"),
+    (r"home|house|garden", "🏡"), (r"job|career|hiring|recruit", "💼"),
+]
+
+
+def guess_emoji(name: str, blurb: str = "") -> str:
+    text = f"{name} {blurb}".lower()
+    return next((e for pattern, e in EMOJI_GUESSES if re.search(pattern, text)), "")
+
+
+def one_emoji(value) -> str:
+    """A picture someone typed: a short run with no letters or digits (one emoji, flags and skin tones included)."""
+    v = str(value or "").strip()
+    if not v or len(v) > 8 or any(ch.isalnum() for ch in v) or not any(ord(ch) > 0x2000 for ch in v):
+        raise ValueError("Pick one emoji.")
+    return v
+
+
+def picture(meta: dict) -> str:
+    """The emoji an agent shows: its own when it's a real one, else a guess (maybe none)."""
+    try:
+        return one_emoji(meta.get("emoji"))
+    except ValueError:
+        return guess_emoji(meta.get("name", ""), meta.get("blurb", ""))
+
+
 COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A4F8C", "#6B5B2E"]
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
 # Ken's very first contact, the same wherever it happens (the app or the phone): Ken writes it,
@@ -866,6 +900,8 @@ class Engine:
             raise ValueError(f"folder not found: {path}")
         if fields.get("name") is not None and not str(fields["name"]).strip():
             raise ValueError("an agent needs a name")
+        if fields.get("emoji") is not None:
+            meta["emoji"] = one_emoji(fields["emoji"])
         for k in ("name", "blurb", "path", "model"):
             if fields.get(k) is not None:
                 key = "model_codex" if k == "model" and self.backend(pid) == "codex" else k
@@ -2246,8 +2282,9 @@ class Engine:
             "(You were just created; CONTEXT.md holds what they asked for. Set yourself up now: rewrite CONTEXT.md "
             "into a clear brief of your job, goal and rules. If the job has a rhythm, propose the schedule in your message "
             "and put it in jobs.json only once they say yes. Write "
-            "tools.json with only the built-in tools you need, plus any MCP server that would help. If you're still called "
-            f'"New agent", give yourself a short name (one to three words) as "name" in {self._adir(pid) / "agent.json"}. Then tell them in '
+            "tools.json with only the built-in tools you need, plus any MCP server that would help. "
+            f'In {self._adir(pid) / "agent.json"}, put one emoji that fits your job as "emoji" (your picture in their chat list), and if '
+            'you\'re still called "New agent", give yourself a short name (one to three words) as "name". Then tell them in '
             "a few short lines what you'll do and when, and ask for the first thing you need from them (a login, a "
             "key, a link), one thing at a time. Keys go on this agent's Brain page, under Accounts & passwords, never in this chat.)"
         ))
@@ -2946,14 +2983,15 @@ class Engine:
 
     def chats_list(self) -> list[dict]:
         """Ken first, then each project — like a chat app's list."""
-        rows = [(HOME, self.home_name(), "#1B1A17")] + [(p["id"], p["name"], p["color"]) for p in self.list_agents()]
+        rows = [(HOME, self.home_name(), "#1B1A17", "")] + [
+            (p["id"], p["name"], p["color"], picture(p)) for p in self.list_agents()]
         out = []
-        for pid, name, color in rows:
+        for pid, name, color, emoji in rows:
             last = self.messages(pid, 1)
             preview = ""
             if last:
                 preview = plain_text(last[0]["text"] or "") or ("📎 " + ", ".join(last[0].get("files") or []))
-            out.append({"id": pid, "name": name, "color": color, "last": preview[:120],
+            out.append({"id": pid, "name": name, "color": color, "emoji": emoji, "last": preview[:120],
                         "last_ts": last[0]["ts"] if last else 0, "busy": self.chat_busy(pid)})
         return out
 
