@@ -1,5 +1,6 @@
 """Ken's screens are plain JavaScript (no build step), so a typo anywhere in them is a blank page for everyone.
 Every file must at least parse before it can ship (node --check, as the browser would read it)."""
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -33,3 +34,15 @@ def test_sign_out_and_delete_come_even_if_settings_opened_before_ken_answered():
     js = (WEB / "app.js").read_text()
     line = next(l for l in js.splitlines() if "/account/me.json" in l)
     assert "if (meta.hosted)" in line and line.rstrip().endswith("}, [meta.hosted]);")
+
+
+def test_new_agent_ideas_fit_each_welcome_profile():
+    # Hosted: the New agent screen shows only the ideas that suit what they said they do in the welcome. Each profile
+    # needs five or it falls back to everything, and a typo in a tag would quietly hide an idea from that profile.
+    js = (WEB / "app.js").read_text()
+    block = js.split("const AGENT_IDEAS = [\n", 1)[1].split("\n];", 1)[0]
+    tags = [re.search(r'", "([a-z ]+)"\],$', line).group(1).split() for line in block.splitlines()]
+    assert len(tags) >= 25
+    for profile in ("founder", "creator", "freelancer", "job", "student"):
+        assert sum(profile in t for t in tags) >= 5, profile
+    assert {p for t in tags for p in t} == {"founder", "creator", "freelancer", "job", "student"}
