@@ -86,3 +86,12 @@ async def test_a_watch_link_key_opens_only_its_reel_and_keeps_its_link_after_edi
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://kencomputer.dev/box/checkin")
     monkeypatch.setenv("AGENT37_INSTANCE_ID", "lmm0bht56u")
     assert video_kit.preview_link(engine.home, engine.home_cwd / "videos" / "left-sf") == f"https://kencomputer.dev/watch/lmm0bht56u/{key}/"
+
+
+def test_ken_runs_every_video_command_video_kit_has():
+    # A command video_kit has but bot.py doesn't send on is refused ("This Ken doesn't have --video-preview").
+    import re
+    bot = (Path(__file__).resolve().parent.parent / "bot.py").read_text()
+    sent = set(re.findall(r'\["(--video-[a-z]+)"\]', bot[:4000]))
+    doc = set(re.findall(r"ken (--video-[a-z]+)", video_kit.__doc__))
+    assert doc and doc <= sent, doc - sent
