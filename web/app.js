@@ -188,7 +188,7 @@ function usePopover() {
 // Ken and their agents as a list of chats, like a messaging app: Ken (their chief of staff) on top, then each agent,
 // a chat of its own for one part of their life. Beside the chat on a wide screen; a phone shows it alone at #/chats.
 // The sidebar: their chats, the Library under them (where it's on), Settings at the foot.
-function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, library, libraryOn, peek, agents, onAgentMenu }) {
+function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, library, libraryOn, peek, onAgentMenu }) {
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
   return html`<aside class="chat-list side" aria-label="Ken">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
@@ -491,7 +491,7 @@ const PATH_RE = /((?:~|\/)[^\s<>()`'"*]*\/[^\s<>()`'"*]*\.[A-Za-z0-9]{1,5})(?![\
 const isPath = (s) => (/^(~\/|\/|[\w.-]+\/)\S*(\.[A-Za-z0-9]{1,5}|\/)$/.test(s) || /^~?\/[^\n`]*\/[^\n`/]*\S\.[A-Za-z0-9]{1,5}$/.test(s)) && !/^\/\//.test(s);
 let notify = () => {}, showDoc = () => {};
 // Ken on a computer in the cloud, used in the browser (from /api/meta): no Mac features, and its own browser if the plan has one.
-let HOSTED = false, HOSTED_BROWSER = false, AGENTS_UI = false;
+let HOSTED = false, HOSTED_BROWSER = false;
 // Ken in the cloud: its computer sleeps after 5 quiet minutes, and awake time counts against the plan. A tab nobody
 // has touched for this long (no typing, clicking, scrolling) stops talking to it, even while it's on screen.
 const IDLE_MS = 5 * 60000;
@@ -1258,7 +1258,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
         ${!busy && failed && (last.action === 'credits' ? html`<${CreditChoices} onConnect=${onConnect} usage=${usage}/>` : html`<div class="msg-actions">${last.action === 'retry'
           ? html`<button class="btn sm" disabled=${retrying} onClick=${retry}>${retrying ? 'Trying again…' : 'Try again'}</button>`
           : html`<button class="btn sm" onClick=${onAIAccounts}>${last.action === 'connect' ? 'Connect your Claude or ChatGPT' : `Reconnect ${last.brain === 'codex' ? 'ChatGPT' : 'Claude'}`}</button>`}</div>`)}
-        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Safe} where="live reply"><${Live} stream=${stream} activity=${AGENTS_UI && pid !== 'home' && !messages.length ? 'Setting up…' : activity} onStop=${stop}/><//>`
+        ${busy && (stream || activity || messages[messages.length - 1]?.role !== 'ken') ? html`<${Safe} where="live reply"><${Live} stream=${stream} activity=${pid !== 'home' && !messages.length ? 'Setting up…' : activity} onStop=${stop}/><//>`
           : chat && messages.length > 0 && html`<div class="typing idle" aria-hidden="true"><span class="pulse"></span><span class="ellipsis">\u00a0</span></div>`}
       </div>
     </div>
@@ -1266,7 +1266,7 @@ function ChatPage({ pid, seenTs, chat, data, files, stream, activity, voice, toa
       ${below && html`<button class="new-below" onClick=${toEnd}>↓ New reply</button>`}
       ${voiceSetup?.state === 'downloading' && html`<div class="voice-setup" role="status">Getting voice ready${voiceSetup.progress != null ? ` · ${Math.round(voiceSetup.progress * 100)}%` : '…'}</div>`}
       ${choices && html`<div class="model-choices">${choices.map(c=>html`<button class="btn sm" onClick=${()=>onChoice(c.text)}>${c.label}</button>`)}</div>`}
-      <${Safe} where="message box"><${Composer} placeholder=${pid === 'home' || !AGENTS_UI ? 'Tell Ken what you need…' : `Message ${projects.find((p) => p.id === pid)?.name || 'this agent'}…`} draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
+      <${Safe} where="message box"><${Composer} placeholder=${pid === 'home' ? 'Tell Ken what you need…' : `Message ${projects.find((p) => p.id === pid)?.name || 'this agent'}…`} draft=${draft} onDraftUsed=${onDraftUsed} storageKey=${pid} dropped=${dropped} voice=${voice} toast=${toast} busy=${busy}
         onVoice=${(...args)=>{sent();onVoice(...args);}} onAttach=${(list, onProgress) => upload(pid, list, true, onProgress)} onStop=${stop}
         onSend=${async (text, files, library) => { sent(); await onSend(text, files, undefined, undefined, library); }} onTalk=${onTalk} libraryOn=${libraryOn}/><//>
     </div>
@@ -1469,8 +1469,8 @@ function PhoneButton({ linked, onOpen }) {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2.75" width="11" height="18.5" rx="2.6"/><path d="M10.5 5.75h3"/><circle cx="12" cy="18" r=".6"/></svg>Use on phone</button>`;
 }
 
-function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone, pid = 'home', agentsUI }) {
-  if (agentsUI) return html`<header class="chat-top">
+function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrain, status, onRetry, awake, onAwake, connected, title, brain, onSettings, onReport, onProjectMenu, jobs = [], onJobs, phone, onPhone, pid = 'home' }) {
+  return html`<header class="chat-top">
     <a class="chat-back" href=${brain ? chatHref(pid) : '#/chats'} aria-label=${brain ? 'Back to the chat' : 'All chats'}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></a>
     <a class="chat-title narrow-only" href=${chatHref(pid, !brain)} title=${brain ? 'Back to the chat' : 'Open its Brain'}><i class="chat-dot" style=${{ background: title?.color || 'var(--ink)' }}></i><b>${title ? title.name : 'Ken'}</b>${brain && html`<small class="narrow-only">Brain</small>`}</a>
     ${brain && html`<a class="clear-button wide-only" href=${chatHref(pid)}>‹ Back to chat</a>`}
@@ -1479,9 +1479,6 @@ function ChatHeader({ onClear, clearing, model, catalog, onRuntime, changingBrai
       ${!brain && html`<span class="chat-tools wide-only"><a class="clear-button chat-brain" href=${chatHref(pid, true)} title="Its goal, memory and files">Brain</a>${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</span>`}
       <${ChatMenu} pid=${pid} brain=${brain} model=${model} catalog=${catalog} onRuntime=${onRuntime} changingBrain=${changingBrain} connected=${connected} onClear=${onClear} clearing=${clearing} onPick=${title ? onProjectMenu : null}/><button class="clear-button wide-only" onClick=${onSettings}>Settings</button></div>
   </header>`;
-  return html`<header class="chat-header"><img class="ken-mark" src="/ken.svg" alt="Ken"/><nav class="top-tabs" aria-label="Ken">${title
-      ? html`<span class="tab sel"><i class="proj-dot" style=${{background:title.color}}></i>${title.name}${onProjectMenu && window.kenDesktop?.popupMenu && html`<button class="proj-more" aria-label="Agent options" title="Agent options" onClick=${(e)=>onProjectMenu(e)}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`}</span>`
-      : html`<a class=${'tab' + (!brain ? ' sel' : '')} href="#/">Chat</a><a class=${'tab' + (brain ? ' sel' : '')} href="#/brain">Brain</a>`}</nav>${status && html`<span class="ken-status" role="status"><i></i>${status}${onRetry && html` · <button class="text-action" onClick=${onRetry}>Try again</button>`}</span>`}${!brain && (connected || model) && html`<div class="header-actions">${!title && phone !== null && phone !== undefined && html`<${PhoneButton} linked=${phone} onOpen=${onPhone}/>`}${connected && awake !== null && !HOSTED && html`<button class=${'coffee' + (awake ? ' on' : '')} aria-pressed=${awake} aria-label="Keep this computer awake" data-tip=${awake ? 'Coffee’s on — this computer stays awake so Ken can keep working while you’re away. The screen still turns off as usual and you can lock it (⌃⌘Q); closing the lid puts it to sleep. Click for decaf.' : 'Give this computer a coffee — it stays awake so Ken can keep working while you’re away, even with the screen off or locked. Off by default.'} onClick=${onAwake}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="steam" d="M8.5 7.5c-.8-1 .8-1.7 0-2.8M12 7.5c-.8-1 .8-1.7 0-2.8"/><path d="M4.5 10h12v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5Z"/><path d="M16.5 11.5h1.2a2.3 2.3 0 0 1 0 4.6h-1.5"/></svg></button>`}${model && html`<${ModelPicker} model=${model} catalog=${catalog} disabled=${changingBrain} onChange=${onRuntime}/>`}${connected && html`<button class="clear-button" disabled=${clearing} title="Start a fresh conversation; keep memory and files" onClick=${onClear}>Clear</button>`}</div>`}${onReport && html`<button class="report-link" aria-label="Report a problem" data-tip="Report a problem: a screenshot or a few seconds of your screen helps" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}<button class="settings-link" onClick=${onSettings}>Settings</button></header>`;
 }
 
 // Connect Claude or ChatGPT with their own subscription: the same screen in the Mac app and in the browser.
@@ -2300,7 +2297,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
     <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ ...edit, reading: false })}>Edit</button></div>
     <div class="about-context">${edit.text.trim() ? doc(edit.text) : 'Empty note.'}</div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}</div>`);
-  if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : AGENTS_UI ? 'Goal and rules' : 'Context') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
+  if (edit) return frame(edit.kind === 'context' ? (pid === 'home' ? 'Who Ken is' : 'Goal and rules') : edit.isNew ? 'New note' : edit.name.replace(/\.md$/, ''), html`
     ${edit.isNew && html`<input class="np-input" placeholder="Note name, like people" value=${edit.name} onInput=${(e) => setEdit({ ...edit, name: e.target.value })}/>`}
     <textarea class="np-input about-editor" value=${edit.text} onInput=${(e) => setEdit({ ...edit, text: e.target.value })}></textarea>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
@@ -2316,7 +2313,7 @@ function About({ pid, onClose, onPreview, page, onAddTool }) {
   const firstLine = a.context.split('\n').filter((l) => !/^\s*#/.test(l)).map(plain).find((l) => l && !/^You are\b/.test(l) && !/^\(.*\)$/.test(l)) || 'Nothing yet';
   const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const parts = [
-    { key: 'soul', title: pid === 'home' ? 'Who Ken is' : AGENTS_UI ? 'Goal and rules' : 'Context', summary: firstLine, body: html`
+    { key: 'soul', title: pid === 'home' ? 'Who Ken is' : 'Goal and rules', summary: firstLine, body: html`
         <div class="brain-actions"><button class="text-action" onClick=${() => setEdit({ kind: 'context', text: a.context })}>Edit</button></div>
         <div class="about-context">${a.context.trim() ? doc(a.context) : 'Nothing yet.'}</div>` },
     { key: 'memory', title: pid === 'home' ? 'What Ken remembers' : 'Memory', summary: a.memory.length ? count(a.memory.length, 'note') : 'Nothing yet', body: html`
@@ -2413,10 +2410,9 @@ function NewAgent({ onClose, onCreated, setup }) {
 const CACHE_MESSAGES = 40;
 const cached = (key) => { try { return JSON.parse(localStorage.getItem('ken-cache:' + key) || 'null'); } catch { return null; } };
 const keep = (key, value) => { try { localStorage.setItem('ken-cache:' + key, JSON.stringify(value)); } catch {} };
-AGENTS_UI = !!cached('agents');  // the look they had last time, so the page doesn't open one way and switch
 STORED_VIDEO = !!cached('library-on');
 // On a phone-width screen with agents, Ken opens on the list of chats: go there before anything is drawn.
-if (AGENTS_UI && (cached('chats') || []).length > 1 && (location.hash === '' || location.hash === '#/') && matchMedia('(max-width: 760px)').matches) location.replace('#/chats');
+if ((cached('chats') || []).length > 1 && (location.hash === '' || location.hash === '#/') && matchMedia('(max-width: 760px)').matches) location.replace('#/chats');
 function App() {
   const [route, setRoute] = useState(parseHash());
   const [today, setToday] = useState(null);
@@ -2429,7 +2425,6 @@ function App() {
   const [libraryOn, setLibraryOn] = useState(() => !!cached('library-on'));
   const [libPeek, setLibPeek] = useState(() => cached('library')?.groups?.flatMap((g) => g.items) || []);
   useEffect(() => { if (!meta.hosted) return; fetch(LIB + 'list', { credentials: 'same-origin' }).then(async (r) => { STORED_VIDEO = r.ok; setLibraryOn(r.ok); keep('library-on', r.ok); if (r.ok) { const l = await r.json(); indexLibrary(l); setLibPeek(l.groups.flatMap((g) => g.items)); } }).catch(() => {}); }, [meta.hosted]);
-  const agentsOn = 'agents' in meta ? !!meta.agents : AGENTS_UI;
   const [library, setLibrary] = useState([]);
   const [runId, setRunId] = useState(null);
   const [tick, setTick] = useState(0);
@@ -2582,7 +2577,7 @@ function App() {
     if(extras){api('/api/today').then(setToday).catch(() => {});api('/api/library').then(setLibrary).catch(() => {});}
   }, []);
   const loadMeta = () => api('/api/meta').then((m) => {
-    HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; AGENTS_UI = !!m.agents; keep('agents', AGENTS_UI); setMeta(m);
+    HOSTED = !!m.hosted; HOSTED_BROWSER = !!m.browser; setMeta(m);
     if (HOSTED) document.documentElement.dataset.hosted = '';  // Ken in the cloud (the look is the same everywhere: theme.css)
     if (HOSTED && !window.kenDesktop) checkTalk();
     // In the cloud Ken's clock starts on UTC: use this browser's time zone until they say otherwise.
@@ -2789,7 +2784,7 @@ function App() {
   const current = chats.find((c) => c.id === pid);
   // A phone with agents opens on the list of chats, like a messaging app (once: after that the address decides).
   const landed = useRef(false);
-  useEffect(() => { if (landed.current || !agentsOn || !chats.length) return; landed.current = true; if (chats.length > 1 && (location.hash === '' || location.hash === '#/') && matchMedia('(max-width: 760px)').matches) location.replace('#/chats'); }, [agentsOn, chats.length]);
+  useEffect(() => { if (landed.current || !chats.length) return; landed.current = true; if (chats.length > 1 && (location.hash === '' || location.hash === '#/') && matchMedia('(max-width: 760px)').matches) location.replace('#/chats'); }, [chats.length]);
   useEffect(()=>{ if(!current||route.list)return; const next={...seen(),[pid]:Math.max(current.last_ts,Date.now()/1000)}; try{localStorage.setItem('ken-seen',JSON.stringify(next));}catch{} setSeenAt(next); },[pid,current?.last_ts,route.list]);
   // When you last read this chat, as of opening it: where the first unread reply starts.
   const opened = useRef({ pid: null, ts: 0 });
@@ -2801,8 +2796,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  const sidebar = agentsOn || libraryOn;
-  return html`<div class=${'shell' + (sidebar ? ' with-chats' + (route.list ? ' on-list' : '') : '')}>${sidebar && html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} library=${route.library} libraryOn=${libraryOn} peek=${libPeek} agents=${agentsOn} onAgentMenu=${(picked, id) => projectMenu(picked, id)} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast} onChanged=${(r) => setLibPeek(r.groups.flatMap((g) => g.items))}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} agentsUI=${agentsOn} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class=${'shell with-chats' + (route.list ? ' on-list' : '')}>${html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} library=${route.library} libraryOn=${libraryOn} peek=${libPeek} onAgentMenu=${(picked, id) => projectMenu(picked, id)} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast} onChanged=${(r) => setLibPeek(r.groups.flatMap((g) => g.items))}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} key=${pid} page pid=${pid} onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} libraryOn=${libraryOn} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>`}
   </main>
