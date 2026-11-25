@@ -168,7 +168,7 @@ const ago = (ts) => {
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const firstLine = (s) => String(s || '').trim().split('\n')[0];
 const isImage = (name) => /\.(png|jpe?g|gif|webp|heic)$/i.test(name);
-const parseHash = () => { const m = location.hash.match(/^#\/p\/([a-z0-9-]+)(\/brain)?$/); return { pid: m ? m[1] : null, brain: location.hash === '#/brain' || !!m?.[2], list: location.hash === '#/chats', library: location.hash === '#/library' }; };
+const parseHash = () => { const m = location.hash.match(/^#\/p\/([a-z0-9-]+)(\/brain)?$/); return { pid: m ? m[1] : null, brain: location.hash === '#/brain' || !!m?.[2], list: location.hash === '#/chats', library: /^#\/library(\/|$)/.test(location.hash), libShow: location.hash.match(/^#\/library\/([a-z]+)$/)?.[1] || 'all' }; };
 const chatHref = (pid, brain = false) => (pid === 'home' ? '#/' : '#/p/' + pid) + (brain ? (pid === 'home' ? 'brain' : '/brain') : '');
 
 // A small menu that opens under its button and closes on a click anywhere else or Escape.
@@ -188,17 +188,20 @@ function usePopover() {
 // Ken and their agents as a list of chats, like a messaging app: Ken (their chief of staff) on top, then each agent,
 // a chat of its own for one part of their life. Beside the chat on a wide screen; a phone shows it alone at #/chats.
 // The sidebar: their chats, the Library under them (where it's on), Settings at the foot.
-function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, library, libraryOn, peek, onAgentMenu }) {
+// The chat a Chats tab goes back to (the last one open before the Library).
+let lastChat = 'home';
+function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, library, libraryOn, libData, libShow, onAgentMenu }) {
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
+  if (!library) lastChat = pid;
   return html`<aside class="chat-list side" aria-label="Ken">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
-    <nav class="chat-rows">${list.map((c) => html`<div class="chat-row-wrap"><a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
+    ${libraryOn && html`<nav class="side-tabs" aria-label="Chats or Library"><a href=${chatHref(lastChat)} aria-current=${!library ? 'page' : undefined}>Chats</a><a href="#/library" aria-current=${library ? 'page' : undefined}>Library</a></nav>`}
+    ${library ? html`<${LibraryNav} lib=${libData} show=${libShow}/>` : html`<nav class="chat-rows">${list.map((c) => html`<div class="chat-row-wrap"><a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
       ${c.id === 'home' ? html`<img class="chat-ava narrow-only" src="/ken.svg" alt=""/>` : html`<i class="chat-ava narrow-only" aria-hidden="true">${(c.name || '?').trim().charAt(0).toUpperCase()}</i>`}
       <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
       <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
       ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>
-      ${c.id !== 'home' && onAgentMenu && html`<${RowMenu} name=${c.name} onPick=${(picked) => onAgentMenu(picked, c.id)}/>`}</div>`)}</nav>
-    ${libraryOn && html`<a class=${'side-library' + (library ? ' sel' : '')} href="#/library">${Glyph('photos')}<b>Library</b>${peek?.length > 0 && html`<small>${peek.length}</small>`}</a>`}
+      ${c.id !== 'home' && onAgentMenu && html`<${RowMenu} name=${c.name} onPick=${(picked) => onAgentMenu(picked, c.id)}/>`}</div>`)}</nav>`}
     <div class="chat-list-foot"><button class="settings-link side-settings" onClick=${onSettings}>${Glyph('settings')}Settings</button>${onReport && html`<button class="report-link" aria-label="Report a problem" title="Report a problem" onClick=${onReport}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg></button>`}</div>
   </aside>`;
 }
@@ -295,7 +298,7 @@ function LibraryPhotos({ items }) {
 function LibraryPicker({ onPick, onClose }) {
   const [list, setList] = useState(() => cached('library'));
   const [picked, setPicked] = useState([]);
-  useEffect(() => { lib('list').then((r) => { setList(r); keep('library', r); indexLibrary(r); }).catch(() => {}); }, []);
+  useEffect(() => { lib('list').then((r) => { setList(r); keep('library', r); indexLibrary(r); onChanged?.(r); }).catch(() => {}); }, []);
   useEffect(() => { const key = (e) => e.key === 'Escape' && onClose(); addEventListener('keydown', key); return () => removeEventListener('keydown', key); }, []);
   const all = (list?.groups || []).flatMap((g) => g.items).filter((it) => it.kind !== 'file');
   const toggle = (it) => setPicked((p) => p.some((x) => x.id === it.id) ? p.filter((x) => x.id !== it.id) : [...p, it]);
@@ -343,20 +346,30 @@ async function fromGooglePhotos(run, stopped, onProgress) {
     return missed ? `${added} of ${items.length} added. ${missed}` : added === 1 ? 'Added to your Library.' : `${added} added to your Library.`;
   } finally { lib('google/done?n=' + run, { method: 'POST' }).catch(() => {}); }
 }
-function LibraryPage({ toast, onChanged }) {
+// The sidebar on the Library tab: what to show (All, Photos, Videos…) and a jump to each trip or month.
+function LibraryNav({ lib, show }) {
+  const all = lib?.groups ? lib.groups.flatMap((g) => g.items) : [];
+  const kinds = LIB_TABS.filter(([id]) => id === 'all' || all.some(libFits[id]));
+  const groups = (lib?.groups || []).map((g, i) => ({ ...g, i, n: g.items.filter(libFits[show] || libFits.all).length })).filter((g) => g.n);
+  const jump = (i) => document.getElementById('lib-g-' + i)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return html`<nav class="chat-rows lib-nav">
+    ${kinds.map(([id, label]) => html`<a class=${'lib-nav-row' + (show === id ? ' sel' : '')} href=${id === 'all' ? '#/library' : '#/library/' + id}><span>${label}</span><small>${all.filter(libFits[id]).length || ''}</small></a>`)}
+    ${groups.length > 1 && html`<h3 class="lib-nav-head">Trips and months</h3>${groups.map((g) => { const [place, when] = g.title.includes(' · ') ? g.title.split(' · ') : [g.title, '']; return html`<button class="lib-nav-row" onClick=${() => jump(g.i)}><span>${place}${when && html`<em>${when}</em>`}</span><small>${g.n}</small></button>`; })}`}
+  </nav>`;
+}
+function LibraryPage({ toast, show = 'all', onChanged }) {
   const [lib_, setLib] = useState(() => cached('library'));
   const [picked, setPicked] = useState(new Set());
   const [open, setOpen] = useState(null); // index into what's shown
   const [selecting, setSelecting] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [show, setShow] = useState('all');
-  const [over, setOver] = useState(false);
+    const [over, setOver] = useState(false);
   const chooser = useRef(null);
   const pending = useLibraryQueue();
   const [adding, setAdding] = useState(false); // the Add menu (only when Google Photos is on for them)
   const [google, setGoogle] = useState(null); // while they pick in Google Photos: { done, total } once copying
   const googleRun = useRef(null);
-  const load = () => lib('list').then((r) => { setLib(r); keep('library', r); indexLibrary(r); onChanged?.(r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
+  const load = () => lib('list').then((r) => { setLib(r); keep('library', r); indexLibrary(r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
   useEffect(() => { load(); libraryQueue.arrived.add(load); return () => libraryQueue.arrived.delete(load); }, []);
   useEffect(() => {
     if (!lib_?.groups?.some((g) => g.items.some((it) => !it.thumb && it.kind !== 'file'))) return;
@@ -365,7 +378,7 @@ function LibraryPage({ toast, onChanged }) {
   const all = lib_?.groups ? lib_.groups.flatMap((g) => g.items) : [];
   const tabs = LIB_TABS.filter(([id]) => id === 'all' || all.some(libFits[id]));
   const showing = tabs.some(([id]) => id === show) ? show : 'all';
-  const groups = (lib_?.groups || []).map((g) => ({ ...g, items: g.items.filter(libFits[showing]) })).filter((g) => g.items.length);
+  const groups = (lib_?.groups || []).map((g, i) => ({ ...g, i, items: g.items.filter(libFits[showing]) })).filter((g) => g.items.length);
   const shown = groups.flatMap((g) => g.items);
   const choosing = selecting || picked.size > 0;
   const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -412,11 +425,11 @@ function LibraryPage({ toast, onChanged }) {
       <button class="btn primary" onClick=${() => chooser.current.click()}>${Glyph('plus')} Add photos</button>
       ${lib_?.google && html`<button class="btn sm ghost" disabled=${!!google} onClick=${fromGoogle}>From Google Photos</button>`}
     </div>` : html`
-      ${tabs.length > 2 && html`<nav class="lib-tabs" role="tablist">${tabs.map(([id, label]) => html`<button role="tab" aria-selected=${showing === id} onClick=${() => setShow(id)}>${label}</button>`)}</nav>`}
+      ${tabs.length > 2 && html`<nav class="lib-tabs" role="tablist">${tabs.map(([id, label]) => html`<a role="tab" aria-selected=${showing === id} href=${id === 'all' ? '#/library' : '#/library/' + id}>${label}</a>`)}</nav>`}
       ${pending.length > 0 && showing === 'all' && html`<div class="lib-grid lib-adding">${pending.map((p) => html`<button class="lib-tile" aria-label=${p.failed ? "Couldn't add. Click to try again." : `Adding, ${Math.round(p.progress * 100)}%`} title=${p.failed || ''} onClick=${() => p.failed && retry(p.key)}>
         ${p.url ? (p.kind === 'video' ? html`<video src=${p.url} muted playsinline preload="metadata"></video>` : html`<img src=${p.url} alt=""/>`) : html`<span class="lib-file">${Glyph('file')}<small>${p.file.name}</small></span>`}
         <span class="lib-veil">${p.failed ? html`<span class="lib-retry">↻</span>` : ring(p.progress)}</span></button>`)}</div>`}
-      ${groups.map((g) => { const [place, when] = g.title.includes(' · ') ? g.title.split(' · ') : [g.title, '']; return html`<section class="lib-group">
+      ${groups.map((g) => { const [place, when] = g.title.includes(' · ') ? g.title.split(' · ') : [g.title, '']; return html`<section class="lib-group" id=${'lib-g-' + g.i}>
         <h2><span>${place}</span><small>${[when, g.items.length].filter(Boolean).join(' · ')}</small></h2>
         <div class="lib-grid">${g.items.map((it) => html`<button class=${'lib-tile' + (picked.has(it.id) ? ' picked' : '')} aria-label=${it.kind === 'file' ? it.name : `${it.kind === 'video' ? 'Video' : 'Photo'}, ${it.when}`}
             onClick=${() => (choosing ? toggle(it.id) : it.kind === 'file' ? download([it]) : setOpen(shown.indexOf(it)))}>
@@ -2435,8 +2448,8 @@ function App() {
   const [meta, setMeta] = useState({});
   // Their Library (hosted, while it's tried out): the site says whether it's on for them.
   const [libraryOn, setLibraryOn] = useState(() => !!cached('library-on'));
-  const [libPeek, setLibPeek] = useState(() => cached('library')?.groups?.flatMap((g) => g.items) || []);
-  useEffect(() => { if (!meta.hosted) return; fetch(LIB + 'list', { credentials: 'same-origin' }).then(async (r) => { STORED_VIDEO = r.ok; setLibraryOn(r.ok); keep('library-on', r.ok); if (r.ok) { const l = await r.json(); indexLibrary(l); setLibPeek(l.groups.flatMap((g) => g.items)); } }).catch(() => {}); }, [meta.hosted]);
+  const [libData, setLibData] = useState(() => cached('library'));
+  useEffect(() => { if (!meta.hosted) return; fetch(LIB + 'list', { credentials: 'same-origin' }).then(async (r) => { STORED_VIDEO = r.ok; setLibraryOn(r.ok); keep('library-on', r.ok); if (r.ok) { const l = await r.json(); indexLibrary(l); setLibData(l); } }).catch(() => {}); }, [meta.hosted]);
   const [library, setLibrary] = useState([]);
   const [runId, setRunId] = useState(null);
   const [tick, setTick] = useState(0);
@@ -2808,7 +2821,7 @@ function App() {
   const waiting = Object.values(setup?.runtimes || {}).some((x) => x.progress !== undefined) || visibleChat?.busy;
   useEffect(() => { if (!waiting) return; const t = setInterval(loadSetup, 1500); return () => clearInterval(t); }, [waiting]);
   const accountConnected = (r) => {setSetup(r);loadModel();loadModelCatalog();warm(pid);};
-  return html`<div class=${'shell with-chats' + (route.list ? ' on-list' : '')}>${html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} library=${route.library} libraryOn=${libraryOn} peek=${libPeek} onAgentMenu=${(picked, id) => projectMenu(picked, id)} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast} onChanged=${(r) => setLibPeek(r.groups.flatMap((g) => g.items))}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
+  return html`<div class=${'shell with-chats' + (route.list ? ' on-list' : '')}>${html`<${Safe} where="chats"><${ChatList} chats=${chats} pid=${pid} open=${!route.list} library=${route.library} libraryOn=${libraryOn} libData=${libData} libShow=${route.libShow} onAgentMenu=${(picked, id) => projectMenu(picked, id)} seenAt=${seenAt} onNew=${()=>setNewProject(true)} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)}/><//>`}<main class="main">${route.library ? html`<${Safe} where="library"><${LibraryPage} toast=${toast} show=${route.libShow} onChanged=${setLibData}/><//>` : html`${updateFailed && html`<div class="update-failed" role="alert">Ken couldn’t update itself to ${updateFailed.version}. <a href=${updateFailed.url} target="_blank" rel="noopener">Download the new version</a> and drag it into Applications over this one. Your chats and memory stay.</div>`}${updateReady && !updateFailed && html`<div class="update-ready" role="status">${restarting ? `Restarting into Ken ${updateReady}…` : html`Ken ${updateReady} is ready.<button class="btn primary" onClick=${()=>window.kenDesktop.installUpdate()}>Restart now</button>`}</div>`}<${Safe} where="header"><${ChatHeader} phone=${phoneLinked} onPhone=${() => openSettings('phone')} jobs=${pid === 'home' && today ? today.running.filter((r) => r.project === 'home') : []} onJobs=${() => { const r = today.running.find((x) => x.project === 'home'); if (r) setRunId(r.id); }} title=${pid !== 'home' && current ? current : null} brain=${route.brain} onSettings=${()=>openSettings()} onReport=${()=>setReporting(true)} onProjectMenu=${pid !== 'home' ? (picked)=>projectMenu(typeof picked === 'string' ? picked : null,pid) : null} pid=${pid} connected=${brainConnected} awake=${awake} onAwake=${()=>api('/api/command',{json:{text:awake?'/decaf':'/coffee'}}).then((r)=>{setAwake(r.awake);toast(r.awake?'☕ Coffee’s on — lock your screen anytime; Ken keeps working.':'Decaf — this computer can sleep as usual.');}).catch((e)=>toast(e.message))} status=${restarting ? '' : loadError || lost ? 'Can’t reach Ken' : offline || reconnecting ? (everOnline.current ? 'Reconnecting…' : 'Waking Ken up…') : getting ? (getting.error ? `Couldn’t download ${brainLabel}` : `Getting ${brainLabel} ready${getting.progress ? ` · ${Math.round(getting.progress * 100)}%` : '…'}`) : ''} onRetry=${restarting ? null : loadError ? load : lost ? () => location.reload() : getting?.error ? () => api('/api/setup', { json: { action: 'get-ready', backend: model.backend } }).then(setSetup).catch(() => {}) : null} onClear=${clearThread} clearing=${clearing} model=${model?.pid === pid ? model : null} changingBrain=${changingBrain || visibleChat?.busy} catalog=${modelCatalog} onRuntime=${changeRuntime}/><//>
     ${meta.usage?.lines?.some((l) => l.low && !(ownAI && /credit/i.test(l.label))) && html`<div class="update-ready plan-low" role="status">${meta.usage.note || `Your plan is running low: ${meta.usage.lines.filter((l) => l.low).map((l) => `${l.label.startsWith('Ken ') ? l.label : l.label.toLowerCase()}, ${l.left} left`).join('; ')}.`}${(meta.usage.manage_url || meta.account_url) && html` <a class="text-action" href=${meta.usage.manage_url || meta.account_url}>See options</a>`}</div>`}
     <${Safe} where="main">${meta.off ? html`<${KenOff} toast=${toast}/>` : setup && setup.ask_ai ? html`<${FirstThink} usage=${meta.usage} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onConnected=${(r) => { accountConnected(r); load(); }} onCredits=${(r) => { setSetup(r); loadModel(); load(); }}/>` : setup && !setup.connected ? html`<${FirstConnect} onPick=${(backend) => api('/api/chats/home/runtime', { method: 'PUT', json: { backend } }).then(loadModel).catch(() => {})} onDone=${accountConnected}/>` : setup && model && !brainConnected ? html`<div class="brain-connect"><p class="np-help">Choose Claude or ChatGPT at the top. You can connect both in Settings.</p><${Connect} key=${model.backend} backend=${model.backend} onDone=${accountConnected}/></div>` : route.brain ? html`<${About} key=${pid} page pid=${pid} onPreview=${setPreview}/>` : html`<${ChatPage} seenTs=${opened.current.ts} voiceSetup=${setup?.voice} key=${pid + ':' + (chat && chat.pid === pid ? chat.cleared_at || 0 : 0)} pid=${pid} chat=${visibleChat} data=${today} files=${library.filter((f) => f.project === pid)} stream=${stream[pid]} activity=${activity[pid]} voice=${meta.voice && (!setup || setup.voice.state === 'ready')} toast=${toast} onPreview=${setPreview} draft=${pid === 'home' ? draft : null} onDraftUsed=${() => setDraft(null)} openRun=${setRunId} projects=${projects} onSend=${send} onVoice=${sendVoice} choices=${choices} onChoice=${(text)=>{setChoices(null);command(text).catch((e)=>toast(e.message));}} loadError=${loadError} onReload=${load} onAIAccounts=${()=>openSettings('claude')} onConnect=${(backend)=>openSettings('connect-' + backend)} usage=${meta.usage} libraryOn=${libraryOn} onTalk=${pid === 'home' && talk?.available ? () => setTalking(true) : null}/>`}<//>`}
   </main>
