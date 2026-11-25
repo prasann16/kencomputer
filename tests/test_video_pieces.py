@@ -166,3 +166,28 @@ def test_a_video_file_is_hashed_by_its_bytes(tmp_path):
     # JSON of a 200 MB video's Buffer is an array as long as the file: it ran node out of memory.
     out = node(tmp_path, 'const b = Buffer.alloc(300 * 1024 * 1024, 7); console.log(JSON.stringify([P.hash(b).length, P.hash(Buffer.from("ab")) === P.hash("ab")]));')
     assert out == [64, True]
+
+
+@needs_node
+def test_each_graphic_is_its_own_clip_and_a_still_survives_a_cut(tmp_path):
+    write(tmp_path, SRC)
+    out = node(tmp_path, """
+const shade = { type: "design", start: 0, end: 60, still: true, props: { items: [] } };
+const card = { type: "cta", start: 10, end: 14, props: { text: "hi" } };
+const later = { type: "design", start: 40, end: 44, props: { items: [1] } };
+const plan = (graphics, total) => P.planClips({ graphics, props: { hook: "Why I left", hookSeconds: 2 }, total, dir: "g" });
+const before = plan([shade, card, later], 1800);
+// A cut of 0.4 s at 0:20: the shade gets shorter, the graphic after it moves; the card before it is untouched.
+const after = plan([{ ...shade, end: 59.6 }, card, { ...later, start: 39.6, end: 43.6 }], 1788);
+const key = (clips) => clips.map((c) => c.key);
+// A still in a piece counts by the frames it covers there, not where it starts or ends.
+const piece = (clip) => P.planPieces({ work: ".", props: { video: "v.mp4" }, graphics: [], looks: new Array(90).fill(null),
+  clips: [{ key: "s", still: true, file: "s.png", ...clip }], total: 90, footageHash: () => "f", dir: "p", steady: false })[0].key;
+console.log(JSON.stringify({
+  n: before.length, still: before[0].still, file: before[0].file, hook: before[3].hook,
+  before: key(before), after: key(after),
+  covered: piece({ a: 0, b: 500 }) === piece({ a: 0, b: 488 }), part: piece({ a: 0, b: 500 }) !== piece({ a: 0, b: 50 }),
+}));""")
+    assert out["n"] == 4 and out["still"] and out["file"].endswith(".png") and out["hook"]
+    assert out["after"] == out["before"]  # nothing redrawn: the still's length doesn't count, the moved one kept its name
+    assert out["covered"] and out["part"]  # a piece under the shade keeps its name when the shade's end moves
