@@ -194,7 +194,7 @@ function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, libra
   const list = chats.length ? chats : [{ id: 'home', name: 'Ken', color: '' }];
   if (!library) lastChat = pid;
   return html`<aside class="chat-list side" aria-label="Ken">
-    <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+    <div class="chat-list-head"><img class="ken-mark wide-only" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
     ${libraryOn && html`<nav class="side-tabs" aria-label="Chats or Library"><a href=${chatHref(lastChat)} aria-current=${!library ? 'page' : undefined}>Chats</a><a href="#/library" aria-current=${library ? 'page' : undefined}>Library</a></nav>`}
     ${library ? html`<${LibraryNav} lib=${libData} show=${libShow}/>` : html`<nav class="chat-rows">${list.map((c) => html`<div class="chat-row-wrap"><a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
       ${c.id === 'home' ? html`<img class="chat-ava narrow-only" src="/ken.svg" alt=""/>` : html`<i class="chat-ava narrow-only" aria-hidden="true">${(c.name || '?').trim().charAt(0).toUpperCase()}</i>`}
