@@ -70,6 +70,32 @@ export function graphicsHash(types, src = "src") {
   return hash([baseHash(src), contents(files ?? all)]);
 }
 
+// Graphics: one transparent clip per graphic, and one for the hook, each named by what's in it and timed from its own
+// start: changing one redraws only it, and one that only moved (a cut earlier in the reel) keeps its name. A graphic
+// marked "still": true never moves (a shade behind the captions, a frame), so it's drawn once as one image, however
+// long it stays: a cut that changes its length doesn't redraw it. A graphic that starts after the reel ends isn't drawn.
+// Clips are laid over the footage in this order: the graphics as props.json lists them, then the hook.
+export function planClips({ graphics, props, total, dir, code = graphicsHash }) {
+  const style = props.style ?? {};
+  const clips = [];
+  graphics.forEach((g, index) => {
+    const a = Math.round(g.start * FPS);
+    if (a >= total) return;
+    const b = Math.min(total, a + Math.max(1, Math.round((g.end - g.start) * FPS)));
+    const still = g.still === true;
+    const spec = { ...g, start: 0, end: still ? 0 : +(g.end - g.start).toFixed(4) };
+    const key = hash(["2", code([g.type]), style, still ? "still" : b - a, spec]).slice(0, 24);
+    clips.push({ a, b, key, still, index, file: join(dir, `${key}.${still ? "png" : "mov"}`) });
+  });
+  const hook = props.hook ?? props.title;
+  if (hook) {
+    const b = Math.min(total, Math.round((props.hookSeconds ?? props.titleSeconds ?? 2.8) * FPS));
+    const key = hash(["2", code([]), style, b, hook]).slice(0, 24);
+    if (b > 0) clips.push({ a: 0, b, key, still: false, hook: true, file: join(dir, `${key}.mov`) });
+  }
+  return clips;
+}
+
 // Captions: what one look is. Only what's drawn counts (each word, whether it's emphasized, how far in it is), not when
 // it's said, so a look reused after a sentence is dropped or the timing moves isn't drawn again.
 export const captionKey = (code, style, tokens, shown) => hash([code, style, tokens, shown]).slice(0, 24);
@@ -189,8 +215,11 @@ export function planPieces({ work, props, graphics, looks, clips, total, footage
     }
     const on = clips.filter((c) => c.a < b && c.b > a).map((c) => ({ clip: c, at: c.a - a }));
     const motion = perspective(props, graphics, a, b);
+    // A still counts by the frames it covers here, not where it started, so a piece it lies across keeps its name when
+    // the still starts or ends somewhere else.
     const key = hash(["1", ENCODE, b - a, footage(work, props, a, b, footageHash), motion, runs.map((r) => [r.name, r.frames]),
-      on.map((o) => [o.clip.key, o.at]), props.style?.grain === true]).slice(0, 24);
+      on.map((o) => (o.clip.still ? [o.clip.key, "still", Math.max(0, o.at), Math.min(b - a, o.at + o.clip.b - o.clip.a)] : [o.clip.key, o.at])),
+      props.style?.grain === true]).slice(0, 24);
     pieces.push({ a, b, key, file: join(dir, `${key}.mp4`), runs, on, motion });
   }
   return pieces;
@@ -229,11 +258,17 @@ export async function encodePieces(pieces, { video, captionFile, vignette, grain
     writeFileSync(`${base}.txt`, "ffconcat version 1.0\n" + p.runs.map((r) => `${entry(r.name)}\nduration ${(r.frames / FPS).toFixed(6)}`).join("\n") + `\n${entry(p.runs[p.runs.length - 1].name)}\n`);
     const inputs = [...seek(Math.min(p.a, videoFrames - 1)), "-i", video, "-f", "concat", "-safe", "0", "-i", `${base}.txt`];
     // VP9 keeps its transparency only through libvpx's own decoder.
-    p.on.forEach(({ clip, at }) => inputs.push(...(clip.file.endsWith(".webm") ? ["-c:v", "libvpx-vp9"] : []), ...seek(-at), "-i", clip.file));
+    p.on.forEach(({ clip, at }) => inputs.push(...(clip.still ? ["-loop", "1", "-framerate", String(FPS)] : clip.file.endsWith(".webm") ? ["-c:v", "libvpx-vp9"] : []),
+      ...(clip.still ? [] : seek(-at)), "-i", clip.file));
     const vf = [`[0:v]setpts=PTS-STARTPTS,fps=${FPS}:start_time=0,tpad=stop_mode=clone:stop=${n},${p.motion}[v0]`];
     let v = "v0";
-    p.on.forEach(({ at }, i) => {
-      vf.push(`[${i + 2}:v]setpts=PTS-STARTPTS+${Math.max(0, at)}/(${FPS}*TB)[o${i}]`, `[${v}][o${i}]overlay=eof_action=pass:format=auto[g${i}]`);
+    p.on.forEach(({ clip, at }, i) => {
+      if (clip.still) {  // the one image, shown over the frames it covers in this piece
+        const from = Math.max(0, at), to = Math.min(n, at + clip.b - clip.a) - 1;
+        vf.push(`[${i + 2}:v]format=rgba[o${i}]`, `[${v}][o${i}]overlay=format=auto:shortest=0:enable='between(n,${from},${to})'[g${i}]`);
+      } else {
+        vf.push(`[${i + 2}:v]setpts=PTS-STARTPTS+${Math.max(0, at)}/(${FPS}*TB)[o${i}]`, `[${v}][o${i}]overlay=eof_action=pass:format=auto[g${i}]`);
+      }
       v = `g${i}`;
     });
     vf.push(`[1:v]fps=${FPS},format=rgba[cap]`, `[${v}][cap]overlay=eof_action=pass:format=auto:shortest=0[c]`);

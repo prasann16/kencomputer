@@ -15,7 +15,7 @@ import { createTikTokStyleCaptions } from "@remotion/captions";
 import { openBrowser, renderFrames, renderMedia, selectComposition } from "@remotion/renderer";
 
 import { cachedBundle, oneAtATime, placements } from "./lib.mjs";
-import { baseHash, captionKey, encodePieces, FPS, graphicsHash, H, hash, joinPieces, planPieces, probeJson, readCutlist, steadyFootage, W } from "./plan.mjs";
+import { baseHash, captionKey, encodePieces, FPS, H, hash, joinPieces, planClips, planPieces, probeJson, readCutlist, steadyFootage, W } from "./plan.mjs";
 
 const args = process.argv.slice(2);
 const plan = args.includes("--plan");
@@ -74,32 +74,11 @@ const firstOf = new Map();
 for (const l of looks) if (l && !firstOf.has(l.key)) firstOf.set(l.key, l.frame);
 const capFile = (key) => join(layers, "captions", `${key}.png`);
 
-// ---- Graphics: one transparent clip per stretch where something is on screen (graphics and the hook). Only graphics
-// that overlap share a clip, so changing one redraws only it. One that starts after the reel ends isn't drawn.
-const hookSeconds = props.hookSeconds ?? props.titleSeconds ?? 2.8;
+// ---- Graphics: a clip per graphic and one for the hook (see planClips in plan.mjs).
 const hook = props.hook ?? props.title;
-const spans = graphics.map((g) => [Math.round(g.start * FPS), Math.round(g.start * FPS) + Math.max(1, Math.round((g.end - g.start) * FPS))]);
-if (hook) spans.push([0, Math.round(hookSeconds * FPS)]);
-spans.sort((x, y) => x[0] - y[0]);
-const stretches = [];
-for (const [a, b] of spans.filter(([a]) => a < total)) {
-  const last = stretches[stretches.length - 1];
-  if (last && a < last[1]) last[1] = Math.max(last[1], b);
-  else stretches.push([a, b]);
-}
-const clips = stretches.map(([a, b]) => {
-  b = Math.min(b, total);
-  const t0 = a / FPS, t1 = b / FPS;
-  const rel = (t) => Math.round(t * FPS) - a;
-  const on = graphics.filter((g) => g.start < t1 && g.end > t0);
-  const key = hash([
-    graphicsHash(on.map((g) => g.type)), style, b - a,
-    on.map((g) => ({ ...g, start: rel(g.start), end: rel(g.end) })),
-    hook && hookSeconds > t0 ? [hook, rel(hookSeconds)] : null,
-  ]).slice(0, 24);
-  const file = join(layers, "graphics", `${key}.mov`);
-  const small = join(layers, "graphics", `${key}.webm`);
-  return { a, b, key, file: existsSync(file) || !existsSync(small) ? file : small };
+const clips = planClips({ graphics, props, total, dir: join(layers, "graphics") }).map((c) => {
+  const small = c.file.replace(/\.mov$/, ".webm");
+  return { ...c, file: c.still || existsSync(c.file) || !existsSync(small) ? c.file : small };
 });
 
 // Ken's cloud computers start fresh on every job, so what was drawn for a reel before lives in a store instead
@@ -136,15 +115,13 @@ if (store) {
   const asked = Date.now();
   await inBatches([...firstOf.keys()].filter((key) => !existsSync(capFile(key))).map(capFile), fetchLayer);
   await inBatches(clips.filter((c) => !existsSync(c.file)), async (c) => {
+    if (c.still) return fetchLayer(c.file);
     c.file = join(layers, "graphics", `${c.key}.webm`);
     await fetchLayer(c.file);
     if (!existsSync(c.file)) c.file = join(layers, "graphics", `${c.key}.mov`);
   });
   console.log(`checked the layer store (${Math.round((Date.now() - asked) / 1000)}s)`);
 }
-const capTodo = [...firstOf].filter(([key]) => !existsSync(capFile(key)));
-const clipTodo = clips.filter((c) => !existsSync(c.file));
-
 // ---- The picture in pieces, each named by everything that shows in it (see plan.mjs).
 const videoPath = join(work, props.video);
 let fileHash;
@@ -153,7 +130,14 @@ const pieceDir = join(layers, "pieces");
 const pieces = planPieces({ work, props, graphics, looks, clips, total, footageHash, dir: pieceDir, steady: steadyFootage(videoPath, readCutlist(work)) });
 const pieceTodo = pieces.filter((p) => !existsSync(p.file));
 
-console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips (${clips.reduce((n, c) => n + c.b - c.a, 0)} frames), ${clipTodo.length} to draw; picture: ${pieces.length} pieces, ${pieceTodo.length} to encode (${pieceTodo.reduce((n, p) => n + p.b - p.a, 0)} of ${total} frames)`);
+// Only what a piece still to encode shows is drawn: a graphic whose pieces are all made (its clip cleared to free
+// the disk, say) isn't drawn again.
+const neededLooks = new Set(pieceTodo.flatMap((p) => p.runs.map((r) => r.name)));
+const neededClips = new Set(pieceTodo.flatMap((p) => p.on.map((o) => o.clip.key)));
+const capTodo = [...firstOf].filter(([key]) => neededLooks.has(key) && !existsSync(capFile(key)));
+const clipTodo = clips.filter((c) => neededClips.has(c.key) && !existsSync(c.file));
+
+console.log(`captions: ${firstOf.size} looks, ${capTodo.length} to draw; graphics: ${clips.length} clips, ${clipTodo.length} to draw (${clipTodo.reduce((n, c) => n + (c.still ? 1 : c.b - c.a), 0)} frames); picture: ${pieces.length} pieces, ${pieceTodo.length} to encode (${pieceTodo.reduce((n, p) => n + p.b - p.a, 0)} of ${total} frames)`);
 if (plan) process.exit(0);
 
 // ---- Draw what's missing.
@@ -195,10 +179,26 @@ if (capTodo.length || clipTodo.length) {
     if (clipTodo.length) {
       const composition = await selectComposition({ serveUrl, id: "GraphicsLayer", inputProps: props, puppeteerInstance: browser });
       for (const c of clipTodo) {
+        // Each clip is drawn alone: only its graphic, or only the hook.
+        // Remotion draws a composition's own props, not the inputProps passed with it, so the clip's props go on both.
+        const inputProps = { ...props, graphics: c.hook ? [] : [props.graphics[c.index]], hook: c.hook ? hook : undefined, title: undefined };
+        const alone = { ...composition, props: inputProps };
+        if (c.still) {  // one frame, from its middle
+          const dir = join(layers, "graphics", `.draw-${process.pid}`);
+          const at = Math.floor((c.a + c.b - 1) / 2);
+          await renderFrames({
+            serveUrl, composition: alone, inputProps, puppeteerInstance: browser, imageFormat: "png", outputDir: dir,
+            frameRange: [at, at], onStart: () => {}, onFrameUpdate: () => {}, concurrency: 1, logLevel: "error",
+          });
+          renameSync(join(dir, readdirSync(dir).find((f) => f.endsWith(".png"))), c.file);
+          execFileSync("rm", ["-rf", dir]);
+          console.log(`drew still graphic (${Math.round((Date.now() - started) / 1000)}s)`);
+          continue;
+        }
         const tmp = `${c.file}.part.mov`;
         const drawn = progress("graphics", c.b - c.a);
         await renderMedia({
-          serveUrl, composition, inputProps: props, puppeteerInstance: browser, codec: "prores", proResProfile: "4444",
+          serveUrl, composition: alone, inputProps, puppeteerInstance: browser, codec: "prores", proResProfile: "4444",
           imageFormat: "png", pixelFormat: "yuva444p10le", muted: true, frameRange: [c.a, c.b - 1], outputLocation: tmp,
           overwrite: true, concurrency, logLevel: "error", onProgress: ({ renderedFrames }) => drawn(renderedFrames),
         });
@@ -210,16 +210,16 @@ if (capTodo.length || clipTodo.length) {
     await browser.close({ silent: true });
   }
   if (store) {
-    for (const c of clipTodo) {
+    for (const c of clipTodo.filter((c) => !c.still)) {
       const small = join(layers, "graphics", `${c.key}.webm`);
       execFileSync("ffmpeg", ["-v", "error", "-y", "-i", c.file, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-deadline", "realtime",
         "-cpu-used", "8", "-row-mt", "1", "-b:v", "0", "-crf", "32", "-an", small]);
     }
-    await inBatches([...capTodo.map(([key]) => capFile(key)), ...clipTodo.map((c) => join(layers, "graphics", `${c.key}.webm`))], saveLayer);
+    await inBatches([...capTodo.map(([key]) => capFile(key)), ...clipTodo.map((c) => (c.still ? c.file : join(layers, "graphics", `${c.key}.webm`)))], saveLayer);
   }
 }
 // Graphics clips this reel no longer uses go, so a folder edited many times doesn't fill the disk.
-const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`]));
+const used = new Set(clips.flatMap((c) => [`${c.key}.mov`, `${c.key}.webm`, `${c.key}.png`]));
 for (const f of readdirSync(join(layers, "graphics"))) if (!used.has(f)) rmSync(join(layers, "graphics", f), { force: true });
 
 // ---- Encode the pieces that aren't there yet.

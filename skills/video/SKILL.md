@@ -179,6 +179,8 @@ Keep `words`, `cuts` and `framing` from the cut in `props.json`, and fix mishear
   as its `src` prop (only those get bundled). Trim or speed up a clip with ffmpeg first, and show it with
   `<OffthreadVideo src={staticFile(src)} muted />`. Everything you need is here: don't read the kit's code.
 - Run `npx tsc -p .` in the folder and fix every error before checking frames.
+- One that never moves (a shade behind the captions, a frame, a corner logo) gets `"still": true` in props.json:
+  it's drawn once as one image, so a long one doesn't make every later fix redraw the whole reel.
 
 ## 4. Check frames before rendering
 
@@ -200,7 +202,9 @@ The first time, this sets up Remotion (a one-time download, a few minutes): tell
 
 makes `reel.mp4`, ready to post. Remotion draws only the captions and graphics, ffmpeg lays them over the footage,
 and every piece is kept by what's in it. The first render takes a few minutes, so run it as a background job; a fix
-later redraws and re-encodes only the seconds it changes (a new ending takes well under a minute). A style change
+later redraws and re-encodes only the seconds it changes (a new ending takes well under a minute). Run `--plan` first:
+if it would draw or encode more than about a minute of frames, run that render in the background too, so a time limit
+can't stop it halfway. A style change
 (caption font or colour) redraws everything, so settle those with stills first. `--plan` says how much a change would redraw without
 rendering. The render checks its own result and, if that fails, draws the whole reel in Chrome instead (slower,
 always right). Then:
