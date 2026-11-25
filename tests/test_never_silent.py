@@ -217,6 +217,20 @@ async def test_a_one_time_job_that_fails_only_offers_to_run_now(engine, monkeypa
                                  "Ask me to run it now."]
 
 
+async def test_a_silent_job_never_reaches_the_chat_even_when_it_fails(engine, monkeypatch):
+    async def says(prompt, on_text):
+        await on_text("Here's what I learned about you!")
+        return "Here's what I learned about you!"
+    brain_that(monkeypatch, says)
+    assert await engine.run_job(HOME, "(learn)", job={"name": "app-learn"}, silent=True) == ""
+
+    async def fails(prompt, on_text):
+        raise Exception("disk full")
+    brain_that(monkeypatch, fails)
+    assert await engine.run_job(HOME, "(learn)", job={"name": "app-learn"}, silent=True) == ""
+    assert ken_lines(engine) == []
+
+
 async def test_a_job_that_comes_back_empty_says_so_without_offering_a_rerun_as_if_it_never_ran(engine, monkeypatch):
     async def behave(prompt, on_text):
         return ""

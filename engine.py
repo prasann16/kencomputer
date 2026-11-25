@@ -37,6 +37,15 @@ COLORS = ["#1F4E79", "#7A4E8C", "#5E7A3A", "#9C4A1A", "#2E6F73", "#8A3B5C", "#4A
 GREET_AFTER = 3 * 3600  # speak first when a chat is opened after this long
 # Ken's very first contact, the same wherever it happens (the app or the phone): Ken writes it,
 # from what it knows, following the awakening in its instructions.
+def app_learn_prompt(name: str) -> str:
+    """They just connected an app outside any chat: Ken looks through it once and keeps what it learns about them."""
+    return (f"(They've just connected {name}. Nobody asked for anything: look through it once to learn about them: "
+            "their profile, and a handful of their recent posts, messages or events, whatever it holds. Keep it to a few "
+            "app actions. File what helps you work for them (what they do, their niche, audience, voice and style, the "
+            "people and work that matter) in a topic file in your memory folder, extending one that fits. Never post, "
+            "send, change or delete anything. Don't message them. When done, answer only NOTHING_TO_SAY.)")
+
+
 def first_contact_prompt(how: str) -> str:
     return f"(This is your very first contact with them: they just {how}. Begin.)"
 
@@ -719,8 +728,9 @@ class Engine:
         return self.log_message(HOME, "ken", text, via="background", action="apps_reconnect", note_id=note_id)
 
     async def app_connected(self, slug: str, name: str) -> str | None:
-        """Hosted Ken: they just connected an app through a link Ken gave them. The chat that gave it (the most
-        recent Ken reply with that link, in the last hour) carries on with what they asked. Returns that chat."""
+        """Hosted Ken: they just connected an app. The chat that gave the link (the most recent Ken reply with it, in
+        the last hour) carries on with what they asked; returns that chat. Connected anywhere else, Ken looks through
+        it once on its own and keeps what it learns about them in memory, so it never asks what the app already shows."""
         link = f"/account/apps/connect/{slug}"
         since = time.time() - 3600
         best = None
@@ -732,6 +742,8 @@ class Engine:
                         best = (pid, m["ts"])
                     break
         if best is None:
+            # Connected from Settings or the welcome, not for a task: learn what it shows about them, once, quietly.
+            self._bg.append(asyncio.create_task(self.run_job(HOME, app_learn_prompt(name), job={"name": "app-learn"}, silent=True)))
             return None
         pid = best[0]
         self._bg.append(asyncio.create_task(self.send_message(
@@ -2121,16 +2133,17 @@ class Engine:
         return resumed
 
     async def run_job(self, pid: str, prompt: str, *, job: dict | None = None,
-                      listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "") -> str:
+                      listener: Callable[[str], Awaitable[None]] | None = None, preface: str = "", silent: bool = False) -> str:
         """A scheduled job in a fresh session of its own, so nothing left over in the chat can steer
-        it, and only its final answer reaches them, after `preface` (a caught-up job says it's late)."""
+        it, and only its final answer reaches them, after `preface` (a caught-up job says it's late).
+        `silent`: work done only for Ken itself (learning about them); nothing reaches the chat, not even a failure."""
         if self.is_off():
             return ""
         cwd = self.home_cwd if pid == HOME else self.workdir(self.get_agent(pid))
         new = lambda resume=None: self.brain_for(pid).session(
             cwd=str(cwd), system=lambda: self.system(pid), resume=resume, model_fn=lambda: self.model_for(pid),
             mcp_fn=lambda: self.agent_tools(pid), env_fn=lambda: self._session_env(pid))
-        if back := self.back_from_credits():
+        if not silent and (back := self.back_from_credits()):
             self.log_message(pid, "ken", back)
         session = new()
         last, done = "", []
@@ -2165,6 +2178,9 @@ class Engine:
                 await session.close()
             except Exception:
                 pass
+        if silent:
+            log.info("silent job %s: %s", (job or {}).get("name", "job"), "failed: " + failed if failed else "done")
+            return ""
         if text == "NOTHING_TO_SAY":
             # Silent by design, but leave a trace, so it can be seen later that the job ran and chose to say nothing.
             log.info("job %s ran: nothing to say", (job or {}).get("name", "job"))

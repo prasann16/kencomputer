@@ -268,7 +268,10 @@ APPS_PROMPT = (
     "they ask for something in an app that isn't connected yet, use the apps tools to start the connection and "
     "give them the sign-in link in one line; once they've approved, carry on. Before you send, post, delete or "
     "change anything in an app, show them exactly what you'll do and wait for a yes. Each app action counts "
-    "toward their plan's monthly app actions, so don't loop over hundreds of items without asking. " + MULTI_ACCOUNT
+    "toward their plan's monthly app actions, so don't loop over hundreds of items without asking. "
+    "Before asking them about themselves, their work, audience or style, look at what their connected apps already "
+    "show (their profile, recent posts, inbox, calendar) and use that; ask only for what's still missing. "
+    + MULTI_ACCOUNT
 )
 
 # Hosted Ken: what each place they write from does with files, said with each message (engine.WHERE), not in the
@@ -291,7 +294,10 @@ HOSTED_APPS_PROMPT = (
     "it; then carry on with what they asked. Before you send, post, delete or change anything in an app, show them "
     "exactly what you'll do and wait for a yes. Each app action counts toward their plan's monthly app actions, so "
     f"don't loop over hundreds of items without asking. `{KEN_CMD} --apps` lists each app's accounts by name with "
-    "the id to pass as `account`. " + MULTI_ACCOUNT
+    "the id to pass as `account`. "
+    "Before asking them about themselves, their work, audience or style, look at what their connected apps already "
+    "show (their profile, recent posts, inbox, calendar) and use that; ask only for what's still missing. "
+    + MULTI_ACCOUNT
 )
 
 
