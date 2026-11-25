@@ -872,3 +872,20 @@ async def test_library_photos_they_attach_and_ken_shows(engine):
     shown = engine.messages("brand")[-1]
     assert shown["role"] == "ken" and shown["library"] == [{"id": b, "kind": "photo", "name": "IMG_1.HEIC", "place": ""}]
     assert engine._session_env("brand")["KEN_CHAT"] == "brand"
+
+
+def test_agent_pictures_its_own_emoji_else_a_guess_else_none(engine):
+    insta = engine.create_agent("Instagram helper")
+    plain = engine.create_agent("Zorbo")
+    pics = {c["id"]: c["emoji"] for c in engine.chats_list()}
+    assert pics["home"] == "" and pics[insta["id"]] == "📸" and pics[plain["id"]] == ""
+    engine.update_agent(plain["id"], emoji="🦄")
+    assert {c["id"]: c["emoji"] for c in engine.chats_list()}[plain["id"]] == "🦄"
+    for bad in ("ab", "🦄 and more text", "1", " "):
+        with pytest.raises(ValueError):
+            engine.update_agent(plain["id"], emoji=bad)
+    # What the agent wrote into agent.json itself: a real emoji is used, junk falls back to the guess.
+    d = engine.agents_dir / insta["id"] / "agent.json"
+    meta = json.loads(d.read_text()); meta["emoji"] = "not one"; d.write_text(json.dumps(meta))
+    assert {c["id"]: c["emoji"] for c in engine.chats_list()}[insta["id"]] == "📸"
+    assert engine.update_agent(insta["id"], emoji="🇵🇹")["emoji"] == "🇵🇹"

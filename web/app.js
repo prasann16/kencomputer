@@ -193,7 +193,7 @@ function ChatList({ chats, pid, open, seenAt, onNew, onSettings, onReport, libra
   return html`<aside class="chat-list side" aria-label="Ken">
     <div class="chat-list-head"><img class="ken-mark" src="/ken.svg" alt=""/><b>Ken</b><button class="icon-btn" aria-label="New agent" title="New agent" onClick=${onNew}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <nav class="chat-rows">${list.map((c) => html`<div class="chat-row-wrap"><a class=${'chat-row' + (open && !library && c.id === pid ? ' sel' : '')} href=${chatHref(c.id)}>
-      ${c.id === 'home' ? html`<img class="chat-ava narrow-only" src="/ken.svg" alt=""/>` : html`<i class="chat-ava narrow-only" aria-hidden="true">${(c.name || '?').trim().charAt(0).toUpperCase()}</i>`}
+      ${c.id === 'home' ? html`<img class="chat-ava narrow-only" src="/ken.svg" alt=""/>` : html`<i class=${'chat-ava narrow-only' + (c.emoji ? ' emoji' : '')} aria-hidden="true">${c.emoji || (c.name || '?').trim().charAt(0).toUpperCase()}</i>`}
       <span class="chat-row-text"><span class="chat-row-top"><b>${c.name}</b><small>${c.busy ? 'working…' : c.last_ts ? ago(c.last_ts) : ''}</small></span>
       <span class="chat-row-last">${c.last ? firstLine(c.last) : ' '}</span></span>
       ${!(open && c.id === pid) && c.last_ts > (seenAt[c.id] || 0) && html`<i class="chat-unread" aria-label="Unread"></i>`}</a>
@@ -2246,10 +2246,12 @@ function SendBigFile({ token, onClose }) {
 }
 
 function RenameProject({ project, onClose, onDone }) {
-  const [name, setName] = useState(project.name), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const save = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'PATCH', json: { name: name.trim() } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
+  const [name, setName] = useState(project.name), [emoji, setEmoji] = useState(project.emoji || ''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const save = async () => { setBusy(true); try { await api(`/api/agents/${project.id}`, { method: 'PATCH', json: { name: name.trim(), ...(emoji.trim() && emoji.trim() !== project.emoji ? { emoji: emoji.trim() } : {}) } }); onDone(); } catch (e) { setError(e.message); setBusy(false); } };
+  const enter = (e) => e.key === 'Enter' && name.trim() && !busy && save();
   return html`<${Modal} title="Rename agent" onClose=${onClose}>
-    <label class="np-label">Name<input class="np-input" autofocus value=${name} onInput=${(e) => setName(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && name.trim() && !busy && save()}/></label>
+    <div class="row rename-row"><label class="np-label rename-emoji">Picture<input class="np-input" value=${emoji} maxlength="8" placeholder="🙂" aria-label="Picture (one emoji)" onInput=${(e) => setEmoji(e.target.value)} onKeyDown=${enter}/></label>
+    <label class="np-label" style="flex:1">Name<input class="np-input" autofocus value=${name} onInput=${(e) => setName(e.target.value)} onKeyDown=${enter}/></label></div>
     ${error && html`<p class="connect-error" role="alert">${error}</p>`}
     <div class="row np-actions"><button class="btn ghost" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy || !name.trim()} onClick=${save}>Rename</button></div>
   <//>`;

@@ -1253,7 +1253,7 @@ class WebApp:
     async def update_agent(self, request):
         b = await self._body(request)
         try:
-            return _json(self.engine.update_agent(self._agent(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model")}))
+            return _json(self.engine.update_agent(self._agent(request), **{k: b.get(k) for k in ("name", "blurb", "path", "model", "emoji")}))
         except ValueError as e:
             return _json({"error": str(e)}, 400)
 
