@@ -82,14 +82,27 @@ async def test_connected_carries_on_in_the_chat_that_gave_the_link(engine, monke
         sent.append((pid, kw.get("prompt")))
         return True
 
+    learned = []
+
+    async def run_job(pid, prompt, **kw):
+        learned.append((pid, prompt, kw))
+        return ""
+
     monkeypatch.setattr(engine, "send_message", send_message)
+    monkeypatch.setattr(engine, "run_job", run_job)
     engine.log_message(HOME, "you", "check my Notion for the launch notes")
     engine.log_message(HOME, "ken", f"Connect Notion: {SITE}/account/apps/connect/notion")
     assert await engine.app_connected("notion", "Notion") == HOME
     for task in engine._bg:
         await task
+    assert sent == [(HOME, "(They've just connected Notion. Carry on with what they asked.)")] and learned == []
+    # No chat gave a Slack link (connected from Settings): Ken looks through it once, quietly, and keeps what it learns.
+    assert await engine.app_connected("slack", "Slack") is None
+    for task in engine._bg:
+        await task
     assert sent == [(HOME, "(They've just connected Notion. Carry on with what they asked.)")]
-    assert await engine.app_connected("slack", "Slack") is None  # no chat gave a Slack link
+    assert len(learned) == 1 and learned[0][0] == HOME and learned[0][2]["silent"] is True
+    assert "just connected Slack" in learned[0][1] and "NOTHING_TO_SAY" in learned[0][1] and "Never post" in learned[0][1]
 
 
 async def test_the_connected_endpoint(engine, aiohttp_client, monkeypatch, on_host):  # noqa: F811
@@ -150,7 +163,11 @@ async def test_connecting_from_the_reconnect_note_doesnt_start_a_turn(engine, mo
         sent.append(pid)
         return True
 
+    async def run_job(pid, prompt, **kw):
+        return ""
+
     monkeypatch.setattr(engine, "send_message", send_message)
+    monkeypatch.setattr(engine, "run_job", run_job)
     engine.apps_reconnect("reconnect-1", [{"slug": "gmail", "name": "Gmail", "url": f"{SITE}/account/apps/connect/gmail"}])
     assert await engine.app_connected("gmail", "Gmail") is None
     assert sent == []
