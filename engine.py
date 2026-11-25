@@ -1387,6 +1387,15 @@ class Engine:
     def context_file(self, pid: str) -> Path:
         return self.home_cwd / "SOUL.md" if pid == HOME else self._adir(pid) / "CONTEXT.md"
 
+    def home_name(self) -> str:
+        """What they call Ken: the '# You are <Name>' title of its soul file (Ken until they name it)."""
+        try:
+            title = next((ln for ln in self.context_file(HOME).read_text(errors="replace").splitlines() if ln.strip()), "")
+        except OSError:
+            return "Ken"
+        m = re.match(r"#\s*You are\s+([^(\n]+)", title)
+        return (m.group(1).strip().rstrip(",.")[:40] if m else "") or "Ken"
+
     def memory_dir(self, pid: str) -> Path:
         return self.home / "memory" if pid == HOME else self._adir(pid) / "memory"
 
@@ -1400,7 +1409,7 @@ class Engine:
         for f in sorted(d.glob("*.md")) if d.is_dir() else []:
             first = next((ln.strip().lstrip("#").strip() for ln in f.read_text(errors="replace").splitlines() if ln.strip()), "")
             notes.append({"name": f.name, "about": first[:140]})
-        out = {"id": pid, "name": "Ken" if pid == HOME else self.get_agent(pid)["name"], "context": context,
+        out = {"id": pid, "name": self.home_name() if pid == HOME else self.get_agent(pid)["name"], "context": context,
                "memory": notes, "files": self.list_files(pid)}
         out.update(tools=self.tools_config(pid), builtin=list(BUILTIN_TOOLS), keys=self.list_keys(pid),
                    path="" if pid == HOME else self.get_agent(pid).get("path", ""),
@@ -2974,7 +2983,7 @@ class Engine:
 
     def chats_list(self) -> list[dict]:
         """Ken first, then each project — like a chat app's list."""
-        rows = [(HOME, "Ken", "#1B1A17", "")] + [
+        rows = [(HOME, self.home_name(), "#1B1A17", "")] + [
             (p["id"], p["name"], p["color"], picture(p)) for p in self.list_agents()]
         out = []
         for pid, name, color, emoji in rows:
@@ -3017,8 +3026,7 @@ class Engine:
             soul = self.context_file(HOME).read_text(errors="replace")
         except OSError:
             soul = ""
-        title = next((ln for ln in soul.splitlines() if ln.strip()), "")
-        name = m.group(1).strip().rstrip(",.") or "Ken" if (m := re.match(r"#\s*You are\s+([^(\n]+)", title)) else "Ken"
+        name = self.home_name()
         # About them: the notes that look like they're about the person, then what each other note is about.
         about, d = [], self.memory_dir(HOME)
         notes = sorted(d.glob("*.md")) if d.is_dir() else []
@@ -3049,8 +3057,8 @@ class Engine:
 
     def apply_onboarding(self, facts: dict) -> list[str]:
         """What they told the hosting site about themselves while their computer was set up (each a few plain words).
-        Nothing is written for Ken: its next turn is told, and Ken files what's worth keeping where it belongs (soul file
-        or memory), as with anything else it learns. Returns the getting-to-know items it answers."""
+        Only their name for Ken is written at once (its chat shows it). The rest, Ken's next turn is told, and Ken files
+        what's worth keeping where it belongs (soul file or memory), as with anything else it learns. Returns the getting-to-know items it answers."""
         def clean(key: str, limit: int = 300) -> str:
             value = facts.get(key)
             value = ", ".join(map(str, value)) if isinstance(value, list) else str(value or "")
@@ -3062,6 +3070,14 @@ class Engine:
                                             ("brief-time", brief)) if value]
         said = "; ".join(f"{k}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
                          ("would like help with", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
+        if ken:  # their name for Ken shows on its chat at once, before Ken's first turn files the rest
+            soul = self.context_file(HOME)
+            try:
+                lines = soul.read_text().splitlines(keepends=True)
+                if lines and re.match(r"#\s*You are\b", lines[0]):
+                    soul.write_text(f"# You are {ken}\n" + "".join(lines[1:]))
+            except OSError:
+                pass
         if said:
             self.kv_set(f"onboarding:said:{HOME}", said)
         # A Home chat already open: reopen it (it resumes the same conversation), so the next reply gets the note.
@@ -3113,7 +3129,7 @@ class Engine:
         }
 
     def chat_view(self, pid: str) -> dict:
-        name = "Ken" if pid == HOME else self.get_agent(pid)["name"]
+        name = self.home_name() if pid == HOME else self.get_agent(pid)["name"]
         boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}")
         messages = [m for m in self.messages(pid) if m["id"] > boundary.get("after", 0)]
         return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid) or pid in self._greeting,
