@@ -838,3 +838,7 @@ ol.conn-steps li { margin: 2px 0; }
 .run-open { all: unset; display: block; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
 .run-open:hover .title { text-decoration: underline; text-underline-offset: 3px; }
 .run-open:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* A reel's live preview, playing in Ken's message (ReelPreview in app.js). */
+.reel-preview { width: min(100%, 300px); aspect-ratio: 9 / 16; margin-top: 10px; border-radius: 14px; overflow: hidden; background: #000; }
+.reel-preview iframe { display: block; width: 100%; height: 100%; border: 0; }

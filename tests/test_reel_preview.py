@@ -56,6 +56,7 @@ async def test_the_preview_needs_ken_s_sign_in(engine, aiohttp_client):  # noqa:
 def test_the_link_is_on_the_hosting_site_or_this_computer(monkeypatch, tmp_path):
     folder = tmp_path / "work" / "videos" / "left-sf"
     monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://kencomputer.dev/box/checkin")
+    monkeypatch.delenv("AGENT37_INSTANCE_ID", raising=False)
     assert video_kit.preview_link(tmp_path, folder) == "https://kencomputer.dev/reel/left-sf/"
     monkeypatch.delenv("KEN_KEEPALIVE_URL")
     monkeypatch.setenv("KEN_WEB_PORT", "7788")
@@ -68,3 +69,20 @@ def test_the_preview_uses_only_packages_every_kit_already_has():
     lock = json.loads((kit / "package-lock.json").read_text())["packages"]
     assert lock["node_modules/esbuild"]["version"] and lock["node_modules/@remotion/player"]["version"] == "4.0.538"
     assert {"preview.mjs", "preview.tsx"} <= set(video_kit.ENGINE)
+
+
+async def test_a_watch_link_key_opens_only_its_reel_and_keeps_its_link_after_edits(engine, aiohttp_client, monkeypatch):  # noqa: F811
+    app, client = await signed_in(engine, aiohttp_client)
+    reel(engine)
+    key = video_kit.share_reel(engine.home, "left-sf")
+    assert video_kit.share_reel(engine.home, "left-sf") == key  # the same link after an edit
+    page = await client.get(f"/api/reel-shared/{key}/")
+    assert page.status == 200 and page.headers["X-Ken-Reel"] == "1" and "frame-ancestors 'self'" in page.headers["Content-Security-Policy"]
+    part = await client.get(f"/api/reel-shared/{key}/cut.mp4", headers={"Range": "bytes=0-3"})
+    assert part.status == 206 and await part.read() == bytes(range(4))
+    assert (await client.get(f"/api/reel-shared/{key}/plan.md")).status == 404
+    gone = await client.get("/api/reel-shared/0123456789abcdef01234567/")
+    assert gone.status == 404 and (await gone.json())["error"]
+    monkeypatch.setenv("KEN_KEEPALIVE_URL", "https://kencomputer.dev/box/checkin")
+    monkeypatch.setenv("AGENT37_INSTANCE_ID", "lmm0bht56u")
+    assert video_kit.preview_link(engine.home, engine.home_cwd / "videos" / "left-sf") == f"https://kencomputer.dev/watch/lmm0bht56u/{key}/"
