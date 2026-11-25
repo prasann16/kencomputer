@@ -309,7 +309,7 @@ class WebApp:
         voice = " wss://api.elevenlabs.io" if hosted_web() else ""  # voice mode's talker (the hosting site connects it)
         return web.FileResponse(WEB_DIR / "index.html", headers={
             "Cache-Control": "no-cache",
-            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}{voice}; object-src 'none'; frame-src 'none'; base-uri 'none'",
+            "Content-Security-Policy": f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* wss://{host}{voice}; object-src 'none'; frame-src 'self'; base-uri 'none'",
         })
 
     async def static_file(self, request: web.Request) -> web.StreamResponse:
@@ -1011,8 +1011,18 @@ class WebApp:
                   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
                   ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
 
+    async def reel_shared(self, request):
+        """A watch link (video_kit.share_reel): the site passes its key here with no sign-in, as for a download link."""
+        import video_kit
+        name = video_kit.shared_reel(self.engine.home, request.match_info["key"])
+        if not name:
+            return _json({"error": "This link has expired."}, 404)
+        return self._reel_file(name, request.match_info["path"] or "preview.html")
+
     async def reel_preview(self, request):
-        name, rel = request.match_info["name"], request.match_info["path"] or "preview.html"
+        return self._reel_file(request.match_info["name"], request.match_info["path"] or "preview.html")
+
+    def _reel_file(self, name: str, rel: str):
         folder = self.engine.home_cwd / "videos" / name
         if name.startswith(".") or "/" in name or not (folder / "preview.html").is_file():
             raise web.HTTPNotFound()
@@ -1039,10 +1049,11 @@ class WebApp:
         kind = self.REEL_TYPES.get(path.suffix.lower())
         if not allowed or not kind or not path.is_file() or not path.resolve().is_relative_to(folder.resolve()):
             raise web.HTTPNotFound()
-        headers = {"Content-Type": kind, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"}
+        # X-Ken-Reel: the site tells Ken's answer from the edge's while a computer wakes.
+        headers = {"Content-Type": kind, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache", "X-Ken-Reel": "1"}
         if kind == "text/html":  # the site sets its own; on a computer of its own this keeps the page to its own files
             headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-                                                  "media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+                                                  "media-src 'self' blob:; object-src 'none'; frame-ancestors 'self'; base-uri 'none'")
         return web.FileResponse(path, headers=headers)
 
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
@@ -1492,6 +1503,7 @@ class WebApp:
         r.add_post("/api/open", self.open_file)
         r.add_get("/api/file", self.shared_file)
         r.add_get("/reel/{name}/{path:.*}", self.reel_preview)
+        r.add_get("/api/reel-shared/{key}/{path:.*}", self.reel_shared)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_post("/api/chats/{pid}/unclear", self.unclear)

@@ -19,11 +19,14 @@ import hashlib
 import json
 import os
 import platform
+import re
+import secrets
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -630,13 +633,54 @@ def stills(home: Path, folder: Path, times: list[str], say=print) -> None:
         raise SystemExit("Usage: --video-stills <folder> <seconds...>")
 
 
+# A reel's watch link on the site hosting this Ken: <site>/watch/<computer>/<key>/ opens its live preview with no
+# sign-in (Telegram's browser and the phone app's aren't signed in), and the key gets only that reel, for a week.
+# The same reel keeps its key while most of the week is left, so after an edit the same link shows the change.
+REEL_LINKS = "reel-links.json"
+REEL_LINK_TTL = 7 * 86400
+
+
+def _reel_links(home: Path) -> dict:
+    try:
+        links = json.loads((home / REEL_LINKS).read_text())
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {k: v for k, v in links.items() if isinstance(v, dict) and isinstance(v.get("reel"), str)
+            and isinstance(v.get("ts"), (int, float)) and now - v["ts"] < REEL_LINK_TTL} if isinstance(links, dict) else {}
+
+
+def share_reel(home: Path, name: str) -> str:
+    links = _reel_links(home)
+    for key, v in links.items():
+        if v["reel"] == name and time.time() - v["ts"] < REEL_LINK_TTL / 2:
+            return key
+    key = secrets.token_hex(12)
+    links[key] = {"reel": name, "ts": time.time()}
+    path = home / REEL_LINKS
+    path.write_text(json.dumps(links))
+    path.chmod(0o600)
+    return key
+
+
+def shared_reel(home: Path, key: str) -> str | None:
+    """The reel a watch link's key is for, while the link hasn't expired."""
+    if not re.fullmatch(r"[0-9a-f]{24}", key or ""):
+        return None
+    v = _reel_links(home).get(key)
+    return v["reel"] if v else None
+
+
 def preview_link(home: Path, folder: Path) -> str:
-    """Where the reel's live preview opens: on the site hosting this Ken (signed in), or in the web app on this
+    """Where the reel's live preview opens: its watch link on the site hosting this Ken, or the web app on this
     computer. Only reels in the workspace's videos folder are served (web.py reel_preview)."""
     if folder.parent != home / "work" / "videos":
         raise SystemExit(f"Only a reel in {home / 'work' / 'videos'} can be previewed; {folder} isn't one.")
     url = os.environ.get("KEN_KEEPALIVE_URL", "")
     site = url.rsplit("/box/", 1)[0] if url.startswith("https://") and "/box/" in url else ""
+    computer = os.environ.get("AGENT37_INSTANCE_ID", "")
+    if site and computer.isalnum():
+        return f"{site}/watch/{computer}/{share_reel(home, folder.name)}/"
     base = site or f"http://127.0.0.1:{os.environ.get('KEN_WEB_PORT', '7777')}"
     return f"{base}/reel/{urllib.parse.quote(folder.name)}/"
 

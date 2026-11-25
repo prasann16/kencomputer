@@ -840,6 +840,7 @@ function Message({ m, label }) {
   const body = useRef(null);
   const files = m.files || [];
   const media = useMemo(() => (m.role === 'you' ? [] : mediaIn(m.text)), [m.text, m.role]);
+  const reels = useMemo(() => (m.role === 'you' ? [] : reelsIn(m.text)), [m.text, m.role]);
   const content = useMemo(() => md(m.role === 'you' ? m.text : withoutFileLines(m.text, media)), [m.text, m.role, media]);
   const recording = m.audio || (m.voice && files.some(isAudio) ? {url:`/api/chats/${m.project}/files/${encodeURIComponent(files.find(isAudio))}`,name:files.find(isAudio),...m.voice} : null);
   if (m.role === 'you') {
@@ -869,7 +870,7 @@ function Message({ m, label }) {
     ${label && html`<div class="job-label">${m.job.label}${m.job.time && html`<span> · ${m.job.time}</span>`}<a class="text-action" href="#/brain" title="Turn it off or change its time">Change</a></div>`}
     <div class="msg-body"><div class="txt">
     ${m.run_title && html`<div class="from-run">${m.run_status === 'done' ? '✓' : '✕'} ${m.run_title}</div>`}
-    ${m.text && html`<div ref=${body}>${content}</div>`}${m.library?.length > 0 && html`<${LibraryPhotos} items=${m.library}/>`}${m.agent_made && html`<a class="text-action agent-open" href=${'#/p/' + m.agent_made}>Open ›</a>`}${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
+    ${m.text && html`<div ref=${body}>${content}</div>`}${m.library?.length > 0 && html`<${LibraryPhotos} items=${m.library}/>`}${m.agent_made && html`<a class="text-action agent-open" href=${'#/p/' + m.agent_made}>Open ›</a>`}${media.map((p) => html`<${Media} key=${p} path=${p}/>`)}${reels.map((p) => html`<${ReelPreview} key=${p} path=${p}/>`)}</div>${m.text && html`<${CopyButton} from=${body}/>`}</div></div>`;
 }
 
 // Every file Ken names is in its message with a Download button; a video, picture or audio file also plays right there.
@@ -882,6 +883,16 @@ function mediaIn(text) {
   for (const [, , target] of String(text || '').matchAll(LINK_RE)) add(target.trim());
   for (const [p] of String(text || '').replace(/`[^`\n]+`/g, '').matchAll(PATH_RE)) add(p);
   return found.slice(0, 6);
+}
+// A reel's live preview link (a watch link on the site, or /reel/<name>/ on Ken's own computer) plays right in the
+// message: the reel as it'll look, nothing rendered. It's this page's own address, so it opens as the same page here.
+const REEL_RE = /https?:\/\/[^\s<>()]+?(\/(?:watch\/[a-z0-9]{3,32}\/[0-9a-f]{24}|reel\/[\w.-]+)\/)(?=[\s)<>.,;:!?'"`*]|$)/g;
+function reelsIn(text) {
+  const ours = (link) => { try { return new URL(link).host === location.host; } catch { return false; } };  // not instagram.com/reel/…
+  return [...new Set([...String(text || '').matchAll(REEL_RE)].filter((m) => ours(m[0])).map((m) => m[1]))].slice(0, 2);
+}
+function ReelPreview({ path }) {
+  return html`<div class="reel-preview"><iframe src=${path} title="Reel preview" allow="autoplay; fullscreen" allowfullscreen loading="lazy"></iframe></div>`;
 }
 // A line that only names a file shown below as a card (`/home/…/report.pdf`) says nothing to them: it goes.
 function withoutFileLines(text, shown) {
