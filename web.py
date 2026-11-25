@@ -1003,6 +1003,48 @@ class WebApp:
             path = self._stored(await self._preview(path), [request.query.get("path", "")])
         return self._serve(path, download="download" in request.query)
 
+    # A reel's live preview (video/kit/template/preview.mjs): its page, the player code and fonts, the reel's
+    # props.json, and only the files props.json names (its footage, pictures), with Range so the video streams.
+    # Nothing else in the folder is served.
+    REEL_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",
+                  ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf", ".png": "image/png",
+                  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
+                  ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
+
+    async def reel_preview(self, request):
+        name, rel = request.match_info["name"], request.match_info["path"] or "preview.html"
+        folder = self.engine.home_cwd / "videos" / name
+        if name.startswith(".") or "/" in name or not (folder / "preview.html").is_file():
+            raise web.HTTPNotFound()
+        allowed = rel in ("preview.html", "props.json") or (rel.startswith(".preview/") and ".." not in rel.split("/"))
+        if not allowed:
+            try:
+                props = json.loads((folder / "props.json").read_text())
+            except (OSError, ValueError):
+                props = {}
+            named = set()
+
+            def walk(v):
+                if isinstance(v, str):
+                    named.add(v)
+                elif isinstance(v, dict):
+                    for x in v.values():
+                        walk(x)
+                elif isinstance(v, list):
+                    for x in v:
+                        walk(x)
+            walk(props)
+            allowed = rel in named and ".." not in rel.split("/") and not rel.startswith("/")
+        path = folder / rel
+        kind = self.REEL_TYPES.get(path.suffix.lower())
+        if not allowed or not kind or not path.is_file() or not path.resolve().is_relative_to(folder.resolve()):
+            raise web.HTTPNotFound()
+        headers = {"Content-Type": kind, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"}
+        if kind == "text/html":  # the site sets its own; on a computer of its own this keeps the page to its own files
+            headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                                                  "media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        return web.FileResponse(path, headers=headers)
+
     PREVIEW_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
     # Where a reply names a file: `in code`, a [link](target), or a bare path (the same places the apps look).
     NAMED_RE = re.compile(r"`([^`\n]+)`|\]\(<?([^()<>\n]+?)>?\)|((?:~|/)[^\s`'\"()<>\]]+)")
@@ -1449,6 +1491,7 @@ class WebApp:
         r.add_get("/api/chats/{pid}/files/{name}", self.download)
         r.add_post("/api/open", self.open_file)
         r.add_get("/api/file", self.shared_file)
+        r.add_get("/reel/{name}/{path:.*}", self.reel_preview)
         r.add_get("/api/chats/{pid}/preview/{name}", self.preview)
         r.add_post("/api/chats/{pid}/reset", self.reset)
         r.add_post("/api/chats/{pid}/unclear", self.unclear)

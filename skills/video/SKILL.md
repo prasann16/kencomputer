@@ -196,7 +196,22 @@ their face at the wrong moment, captions colliding with an over-the-video graphi
 
 The first time, this sets up Remotion (a one-time download, a few minutes): tell them in one line.
 
-## 5. Render and check
+## 5. Send a preview, render when they say it's right
+
+    <ken> --video-preview videos/<short-name>
+
+gives a link that plays the reel in their browser, phone or Telegram, nothing rendered: the same captions, graphics
+and timing the final video will have, ready in a second. **Send the link, not a video**, in one short paragraph as a
+confident editor would: what you did and one question, never how you checked it or a file path ("Here's your reel to
+watch, 52 seconds: I opened with the line about quitting your job, cut the two retakes, and added graphics for the
+300% number and your three rules. Tell me what to change; when it's right I'll make the final video.").
+The link reads `props.json` when it opens, so after any change the same link shows it: say "same link, reload it".
+
+**Render only when they say it's right** ("looks good", "post it", "send me the file"), or when they ask for the
+video itself: posting and downloading need the file. "Post it at 2 p.m." counts as saying it's right: render, then
+schedule it.
+
+### Render
 
     <ken> --video-render videos/<short-name>
 
@@ -218,11 +233,8 @@ always right). Then:
 - Re-read the cut words in order: does the story flow, is any sentence chopped mid-thought?
 
 Fix what's wrong, check the fix with stills, then render again. Don't send something you wouldn't post. Then send
-`reel.mp4` in one short paragraph: what you did and one question, as a confident editor would, never how you checked
-it (no "I haven't watched it", no "I only checked stills") and never a file path. Videos stay 7 days, so end with
-that: "Here's your reel, 52 seconds. I opened with the line about quitting your job, cut the two retakes, and added
-graphics for the 300% number and your three rules. Want the captions in your brand orange? It's here for 7 days, so
-download it to keep it."
+`reel.mp4` with one line, never a file path. Videos stay 7 days, so end with that: "Here's the final video. It's here
+for 7 days, so download it to keep it."
 
 ## Changes later
 
@@ -231,5 +243,6 @@ what they asked in `props.json`, or cut again with the changed ranges (it keeps 
 everything else in `props.json`; move graphics after a change by the same amount). Cut again only when the words
 change; it re-encodes only the parts that changed. To hold the ending longer (room for a call to action), raise
 `durationSeconds`: the last frame holds. Never make a new video file by hand: the whole reel renders again. Check
-stills of only what changed, render, check the strip once.
+stills of only what changed, run `--video-preview` again and tell them the same link shows it. Render once they say
+it's right.
 Note every correction in their style note, since it probably applies to future reels too.

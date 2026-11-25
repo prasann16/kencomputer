@@ -9,6 +9,7 @@ its own Node, the kit's packages and the Chrome it draws with, all in <home>/too
                                                  cut to those words, in the order said (or `all`): cut.mp4 and props.json
     ken --video-colors <folder>                  the colours in the footage (most present first) and a light and a dark from the room
     ken --video-stills <folder> 1.5 9 24         a few frames of the reel, side by side in checks/sheet.jpg
+    ken --video-preview <folder>                 a link that plays the reel live, nothing rendered (for edits)
     ken --video-render <folder> [--plan]         reel.mp4 from props.json (--plan: how much would be drawn)
     ken --video-setup                            set up Remotion now (safe to repeat)
 """
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -130,7 +132,7 @@ def _run(cmd: list[str], cwd: Path, home: Path) -> None:
         raise SystemExit(f"{' '.join(Path(c).name for c in cmd[:2])} failed:\n{(r.stderr or r.stdout)[-2000:]}")
 
 
-ENGINE = ("compose.mjs", "lib.mjs", "plan.mjs", "render.mjs", "stills.mjs", "tsconfig.json", "sfx")
+ENGINE = ("compose.mjs", "lib.mjs", "plan.mjs", "preview.mjs", "preview.tsx", "render.mjs", "stills.mjs", "tsconfig.json", "sfx")
 
 
 def _project(home: Path, folder: Path, say=print) -> None:
@@ -628,6 +630,29 @@ def stills(home: Path, folder: Path, times: list[str], say=print) -> None:
         raise SystemExit("Usage: --video-stills <folder> <seconds...>")
 
 
+def preview_link(home: Path, folder: Path) -> str:
+    """Where the reel's live preview opens: on the site hosting this Ken (signed in), or in the web app on this
+    computer. Only reels in the workspace's videos folder are served (web.py reel_preview)."""
+    if folder.parent != home / "work" / "videos":
+        raise SystemExit(f"Only a reel in {home / 'work' / 'videos'} can be previewed; {folder} isn't one.")
+    url = os.environ.get("KEN_KEEPALIVE_URL", "")
+    site = url.rsplit("/box/", 1)[0] if url.startswith("https://") and "/box/" in url else ""
+    base = site or f"http://127.0.0.1:{os.environ.get('KEN_WEB_PORT', '7777')}"
+    return f"{base}/reel/{urllib.parse.quote(folder.name)}/"
+
+
+def preview(home: Path, folder: Path, say=print) -> str:
+    """The live preview: a page that plays the reel in the browser from props.json and the footage, nothing rendered.
+    It reads props.json when it opens, so after an edit the same link shows the change."""
+    link = preview_link(home, folder)
+    _sdr_clips(folder, _props(folder), say)
+    _project(home, folder, say)
+    if _node(home, folder, ["preview.mjs", str(folder)]):
+        raise SystemExit("The preview didn't build; the lines above say why.")
+    say(f"Live preview: {link}")
+    return link
+
+
 def main(argv: list[str], home: Path) -> None:
     say = lambda line: print(line, flush=True)
     folder = lambda: Path(os.path.expanduser(argv[1])).resolve()
@@ -643,6 +668,8 @@ def main(argv: list[str], home: Path) -> None:
         cut(folder(), " ".join(a for a in rest if a != "--no-zoom") or None, say, speed=speed, zoom=zoom)
     elif argv[0] == "--video-render" and len(argv) > 1:
         render(home, folder(), say, plan="--plan" in argv[2:])
+    elif argv[0] == "--video-preview" and len(argv) > 1:
+        preview(home, folder(), say)
     elif argv[0] == "--video-colors" and len(argv) > 1:
         colors(folder(), say)
     elif argv[0] == "--video-stills" and len(argv) > 1:
