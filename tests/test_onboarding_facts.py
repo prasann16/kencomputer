@@ -1,5 +1,5 @@
 """What they told the hosting site while their computer was being set up (hosted Ken's welcome): Ken's next turn is
-told, and Ken files it where it belongs itself (nothing is written for it); the morning brief job and the getting-to-know
+told, and Ken files it where it belongs itself (only their name for Ken is written, so its chat shows it); the morning brief job and the getting-to-know
 checklist are set, so Ken is useful from minute one and doesn't ask again."""
 import json
 import os
@@ -26,12 +26,16 @@ def fresh_soul(engine):
     engine.context_file(HOME).write_text((REPO / "SOUL.template.md").read_text().replace("{{NAME}}", "my human"))
 
 
-def test_nothing_is_written_for_ken_its_next_turn_is_told(engine):
+def test_only_the_name_is_written_for_ken_its_next_turn_is_told(engine):
     fresh_soul(engine)
     before = engine.context_file(HOME).read_text()
+    assert engine.home_name() == "Ken" and engine.chats_list()[0]["name"] == "Ken"
     covered = engine.apply_onboarding(FACTS)
     assert set(covered) == {"ken-name", "call-you", "work", "tools", "brief-time", "style"}
-    assert engine.context_file(HOME).read_text() == before
+    after = engine.context_file(HOME).read_text()
+    assert after.splitlines()[0] == "# You are Juno" and after.splitlines()[1:] == before.splitlines()[1:]
+    assert engine.home_name() == "Juno" and engine.chats_list()[0]["name"] == "Juno"
+    assert engine.chat_view(HOME)["name"] == "Juno"
     assert not (engine.memory_dir(HOME) / "about-them.md").exists()
     told = engine.kv_get(f"onboarding:said:{HOME}")
     for part in ("call them: Sam", "their work: runs a two-person design studio", "would like help with: a rebrand",
