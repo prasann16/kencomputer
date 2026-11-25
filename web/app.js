@@ -298,7 +298,7 @@ function LibraryPhotos({ items }) {
 function LibraryPicker({ onPick, onClose }) {
   const [list, setList] = useState(() => cached('library'));
   const [picked, setPicked] = useState([]);
-  useEffect(() => { lib('list').then((r) => { setList(r); keep('library', r); indexLibrary(r); onChanged?.(r); }).catch(() => {}); }, []);
+  useEffect(() => { lib('list').then((r) => { setList(r); keep('library', r); indexLibrary(r); }).catch(() => {}); }, []);
   useEffect(() => { const key = (e) => e.key === 'Escape' && onClose(); addEventListener('keydown', key); return () => removeEventListener('keydown', key); }, []);
   const all = (list?.groups || []).flatMap((g) => g.items).filter((it) => it.kind !== 'file');
   const toggle = (it) => setPicked((p) => p.some((x) => x.id === it.id) ? p.filter((x) => x.id !== it.id) : [...p, it]);
@@ -369,7 +369,7 @@ function LibraryPage({ toast, show = 'all', onChanged }) {
   const [adding, setAdding] = useState(false); // the Add menu (only when Google Photos is on for them)
   const [google, setGoogle] = useState(null); // while they pick in Google Photos: { done, total } once copying
   const googleRun = useRef(null);
-  const load = () => lib('list').then((r) => { setLib(r); keep('library', r); indexLibrary(r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
+  const load = () => lib('list').then((r) => { setLib(r); keep('library', r); indexLibrary(r); onChanged?.(r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
   useEffect(() => { load(); libraryQueue.arrived.add(load); return () => libraryQueue.arrived.delete(load); }, []);
   useEffect(() => {
     if (!lib_?.groups?.some((g) => g.items.some((it) => !it.thumb && it.kind !== 'file'))) return;
