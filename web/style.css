@@ -842,3 +842,9 @@ ol.conn-steps li { margin: 2px 0; }
 /* A reel's live preview, playing in Ken's message (ReelPreview in app.js). */
 .reel-preview { width: min(100%, 300px); aspect-ratio: 9 / 16; margin-top: 10px; border-radius: 14px; overflow: hidden; background: #000; }
 .reel-preview iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+/* Connecting Claude or ChatGPT from Settings opens in a pop-up, over the list (the steps inside are Connect's own). */
+.connect-modal { width: min(440px, calc(100vw - 32px)); }
+.connect-modal > h2 { display: none; }  /* Connect has its own heading */
+.connect-modal .connect { flex: none; overflow: visible; padding: var(--s4) var(--s2) var(--s2); }
+.connect-modal .connect .btn { min-width: 0; width: min(260px, 100%); }

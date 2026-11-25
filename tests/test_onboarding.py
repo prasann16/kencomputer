@@ -20,6 +20,15 @@ def fake_cli(tmp_path, monkeypatch, script: str):
     cli.chmod(0o755)
     monkeypatch.setattr(onboarding, "claude_cli", lambda: str(cli))
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    checked.clear()
+
+    async def check(token="", api_key=""):  # Anthropic says the whole token works, and nothing else
+        checked.append(token)
+        return "" if token == TOKEN else "Claude didn’t accept that. Check you copied all of it and try again."
+    monkeypatch.setattr(onboarding, "check_claude", check)
+
+
+checked: list[str] = []
 
 
 def make(tmp_path):
@@ -257,3 +266,29 @@ async def test_a_dead_sign_in_never_moves_them_to_ken_ai_credits_by_itself(tmp_p
     await setup.use_credits(False)
     await setup.disconnect()  # disconnecting by hand is their choice: credits as before
     assert onboarding.included_ai_in_use()
+
+
+async def test_a_token_still_being_printed_is_never_saved_half(tmp_path, monkeypatch):
+    # The CLI's output arrives in pieces: half a token on screen is not a token yet.
+    half, rest = TOKEN[:60], TOKEN[60:]  # long enough to look like a token on its own
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nsleep 0.3\nprintf "Your token: {half}"\nsleep 1\necho "{rest}"\nsleep 0.3\n')
+    setup, calls = make(tmp_path)
+    await setup.start()
+    for _ in range(50):
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            break
+        await asyncio.sleep(0.1)
+    assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") == TOKEN
+    assert half not in checked  # never even tried
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+
+
+async def test_a_token_anthropic_refuses_is_not_saved_and_the_screen_says_so(tmp_path, monkeypatch):
+    bad = "sk-ant-oat01-" + "zzz_ZZZ-999" * 5
+    fake_cli(tmp_path, monkeypatch, f'echo "{URL}"\nread code\necho "Your token: {bad}"\n')
+    setup, calls = make(tmp_path)
+    await setup.start()
+    with pytest.raises(RuntimeError, match="didn’t accept"):
+        await setup.submit("the-code")
+    assert not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") and "CLAUDE_CODE_OAUTH_TOKEN" not in ((tmp_path / ".env").read_text() if (tmp_path / ".env").exists() else "")
+    assert calls == []

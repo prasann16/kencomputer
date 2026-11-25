@@ -40,6 +40,9 @@ exit 0
 # The CLI draws its screen with terminal codes; a stray one can eat the "o" (seen as "sk-ant-at01-…"), so accept that
 # and put it back (_token).
 TOKEN = re.compile(r"sk-ant-o?at\d{2}-[A-Za-z0-9_-]{40,}")
+# The CLI's output arrives in pieces: a token is only whole once something follows it (or the CLI has finished).
+# Taking it earlier saved half a token, which Anthropic refused on the first message ("401 authentication_failed").
+TOKEN_DONE = re.compile(r"sk-ant-o?at\d{2}-[A-Za-z0-9_-]{40,}(?=[^A-Za-z0-9_-])")
 CLAUDE_API_KEY = re.compile(r"^sk-ant-api[A-Za-z0-9_-]{20,}$")
 OPENAI_API_KEY = re.compile(r"^sk-[A-Za-z0-9_-]{20,}$")
 # AI a hosting plan includes: the host runs an Anthropic-compatible endpoint (KEN_INCLUDED_AI_URL) that holds the
@@ -278,8 +281,8 @@ class Onboarding:
         """Approving in the browser usually finishes the sign-in with no code to paste: save the token the CLI prints.
         If Claude says no instead, or the CLI stops, say so on screen rather than waiting forever."""
         for _ in range(1800 * 5):
-            if token := TOKEN.search(self.output):
-                await self._save(token.group(0))
+            if token := self._whole_token():
+                await self._save(token)
                 break
             if problem := FAILED.search(self.output):
                 said = re.sub(r"\s*Press Enter.*$", "", problem.group(0)).strip()
@@ -302,10 +305,20 @@ class Onboarding:
         import crash
         crash.track("connect_failed", tool="claude", reason=reason)
 
-    async def _save(self, token: str) -> None:
+    def _whole_token(self) -> str:
+        """The token the CLI printed, once all of it is there."""
+        found = TOKEN_DONE.search(self.output) or (TOKEN.search(self.output) if self.exited else None)
+        return found.group(0) if found else ""
+
+    async def _save(self, token: str) -> bool:
+        """Saves their Claude sign-in once Anthropic says it works; a refused one is never saved (the screen says so,
+        rather than their first message failing). False when it wasn't saved."""
         token = re.sub(r"^sk-ant-at", "sk-ant-oat", token)  # a terminal code ate the "o" (see TOKEN)
         if token == self.saved:  # the browser and a pasted code can both deliver it
-            return
+            return True
+        if problem := await check_claude(token=token):
+            self._failed(problem, "token refused")
+            return False
         self.saved = token
         save_env(self.env_file, "CLAUDE_CODE_OAUTH_TOKEN", token)
         drop_env(self.env_file, "KEN_USE_CREDITS")  # connecting their own Claude is choosing it
@@ -314,6 +327,7 @@ class Onboarding:
             await self.on_connected()  # the token is saved either way
         except Exception:
             log.exception("post-connect refresh failed")
+        return True
 
     async def save_token(self, token: str) -> dict:
         """A token made with `claude setup-token` on any computer (the sign-in here needs a browser on this one)."""
@@ -425,13 +439,14 @@ class Onboarding:
         # The CLI answers a code within seconds: the token, or an error such as "OAuth error: … 400". Say which at once.
         token, problem = "", ""
         for _ in range(60 * 5):
-            if match := TOKEN.search(self.output):
-                token = match.group(0)
+            if found := self._whole_token():
+                token = found
                 break
             if match := FAILED.search(self.output[before:]):
                 problem = re.sub(r"\s*Press Enter.*$", "", match.group(0)).strip()
                 break
             if self.exited:
+                token = self._whole_token()  # all it printed is in: a token at the very end counts
                 break
             await asyncio.sleep(0.2)
         self.stop()
@@ -447,7 +462,8 @@ class Onboarding:
             except OSError:
                 pass
             raise RuntimeError("That code didn’t work. Connect again and paste the new code.")
-        await self._save(token)
+        if not await self._save(token):
+            raise RuntimeError(self.error)
         return self.status()
 
     def _read(self) -> None:

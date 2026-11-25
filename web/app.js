@@ -2141,7 +2141,8 @@ function Settings({ onClose, onTab, toast, onAddTool, setup, onConnected, meta =
         <input class="job-switch" type="checkbox" role="switch" aria-label="Keep going on Ken AI credits when your plan hits its limit" checked=${auto} onChange=${(e) => keepGoing(e.target.checked)}/></div>`);
       return rows;
     })()}</div>
-    ${reconnect && html`<${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/>`}`)}
+    ${reconnect && html`<${Modal} title=${'Connect ' + (reconnect === 'codex' ? 'ChatGPT' : 'Claude')} className="connect-modal" closeX onClose=${() => setReconnect('')}>
+      <${Connect} key=${reconnect} backend=${reconnect} onDone=${(r) => { setReconnect(''); onConnected(r); toast('Account connected.'); }}/><//>`}`)}
   ${HOSTED && section('apps', 'Apps', html`<${HostedApps}/>`)}
   ${section('phone', 'Phone', HOSTED ? html`<${HostedPhone}/>`
     : html`<div class="phone-body"><p class="np-help">Text or talk to Ken from anywhere with Telegram. Same Ken, same chat.</p><${PhoneSteps} toast=${toast}/></div>`)}
