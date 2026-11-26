@@ -262,10 +262,23 @@ def store_watching_copy(copy: Path, refs: list[str], upload: bool = True) -> Non
 # ------------------------------------------------------------------ Ken's command line
 
 def _day(s: str) -> int | None:
+    """YYYY-MM-DD, or today / yesterday (this computer's day), as epoch ms."""
+    if s in ("today", "yesterday"):
+        start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        return int(start.timestamp() * 1000) - (86_400_000 if s == "yesterday" else 0)
     try:
         return int(datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
     except ValueError:
         return None
+
+
+def _added(ms) -> str:
+    """When they put it in: today, yesterday, or the date."""
+    if not ms:
+        return ""
+    day = datetime.fromtimestamp(ms / 1000).astimezone().date()
+    today = datetime.now().astimezone().date()
+    return "added today" if day == today else "added yesterday" if (today - day).days == 1 else f"added {day.strftime('%d %b')}"
 
 
 def describe(it: dict) -> str:
@@ -278,6 +291,8 @@ def describe(it: dict) -> str:
     if it.get("width") and it.get("height"):
         bits.append("vertical" if it["height"] > it["width"] else "horizontal")
     bits.append(it["name"])
+    if it.get("added"):
+        bits.append(_added(it["added"]))
     if it.get("album"):
         bits.append(f"album: {it['album']}")
     line = " · ".join(str(b) for b in bits)
@@ -285,7 +300,8 @@ def describe(it: dict) -> str:
 
 
 def main(args: list[str], home: Path) -> int:
-    """ken --library find [words] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--kind photo|video] [--limit N]
+    """ken --library find [words] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--kind photo|video] [--added-since today|yesterday|YYYY-MM-DD] [--limit N]
+         (--from/--to: when it was taken; --added-since: when they put it in, newest added first)
        ken --library get <id> [<id> …] [--seconds A-B]   → a copy in ~/.ken/work/library/ (only part of a video with --seconds)
        ken --library thumb <id> [<id> …]                → its small thumbnail, to look at quickly
        ken --library note <id> <what's in it>
@@ -297,12 +313,12 @@ def main(args: list[str], home: Path) -> int:
     cmd, rest = args[0], args[1:]
     try:
         if cmd == "find":
-            q, opts, words = {}, {"--from": "from", "--to": "to", "--kind": "kind", "--limit": "limit"}, []
+            q, opts, words = {}, {"--from": "from", "--to": "to", "--kind": "kind", "--limit": "limit", "--added-since": "added_from"}, []
             i = 0
             while i < len(rest):
                 if rest[i] in opts and i + 1 < len(rest):
                     v = rest[i + 1]
-                    q[opts[rest[i]]] = str(_day(v) if opts[rest[i]] in ("from", "to") else v)
+                    q[opts[rest[i]]] = str(_day(v) if opts[rest[i]] in ("from", "to", "added_from") else v)
                     i += 2
                 else:
                     words.append(rest[i])
