@@ -548,7 +548,7 @@ function inline(text) {
     return parts.map((part, j) => {
       if (j % 3 === 1) return null;
       if (j % 3 === 2) { const label = parts[j - 1];
-        return /^https?:\/\//.test(part) ? html`<a href=${part} target="_blank" rel="noopener">${label}</a>` : isPath(part) || part.startsWith('/') ? fileLink(part, label) : label; }
+        return /^https?:\/\//.test(part) ? html`<a href=${part} target="_blank" rel="noopener">${label}</a>` : isPath(part) || part.startsWith('/') ? fileLink(part, isPath(label) ? label.replace(/\/$/, '').split('/').pop() : label) : label; }
       return words(part);
     });
   });
