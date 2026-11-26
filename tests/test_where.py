@@ -116,3 +116,12 @@ def test_a_new_cloud_ken_wakes_up_in_its_own_computer(on):
     cloud = on("cloud")
     assert "inside your own computer in the cloud" in cloud and "inside their computer" not in cloud
     assert "inside their computer" in on("mac")
+
+
+def test_every_agent_knows_their_library_when_its_on(on, monkeypatch):
+    on("cloud", browser=False)
+    monkeypatch.setattr(bot, "LIBRARY_ON", True)
+    assert "--library find" in bot.agent_tools_prompt(set())  # no built-ins picked: still sees their photos and clips
+    assert "--library find" in bot.agent_tools_prompt({"browser"})
+    monkeypatch.setattr(bot, "LIBRARY_ON", False)
+    assert "--library" not in bot.agent_tools_prompt(set())  # off for them: their agents never hear of it
