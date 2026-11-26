@@ -82,3 +82,21 @@ def test_show_puts_them_in_the_chat_ken_is_in(monkeypatch, tmp_path, capsys):
     req = json.loads(next((tmp_path / "requests").glob("*.json")).read_text())
     assert req == {"type": "library_show", "agent": "brand", "items": [{"id": a, "kind": "video", "name": "IMG_2.MOV", "place": "Lisbon, Portugal"}]}
     assert "Showing 1" in capsys.readouterr().out
+
+
+def test_find_what_they_just_added(monkeypatch, capsys, tmp_path):
+    asked = []
+    now_ms = int(library.datetime.now().timestamp() * 1000)
+
+    def fake(path, body=None, **kw):
+        asked.append(path)
+        return {"total": 28, "items": [{"id": "b" * 16, "kind": "video", "taken_at": 1779700000000, "name": "IMG_0158.MOV",
+                                         "duration": 10, "added": now_ms}]}
+
+    monkeypatch.setattr(library, "call", fake)
+    assert library.main(["find", "--kind", "video", "--added-since", "today"], tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "IMG_0158.MOV · added today" in out
+    since = int(dict(p.split("=") for p in asked[0].split("?", 1)[1].split("&"))["added_from"])
+    assert 0 <= now_ms - since <= 86_400_000  # the start of this computer's day
+    assert library._added(now_ms - 86_400_000).startswith(("added yesterday", "added today"))
