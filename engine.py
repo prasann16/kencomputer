@@ -1409,7 +1409,7 @@ class Engine:
         for f in sorted(d.glob("*.md")) if d.is_dir() else []:
             first = next((ln.strip().lstrip("#").strip() for ln in f.read_text(errors="replace").splitlines() if ln.strip()), "")
             notes.append({"name": f.name, "about": first[:140]})
-        out = {"id": pid, "name": "Ken" if pid == HOME else self.get_agent(pid)["name"], "context": context,
+        out = {"id": pid, "name": self.home_name() if pid == HOME else self.get_agent(pid)["name"], "context": context,
                "memory": notes, "files": self.list_files(pid)}
         out.update(tools=self.tools_config(pid), builtin=list(BUILTIN_TOOLS), keys=self.list_keys(pid),
                    path="" if pid == HOME else self.get_agent(pid).get("path", ""),
@@ -2983,7 +2983,7 @@ class Engine:
 
     def chats_list(self) -> list[dict]:
         """Ken first, then each project — like a chat app's list."""
-        rows = [(HOME, "Ken", "#1B1A17", "")] + [  # the main chat is titled Ken; its soul file keeps any name they gave it
+        rows = [(HOME, self.home_name(), "#1B1A17", "")] + [
             (p["id"], p["name"], p["color"], picture(p)) for p in self.list_agents()]
         out = []
         for pid, name, color, emoji in rows:
@@ -3057,7 +3057,7 @@ class Engine:
 
     def apply_onboarding(self, facts: dict) -> list[str]:
         """What they told the hosting site about themselves while their computer was set up (each a few plain words).
-        Only their name for Ken is written at once (into its soul file; the chat itself stays titled Ken). The rest, Ken's next turn is told, and Ken files
+        Only their name for Ken is written at once (its chat shows it). The rest, Ken's next turn is told, and Ken files
         what's worth keeping where it belongs (soul file or memory), as with anything else it learns. Returns the getting-to-know items it answers."""
         def clean(key: str, limit: int = 300) -> str:
             value = facts.get(key)
@@ -3070,7 +3070,7 @@ class Engine:
                                             ("brief-time", brief)) if value]
         said = "; ".join(f"{k}: {v}" for k, v in (("call them", call), ("your name", ken), ("their work", work),
                          ("would like help with", busy), ("apps", apps), ("morning brief", brief), ("how to talk to them", style)) if v)
-        if ken:  # their name for Ken goes into its soul file at once, before Ken's first turn files the rest
+        if ken:  # their name for Ken shows on its chat at once, before Ken's first turn files the rest
             soul = self.context_file(HOME)
             try:
                 lines = soul.read_text().splitlines(keepends=True)
@@ -3129,7 +3129,7 @@ class Engine:
         }
 
     def chat_view(self, pid: str) -> dict:
-        name = "Ken" if pid == HOME else self.get_agent(pid)["name"]
+        name = self.home_name() if pid == HOME else self.get_agent(pid)["name"]
         boundary = json.loads(self.kv_get(f"thread:{pid}") or "{}")
         messages = [m for m in self.messages(pid) if m["id"] > boundary.get("after", 0)]
         return {"id": pid, "name": name, "messages": messages, "busy": self.chat_busy(pid) or pid in self._greeting,

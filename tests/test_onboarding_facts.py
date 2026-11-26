@@ -34,8 +34,8 @@ def test_only_the_name_is_written_for_ken_its_next_turn_is_told(engine):
     assert set(covered) == {"ken-name", "call-you", "work", "tools", "brief-time", "style"}
     after = engine.context_file(HOME).read_text()
     assert after.splitlines()[0] == "# You are Juno" and after.splitlines()[1:] == before.splitlines()[1:]
-    assert engine.home_name() == "Juno"  # the soul file has their name for Ken
-    assert engine.chats_list()[0]["name"] == "Ken" and engine.chat_view(HOME)["name"] == "Ken"  # the chat stays titled Ken
+    assert engine.home_name() == "Juno" and engine.chats_list()[0]["name"] == "Juno"
+    assert engine.chat_view(HOME)["name"] == "Juno"
     assert not (engine.memory_dir(HOME) / "about-them.md").exists()
     told = engine.kv_get(f"onboarding:said:{HOME}")
     for part in ("call them: Sam", "their work: runs a two-person design studio", "would like help with: a rebrand",
