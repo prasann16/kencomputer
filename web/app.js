@@ -2378,45 +2378,50 @@ function RemoveProject({ project, onClose, onDone }) {
   <//>`;
 }
 
-// Ideas for a new agent: five at random each time, so the box shows what's possible without a wall of choices.
+// Ideas for a new agent: five at random each time, so the box shows what's possible without a wall of choices. The third
+// word list is who each suits: the welcome's profiles (hosted: /account/profile.json); anyone else sees them all.
 const AGENT_IDEAS = [
-  ["Marketing", "Run my marketing: grow signups from X and Instagram, draft posts in my voice, and ask me before posting anything."],
-  ["My business", "Help me grow my business: watch sales and signups, find what holds them back, and send me a short report every morning."],
-  ["Personal brand", "Grow my personal brand: draft one post a day in my voice and learn what does well."],
-  ["Life admin", "Keep my life admin on track: bills, renewals, appointments and forms. Remind me before anything is due."],
-  ["Dating", "Help with my dating: improve my profile and openers. Never message anyone yourself."],
-  ["Sales", "Follow up my sales leads: keep a list of who I'm talking to, draft the next message for each, and remind me who's gone quiet."],
-  ["Research", "Be my researcher: when I give you a topic, dig into it and send me a short brief with sources."],
-  ["Inbox", "Keep my inbox under control: every morning tell me what needs a reply, and draft the replies for me to approve."],
-  ["Job hunt", "Help me find a job: look for roles that fit me every day, tailor my CV and cover letter, and track where I've applied."],
-  ["Fitness", "Be my fitness coach: plan my week's workouts, check in each day, and adjust when I miss one."],
-  ["Meals", "Plan my meals: a week of dinners I'd like, with one shopping list every Sunday."],
-  ["Money", "Keep an eye on my money: track what I spend each month, flag subscriptions I don't use, and tell me where I can save."],
-  ["Travel", "Plan my trips: find flights and places to stay, build a day-by-day plan, and keep my bookings in one place."],
-  ["Newsletter", "Write my newsletter: draft one issue a week from what I've been working on, in my voice, for me to edit."],
-  ["YouTube", "Grow my YouTube channel: find video ideas that are working in my niche, write titles and outlines, and review what did well."],
-  ["Reels", "Make my reels: turn my talking videos into short clips with captions, and draft the post text."],
-  ["Customers", "Look after my customers: read new support messages, draft replies, and tell me about problems that keep coming up."],
-  ["Competitors", "Watch my competitors: check what they launch, post and charge each week, and tell me what matters."],
-  ["Learning", "Teach me something: build a plan for the skill I pick, give me one short lesson a day, and quiz me on Fridays."],
-  ["Language", "Help me learn a language: ten minutes of practice a day, at my level, and correct my mistakes."],
-  ["Reading", "Be my reading partner: suggest books I'd like, keep my reading list, and send me the key ideas of what I finish."],
-  ["News", "Send me a morning briefing: the few stories in my field worth knowing today, each in two lines."],
-  ["Home", "Run my home: a list of repairs and chores, who to call for each, and reminders when things are due."],
-  ["Family", "Keep my family organised: school dates, birthdays, appointments and who's picking up whom."],
-  ["Side project", "Help me ship my side project: break it into small steps, give me one to do each day, and keep me honest."],
-  ["Writing", "Be my editor: help me write a little every day, keep my drafts, and tell me plainly what to fix."],
-  ["Networking", "Keep me in touch with people: remember who I've met, remind me to follow up, and draft the message."],
-  ["Investing", "Follow my investments: track what I hold, send a weekly summary, and flag news about them. Never trade for me."],
-  ["Events", "Plan my event: guest list, venue, timeline and reminders, and draft the invites."],
-  ["Health", "Keep my health on track: appointments, medication reminders and a simple log of how I'm feeling."],
+  ["Marketing", "Run my marketing: grow signups from X and Instagram, draft posts in my voice, and ask me before posting anything.", "founder creator freelancer"],
+  ["My business", "Help me grow my business: watch sales and signups, find what holds them back, and send me a short report every morning.", "founder freelancer"],
+  ["Personal brand", "Grow my personal brand: draft one post a day in my voice and learn what does well.", "founder creator freelancer job"],
+  ["Life admin", "Keep my life admin on track: bills, renewals, appointments and forms. Remind me before anything is due.", "freelancer job student"],
+  ["Dating", "Help with my dating: improve my profile and openers. Never message anyone yourself.", "job student"],
+  ["Sales", "Follow up my sales leads: keep a list of who I'm talking to, draft the next message for each, and remind me who's gone quiet.", "founder freelancer"],
+  ["Research", "Be my researcher: when I give you a topic, dig into it and send me a short brief with sources.", "founder freelancer job student"],
+  ["Inbox", "Keep my inbox under control: every morning tell me what needs a reply, and draft the replies for me to approve.", "founder freelancer job"],
+  ["Job hunt", "Help me find a job: look for roles that fit me every day, tailor my CV and cover letter, and track where I've applied.", "job student freelancer"],
+  ["Fitness", "Be my fitness coach: plan my week's workouts, check in each day, and adjust when I miss one.", "creator job student"],
+  ["Meals", "Plan my meals: a week of dinners I'd like, with one shopping list every Sunday.", "job student"],
+  ["Money", "Keep an eye on my money: track what I spend each month, flag subscriptions I don't use, and tell me where I can save.", "founder freelancer job student"],
+  ["Travel", "Plan my trips: find flights and places to stay, build a day-by-day plan, and keep my bookings in one place.", "creator job freelancer"],
+  ["Newsletter", "Write my newsletter: draft one issue a week from what I've been working on, in my voice, for me to edit.", "founder creator freelancer"],
+  ["YouTube", "Grow my YouTube channel: find video ideas that are working in my niche, write titles and outlines, and review what did well.", "creator"],
+  ["Reels", "Make my reels: turn my talking videos into short clips with captions, and draft the post text.", "creator"],
+  ["Customers", "Look after my customers: read new support messages, draft replies, and tell me about problems that keep coming up.", "founder freelancer"],
+  ["Competitors", "Watch my competitors: check what they launch, post and charge each week, and tell me what matters.", "founder"],
+  ["Learning", "Teach me something: build a plan for the skill I pick, give me one short lesson a day, and quiz me on Fridays.", "job student"],
+  ["Language", "Help me learn a language: ten minutes of practice a day, at my level, and correct my mistakes.", "job student"],
+  ["Reading", "Be my reading partner: suggest books I'd like, keep my reading list, and send me the key ideas of what I finish.", "founder job student"],
+  ["News", "Send me a morning briefing: the few stories in my field worth knowing today, each in two lines.", "founder job"],
+  ["Home", "Run my home: a list of repairs and chores, who to call for each, and reminders when things are due.", "job"],
+  ["Family", "Keep my family organised: school dates, birthdays, appointments and who's picking up whom.", "job"],
+  ["Side project", "Help me ship my side project: break it into small steps, give me one to do each day, and keep me honest.", "founder creator job student"],
+  ["Writing", "Be my editor: help me write a little every day, keep my drafts, and tell me plainly what to fix.", "creator student"],
+  ["Networking", "Keep me in touch with people: remember who I've met, remind me to follow up, and draft the message.", "founder creator freelancer job"],
+  ["Investing", "Follow my investments: track what I hold, send a weekly summary, and flag news about them. Never trade for me.", "founder freelancer job"],
+  ["Events", "Plan my event: guest list, venue, timeline and reminders, and draft the invites.", "founder creator"],
+  ["Health", "Keep my health on track: appointments, medication reminders and a simple log of how I'm feeling.", "job student"],
 ];
 
 function NewAgent({ onClose, onCreated, setup }) {
   const backend = setup?.backend || 'claude';  // it thinks with what Ken thinks with; the chat's own menu changes it
   const [name, setName] = useState(''), [job, setJob] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [idea, setIdea] = useState('');  // the name a starting idea filled in, replaced by the next idea but never over theirs
-  const [ideas] = useState(() => [...AGENT_IDEAS].sort(() => Math.random() - 0.5).slice(0, 5));
+  const [shuffled] = useState(() => [...AGENT_IDEAS].sort(() => Math.random() - 0.5));
+  const [profile, setProfile] = useState(() => cached('profile'));  // what they said they do in the welcome (hosted only)
+  useEffect(() => { if (HOSTED) fetch('/account/profile.json', { credentials: 'same-origin' }).then((r) => r.ok ? r.json() : Promise.reject()).then((r) => { keep('profile', r.profile); setProfile(r.profile); }).catch(() => {}); }, []);
+  const mine = profile && profile !== 'other' ? shuffled.filter((i) => i[2].split(' ').includes(profile)) : [];
+  const ideas = (mine.length >= 5 ? mine : shuffled).slice(0, 5);
   const useIdea = ([label, text]) => { setJob(text); if (!name || name === idea) { setName(label); setIdea(label); } };
   const ready = job.trim() && !busy && setup?.providers?.[backend]?.connected !== false;
   const create = async () => {
