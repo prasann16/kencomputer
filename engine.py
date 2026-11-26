@@ -585,6 +585,8 @@ class Engine:
         # The built-in tools ("browser", "email", "calendar") an agent may be given: MCP servers, and their prompt.
         self.tools: Callable[[set, str], dict] = lambda only, backend: {}
         self.tools_prompt: Callable[[set], str] = lambda only: ""
+        # What's new in their Library since a time (epoch s), in a line for the turn's notes; '' when nothing or it's off (bot.py).
+        self.library_since: Callable[[float], str] = lambda since: ""
         self.history_hook: Callable[[str, str], None] | None = None
         self.new_install: Callable[[], bool] = lambda: False  # true until onboarding has begun
         self._greeting: set[str] = set()
@@ -1689,6 +1691,13 @@ class Engine:
         if jobs:
             parts.append("background jobs running: " + ", ".join(
                 f'{r["id"]} "{r["title"]}" ({r["status"]}, {int((time.time() - r["created"]) // 60)}m{self._latest_steps(r["id"])})' for r in jobs))
+        # Their Library is shared by every chat: what came in since this chat last spoke, as a fact (the chat decides what to do).
+        try:
+            library = await asyncio.to_thread(self.library_since, self._before_this_message_ts(pid))
+        except Exception:
+            library = ""
+        if library:
+            parts.append(library)
         if pid != HOME:
             since = self._last_message_ts(pid)
             new = [f["name"] for f in self.list_files(pid) if f["mtime"] > since]
@@ -1906,6 +1915,14 @@ class Engine:
         if said:
             self._aside.setdefault(pid, []).append(f"they: {text[:2000]}\nyou: {' '.join(said)[:2000]}")
         return bool(said)
+
+    def _before_this_message_ts(self, pid: str) -> float:
+        """When the chat last spoke before the message being answered now (theirs is logged just before this turn)."""
+        rows = self.db.execute("SELECT ts, data FROM events WHERE project=? AND type='message' ORDER BY id DESC LIMIT 2", (pid,)).fetchall()
+        if not rows:
+            return 0.0
+        latest_is_theirs = json.loads(rows[0]["data"]).get("role") == "you"
+        return (rows[1]["ts"] if len(rows) > 1 else 0.0) if latest_is_theirs else rows[0]["ts"]
 
     def _last_message_ts(self, pid: str) -> float:
         r = self.db.execute(

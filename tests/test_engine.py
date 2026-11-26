@@ -889,3 +889,21 @@ def test_agent_pictures_its_own_emoji_else_a_guess_else_none(engine):
     meta = json.loads(d.read_text()); meta["emoji"] = "not one"; d.write_text(json.dumps(meta))
     assert {c["id"]: c["emoji"] for c in engine.chats_list()}[insta["id"]] == "📸"
     assert engine.update_agent(insta["id"], emoji="🇵🇹")["emoji"] == "🇵🇹"
+
+
+async def test_every_chat_hears_whats_new_in_their_library_since_it_last_spoke(engine):
+    agent = engine.create_agent("Personal brand")
+    asked = []
+    engine.library_since = lambda since: (asked.append(since), "new in their Library since this chat last spoke: 3 videos")[1]
+    engine.log_message(agent["id"], "ken", "Send me the clips?")
+    before = engine._last_message_ts(agent["id"])
+    engine.log_message(agent["id"], "you", "Can you see them now?")  # theirs is logged just before the turn
+    assert "3 videos" in await engine.state(agent["id"])
+    assert asked[-1] == before  # counted from Ken's last word, not from the message being answered
+    assert "3 videos" in await engine.state("home")  # Ken too: the Library is theirs, not one chat's
+    engine.library_since = lambda since: ""
+    assert "Library" not in await engine.state(agent["id"])
+    def broken(since):
+        raise RuntimeError("site down")
+    engine.library_since = broken
+    assert await engine.state(agent["id"])  # a slow or broken Library never stops a reply

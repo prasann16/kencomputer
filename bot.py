@@ -2459,6 +2459,25 @@ async def library_pass() -> None:
         LIBRARY_BUSY = False
 
 
+def library_since(since: float) -> str:
+    """For a turn's notes: how many photos and videos came into their Library since `since` (epoch s), or ''."""
+    if not LIBRARY_ON or since <= 0:
+        return ""
+    import library
+    try:
+        items = library.call(f"find?added_from={int(since * 1000)}&sort=added&limit=200", timeout=5).get("items", [])
+    except Exception:
+        return ""
+    if not items:
+        return ""
+    kinds = {}
+    for it in items:
+        kinds[it.get("kind", "file")] = kinds.get(it.get("kind", "file"), 0) + 1
+    what = ", ".join(f"{n} {k}{'s' if n != 1 else ''}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+    day = time.strftime("%Y-%m-%d", time.localtime(since))
+    return f"new in their Library since this chat last spoke: {what} (`{KEN_CMD} --library find --added-since {day}` lists them)"
+
+
 def library_prompt() -> str:
     if not LIBRARY_ON:
         return ""
@@ -2527,6 +2546,7 @@ async def start_engine() -> WebApp | None:
     ENGINE.usable_brains = usable_brains
     ENGINE.credits_model = credits_model
     ENGINE.tools_prompt = agent_tools_prompt
+    ENGINE.library_since = library_since
     def on_home_message(role: str, text: str) -> None:
         log_history("you" if role == "you" else "assistant", text)
         if role != "you":
