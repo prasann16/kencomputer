@@ -100,3 +100,15 @@ def test_find_what_they_just_added(monkeypatch, capsys, tmp_path):
     since = int(dict(p.split("=") for p in asked[0].split("?", 1)[1].split("&"))["added_from"])
     assert 0 <= now_ms - since <= 86_400_000  # the start of this computer's day
     assert library._added(now_ms - 86_400_000).startswith(("added yesterday", "added today"))
+
+
+def test_library_since_counts_what_came_in(monkeypatch):
+    import bot
+    monkeypatch.setattr(bot, "LIBRARY_ON", True)
+    monkeypatch.setattr(library, "call", lambda path, **kw: {"items": [{"kind": "video"}, {"kind": "video"}, {"kind": "photo"}]} if "added_from=" in path else {})
+    line = bot.library_since(1_790_000_000)
+    assert line.startswith("new in their Library since this chat last spoke: 2 videos, 1 photo") and "--added-since" in line
+    monkeypatch.setattr(library, "call", lambda path, **kw: {"items": []})
+    assert bot.library_since(1_790_000_000) == ""
+    monkeypatch.setattr(bot, "LIBRARY_ON", False)
+    assert bot.library_since(1_790_000_000) == ""
