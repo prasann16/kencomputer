@@ -1091,7 +1091,9 @@ def browser_prompt() -> str:
 
 def agent_tools_prompt(only) -> str:
     """What an agent's built-in tools add to its instructions."""
-    return "\n\n".join(x for x in (browser_prompt() if "browser" in only else "", agent_apps_prompt(), video_prompt(), CONNECTIONS.prompt(only)) if x)
+    # Their Library is theirs, not Ken's: every agent can search it (a Personal brand agent asked for clips they'd put there).
+    return "\n\n".join(x for x in (browser_prompt() if "browser" in only else "", agent_apps_prompt(), video_prompt(), library_prompt(),
+                                     CONNECTIONS.prompt(only)) if x)
 
 
 def agent_apps_prompt() -> str:
