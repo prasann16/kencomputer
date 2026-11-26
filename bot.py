@@ -113,6 +113,10 @@ if sys.argv[1:2] == ["--library"]:  # hosted Ken: their Library of photos and vi
     import library
     raise SystemExit(library.main(sys.argv[2:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken")))))
 
+if sys.argv[1:2] == ["--roll"]:  # hosted Ken: their phone's camera roll, by day; the phone uploads what Ken picks (roll.py)
+    import roll
+    raise SystemExit(roll.main(sys.argv[2:]))
+
 if sys.argv[1:2] == ["--apps"]:  # hosted Ken: which apps are connected, and one-tap links for the rest (apps.py)
     import apps
     raise SystemExit(apps.main(sys.argv[2:]))
@@ -2441,6 +2445,19 @@ async def keep_awake() -> None:
 
 LIBRARY_BUSY = False
 LIBRARY_ON = False  # their Library is switched on for them (the site answers this computer's Library calls)
+ROLL_ON = False  # their phone's camera roll outline is switched on for them (roll.py)
+
+
+def check_roll() -> None:
+    global ROLL_ON
+    import roll
+    try:
+        roll.call("wants", timeout=10)
+        ROLL_ON = True
+    except roll.Off:
+        ROLL_ON = False
+    except Exception:
+        pass  # a slow answer changes nothing
 
 
 async def library_pass() -> None:
@@ -2451,6 +2468,7 @@ async def library_pass() -> None:
     try:
         done = await asyncio.to_thread(library.process_new, 50, log)
         LIBRARY_ON = done is not None
+        await asyncio.to_thread(check_roll)
         if done:
             log.info("library: %d new item(s) ready", done)
     except Exception as e:
@@ -2495,6 +2513,17 @@ def library_prompt() -> str:
         f"`{KEN_CMD} --library add <file>`. To show them the ones you picked (so they see the photos, not names or ids): "
         f"`{KEN_CMD} --library show <id> …`, then say what you chose and why. Never remove anything from it; they do "
         "that in the app's Library."
+    ) + (roll_prompt() if ROLL_ON else "")
+
+
+def roll_prompt() -> str:
+    return (
+        " THEIR CAMERA ROLL: you can also see what's on their phone without them picking anything: "
+        f"`{KEN_CMD} --roll days [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--kind video]` lists it day by day (how many photos and "
+        f"videos, how long), `{KEN_CMD} --roll day YYYY-MM-DD [--kind video]` lists that day's items, and `{KEN_CMD} --roll send <id> …` "
+        "has their phone upload those into their Library (it does while the Ken app is open; tell them to open it if it waits). "
+        "When a task needs their clips and the Library doesn't have them, narrow it down by day first (a trip, the gym days, "
+        "this summer), send only the ones worth a look, then use them from the Library as usual."
     )
 
 
