@@ -235,6 +235,34 @@ async function uploadToLibrary(file, onPart, extra = {}) {
   }
   return lib('done', { method: 'POST', json: { id: s.id, upload: s.upload, parts } });
 }
+// From Google Photos (the site does the Google part). The window is opened in the click itself (or the browser blocks
+// it) at google/start?n=<run>; this waits while they pick there, then has the site copy each one in. `run` names this
+// click, so a window or run left from an earlier click never answers for it. Gives back what to tell them.
+const GOOGLE_PHOTOS_OFF = "Google Photos isn't set up for Ken yet. You can add photos from this computer for now.";
+function openGooglePhotos(run) {
+  return window.open(LIB + 'google/start?n=' + run, 'ken-google-photos', 'popup,width=1000,height=760');
+}
+async function fromGooglePhotos(run, stopped, onProgress) {
+  try {
+    let items = null;
+    for (const until = Date.now() + 30 * 60_000; !items;) {
+      if (stopped()) return '';
+      if (Date.now() > until) throw new Error('Google Photos took too long. Please try again.');
+      const s = await lib('google/status?n=' + run);
+      if (s.state === 'picked') items = (await lib('google/items', { method: 'POST' })).items;
+      else await new Promise((r) => setTimeout(r, (s.poll || 2) * 1000));
+    }
+    if (!items.length) return 'Nothing was picked in Google Photos.';
+    let added = 0, missed = '';
+    for (const [i, it] of items.entries()) {
+      if (stopped()) break;
+      onProgress(i, items.length);
+      try { await lib('google/take', { method: 'POST', json: { id: it.id } }); added++; }
+      catch (e) { if (e.status === 413) throw e; missed = e.message; }
+    }
+    return missed ? `${added} of ${items.length} added. ${missed}` : added === 1 ? 'Added to your Library.' : `${added} added to your Library.`;
+  } finally { lib('google/done?n=' + run, { method: 'POST' }).catch(() => {}); }
+}
 function LibraryPage({ toast }) {
   const [lib_, setLib] = useState(() => cached('library'));
   const [picked, setPicked] = useState(new Set());
@@ -243,6 +271,8 @@ function LibraryPage({ toast }) {
   const [selecting, setSelecting] = useState(false);
   const [sending, setSending] = useState(null); // {done, total, bytes, size}
   const [confirming, setConfirming] = useState(false);
+  const [google, setGoogle] = useState(false); // waiting while they pick in Google Photos
+  const googleRun = useRef(null);
   const [show, setShow] = useState('all'); // All, Photos, Videos, Files, Made by Ken
   const chooser = useRef(null);
   const load = () => lib('list').then((r) => { setLib(r); keep('library', r); }).catch((e) => e.status === 404 ? setLib({ off: true }) : toast(e.message));
@@ -268,6 +298,16 @@ function LibraryPage({ toast }) {
     } catch (e) { toast(e.message); }
     setSending(null); load();
   };
+  const fromGoogle = async () => {
+    if (!lib_?.google) return toast(GOOGLE_PHOTOS_OFF);
+    const run = Math.random().toString(36).slice(2, 10);
+    if (!openGooglePhotos(run)) return toast('Your browser blocked the Google Photos window. Allow pop-ups for this page, then try again.');
+    const current = () => googleRun.current === run;
+    googleRun.current = run; setGoogle(true);
+    try { const said = await fromGooglePhotos(run, () => !current(), (i, n) => current() && setSending({ done: i, total: n, bytes: i, size: n })); if (said && current()) toast(said); }
+    catch (e) { if (current()) toast(e.message); }
+    finally { if (current()) { googleRun.current = null; setGoogle(false); setSending(null); } load(); }
+  };
   const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const all = lib_?.groups ? lib_.groups.flatMap((g) => g.items) : [];
   const fits = { all: () => true, photo: (it) => it.kind === 'photo', video: (it) => it.kind === 'video', file: (it) => it.kind === 'file', ken: (it) => it.source === 'ken' };
@@ -291,15 +331,16 @@ function LibraryPage({ toast }) {
       <div class="library-title"><h1>Library</h1>${lib_ && !lib_.off && html`<p class="library-sub">${count} ${what} Ken can use · ${gbLabel(lib_.used)} of ${gbLabel(lib_.allowance)}</p>`}</div>
       ${count > 0 && html`<button class="clear-button narrow-only library-select" onClick=${() => { setSelecting(!selecting); setPicked(new Set()); }}>${selecting ? 'Done' : 'Select'}</button>`}
       <div class="library-add pop">
-        <button class="btn primary" disabled=${!!sending} onClick=${() => setAdding(!adding)}>${Glyph('plus')} Add</button>
-        ${adding && html`<div class="pop-menu" role="menu">
+        <button class="btn primary" disabled=${!!sending || google} onClick=${() => (lib_?.google ? setAdding(!adding) : chooser.current.click())}>${Glyph('plus')} Add</button>
+        ${adding && lib_?.google && html`<div class="pop-menu" role="menu">
           <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); chooser.current.click(); }}>From this computer</button>
-          <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); toast('Google Photos is coming next.'); }}>From Google Photos</button>
+          <button role="menuitem" class="pop-row" onClick=${() => { setAdding(false); fromGoogle(); }}>From Google Photos</button>
         </div>`}
       </div>
     </header>
     ${lib_ && lib_.used > 0 && html`<div class="library-meter" aria-hidden="true"><i style=${{ width: Math.max(1, Math.min(100, (lib_.used / lib_.allowance) * 100)) + '%' }}></i></div>`}
     ${sending && html`<div class="library-sending" role="status">Adding ${Math.min(sending.done + 1, sending.total)} of ${sending.total}… ${Math.round((sending.bytes / Math.max(1, sending.size)) * 100)}%<span>Keep this page open until it's done.</span><i style=${{ width: (sending.bytes / Math.max(1, sending.size)) * 100 + '%' }}></i></div>`}
+    ${google && !sending && html`<div class="library-sending" role="status">Pick photos and videos in the Google Photos window.<span>They’re added here when you’re done there. <button class="clear-button" onClick=${() => { googleRun.current = null; setGoogle(false); }}>Cancel</button></span></div>`}
     ${lib_ && !count && !sending && html`<div class="library-empty">
       <p><b>Put photos and videos here, and Ken can use them.</b></p>
       <p>Add a trip, a shoot, your best clips: drop them here or use Add. Then ask Ken: “Make a reel from my Lisbon clips.” They're kept in your own storage, not on Ken's computer, and Ken only has what you add.</p>
