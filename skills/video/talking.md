@@ -23,7 +23,7 @@ confusing.
 Take out:
 
 - **The warm-up**: "so I want to talk about", "hey guys", restating what they're about to say. Start at the first
-  line that actually says something; that's the hook, and the hook text (`design.md`) does the rest.
+  line that actually says something; that's the hook, and the hook text (`graphics.md`) does the rest.
 - **Retakes and false starts**: when they say something twice, keep the last good take.
 - **Tangents**: an aside that doesn't serve the point. Only when the reel still makes sense without it.
 - **Repeats**: when they make the same point twice, keep the better one.

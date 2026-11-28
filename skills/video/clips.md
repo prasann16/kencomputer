@@ -10,7 +10,7 @@ on screen. Then, in the background job:
    (`scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30`). Cut on the beat or the movement;
    each clip runs as long as it earns.
 2. Write `props.json` yourself: `{"video": "cut.mp4", "durationSeconds": <length>, "words": [], "cuts": [<each join,
-   in seconds>]}`, then the `hook` and the text as `design` graphics (`design.md`), in their style. Music or a sound:
+   in seconds>]}`, then the `hook` and the text as `design` graphics (`graphics.md`), in their style. Music or a sound:
    `sound.md`.
 3. Then check, render and send as for any video (SKILL.md).
 
@@ -37,6 +37,6 @@ When they only want it vertical and captioned:
 - Speaker in the middle: `ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih,scale=1080:1920" -c:a copy out.mp4`
 - Speaker off centre: take a frame (`ffmpeg -ss 5 -i in.mp4 -frames:v 1 f.jpg`), look where the face is, and set
   the crop's x: `crop=ih*9/16:ih:<x>:0`. Two people: pick per clip who's talking, or stack them (top/bottom).
-- Then captions in Remotion (`design.md`), never burned in with ffmpeg.
+- Then captions in Remotion (`graphics.md`), never burned in with ffmpeg.
 
 Big source files: say where the clips are and that videos stay 7 days.

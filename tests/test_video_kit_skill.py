@@ -763,8 +763,8 @@ def test_every_file_the_video_skill_names_exists():
     kit = SCRIPT.parent.parent
     import re
     named = set(re.findall(r"`([a-z-]+\.md)`", "".join(p.read_text() for p in kit.glob("*.md"))))
-    assert {"script-in-my-style.md", "talking.md", "clips.md", "design.md"} <= named
-    assert all((kit / f).exists() for f in named if f != "video-style.md")
+    assert {"script-in-my-style.md", "talking.md", "clips.md", "graphics.md"} <= named
+    assert all((kit / f).exists() for f in named - {"video-style.md", "plan.md"})  # those two are made per video
 
 
 def test_a_key_without_the_clone_permission_says_its_a_setting_not_the_plan(api, tmp_path, capsys):

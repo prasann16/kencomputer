@@ -17,7 +17,7 @@ and never change their original file. `<ken>` below is the exact command in your
 | Cutting: trims, joins, crops to 9:16, speed, converting | ffmpeg. Only cutting: never burn text or captions in with it (no `subtitles` or `drawtext` filter) |
 | Their words, timed | `transcribe_media` (free); ElevenLabs Scribe for Hindi, Hinglish, accents, noisy audio (`captions.md`) |
 | Cutting a talking video at the voice's real edges | `<ken> --video-cut <folder>` (`talking.md`) |
-| Anything drawn on screen: captions, the hook, titles, text, graphics, explainers | Remotion, through the kit: `props.json`, the toolbox, your own components (`design.md`) |
+| Anything drawn on screen: captions, the hook, titles, text, graphics, explainers | Remotion, through the kit: `props.json`, the toolbox, your own components (`graphics.md`) |
 | Looking at frames | `<ken> --video-stills <folder> <seconds...>` |
 | A link that plays the edit, nothing rendered | `<ken> --video-preview <folder>` |
 | The finished video | `<ken> --video-render <folder>` |
@@ -44,7 +44,7 @@ What kind of video it is decides the cut:
 
 - Someone talking to camera: `talking.md`.
 - Clips with no talking, or a long video into shorts: `clips.md`.
-- Design, text and captions for any of them: `design.md`.
+- Design, text and captions for any of them: `graphics.md`.
 - The opening, or why one flopped: `hooks.md`.
 
 ## Rules for every video

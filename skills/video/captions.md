@@ -14,11 +14,11 @@ Two engines. Pick by the language, not by habit.
 
 ## What they get
 
-- **"Add captions" on a reel:** animated word-by-word captions in Remotion (`design.md`). Give it the words (fix names and
+- **"Add captions" on a reel:** animated word-by-word captions in Remotion (`graphics.md`). Give it the words (fix names and
   brand names first). This is the default for Reels/Shorts.
 - **An SRT to upload** (YouTube, LinkedIn, X): send the `.srt`. Uploaded captions stay searchable and can be
   switched off by viewers.
-- **Captions on the video itself** are always Remotion (`design.md`), even for plain ones: never burn an SRT
+- **Captions on the video itself** are always Remotion (`graphics.md`), even for plain ones: never burn an SRT
   in with ffmpeg. Give it the words from `--eleven captions` or `transcribe_media`.
 - **Another language's subtitles:** translate the SRT yourself line by line, keeping every timestamp, or take the
   `.srt` a dub writes.
