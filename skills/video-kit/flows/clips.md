@@ -21,6 +21,6 @@ When they only want it vertical and captioned:
 - Speaker in the middle: `ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih,scale=1080:1920" -c:a copy out.mp4`
 - Speaker off centre: take a frame (`ffmpeg -ss 5 -i in.mp4 -frames:v 1 f.jpg`), look where the face is, and set
   the crop's x: `crop=ih*9/16:ih:<x>:0`. Two people: pick per clip who's talking, or stack them (top/bottom).
-- Then captions (`flows/captions.md`, burned in).
+- Then captions with the video skill (Remotion), never burned in with ffmpeg.
 
 Big source files: say where the clips are and that videos stay 7 days.
