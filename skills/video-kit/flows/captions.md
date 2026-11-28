@@ -18,9 +18,8 @@ Two engines. Pick by the language, not by habit.
   brand names first). This is the default for Reels/Shorts.
 - **An SRT to upload** (YouTube, LinkedIn, X): send the `.srt`. Uploaded captions stay searchable and can be
   switched off by viewers.
-- **Burned in, plain and quick:** `ffmpeg -i reel.mp4 -vf "subtitles=reel.srt:force_style='Fontsize=14,Bold=1,MarginV=90'" -c:a copy reel.captioned.mp4`
-  (MarginV keeps them above the app buttons). Burn the short-line SRT from `--eleven captions`; `transcribe_media`'s
-  SRT has sentence-long cues that cover half a vertical frame.
+- **Captions on the video itself** are always the video skill's (Remotion), even for plain ones: never burn an SRT
+  in with ffmpeg. Give it the words from `--eleven captions` or `transcribe_media`.
 - **Another language's subtitles:** translate the SRT yourself line by line, keeping every timestamp, or take the
   `.srt` a dub writes.
 

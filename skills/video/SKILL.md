@@ -12,6 +12,11 @@ changes later pick up where you left off. Never change their original file.
 
 `<ken>` below is the exact command in your instructions.
 
+**The tools, always.** Remotion (this kit: `--video-stills`, `--video-preview`, `--video-render`) draws everything
+on screen: captions, the hook, titles, graphics. ffmpeg only cuts: trims, joins, crops, converts. Never burn text in
+with ffmpeg (no `subtitles` or `drawtext` filter), even for "just a line of text". Every render runs as a background
+job, and they get the preview link, never a video file that's still being made.
+
 **Plan first, and wait for their yes.** Every new video gets a full look and a written plan before any editing,
 even when they told you exactly what to do: they see what they'll get, fix it in a sentence, and nothing is
 rendered on a guess. In the chat:
@@ -46,7 +51,21 @@ plan: do it.
 word of `source.words.json` once against the transcript and fix what Whisper got wrong: names, product names,
 numbers, web addresses ("kencomputer.dev", "24/7"), so the captions match what they say, word for word.
 
-## 0. Their style first
+## Clips with no talking
+
+Outfit clips, B-roll, a trip, a montage with text on screen: there are no words to cut by, so skip
+`--video-cut`. The plan (above) still comes first: the order, how long each clip runs, the hook text and every line
+on screen. Then, in the background job:
+
+1. Trim each clip and join them in order with ffmpeg into `cut.mp4`, vertical 1080x1920 at 30 fps
+   (`scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30`). Cut on the beat or the movement,
+   2 to 4 seconds a clip unless one earns more.
+2. Write `props.json` yourself: `{"video": "cut.mp4", "durationSeconds": <length>, "words": [], "cuts": [<each join,
+   in seconds>]}`, then the `hook` and the text as `design` graphics (step 3), in their style. Music or a sound:
+   the video kit's `flows/sound.md`.
+3. Then steps 4 and 5 as for any reel: stills, the preview link, render once they say it's right.
+
+
 
 Read your memory for their video style (a note like `memory/video-style.md`). If there isn't one yet, decide the
 look yourself for this video; don't ask about style first. If they send a reel they like, their colours or logo,
