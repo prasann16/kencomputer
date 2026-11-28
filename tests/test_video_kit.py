@@ -172,9 +172,10 @@ def test_any_google_font_by_name():
 
 def test_the_skill_leaves_the_design_to_ken():
     import re
-    skill = re.sub(r"\s+", " ", (v.SOURCE.parent.parent / "skills" / "video" / "SKILL.md").read_text())
-    assert "Every reel gets infographics" in skill and "your call" in skill
-    for gone in ("design.md", "Craft rules", "Restraint", "basics.tsx"):
+    folder = v.SOURCE.parent.parent / "skills" / "video"
+    skill = re.sub(r"\s+", " ", " ".join(p.read_text() for p in sorted(folder.glob("*.md"))))
+    assert "no house style" in skill and "your call" in skill
+    for gone in ("design.md", "Craft rules", "Restraint", "basics.tsx", "Every reel gets infographics"):
         assert gone not in skill, gone
 
 

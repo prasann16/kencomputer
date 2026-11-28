@@ -16,7 +16,7 @@ Every hook has three layers; write all three:
    take, a mistake, a question the viewer has.
 2. Write 5 hooks, each with its three layers, each a different type (result first, mistake, contrarian, question,
    story mid-action). Their words where possible; every claim true to the video.
-3. Recommend one. On their pick, the video skill re-cuts the opening (start on that line, hook text on screen).
+3. Recommend one. On their pick, re-cut the opening (start on that line, hook text on screen).
 
 ## "Find what works" (their account and their niche)
 

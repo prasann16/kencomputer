@@ -685,6 +685,23 @@ def test_skills_ken_ships_with_update_unless_made_their_own_or_removed(engine, t
     assert engine.list_skills() == []  # removed stays removed
 
 
+def test_a_skill_ken_stopped_shipping_goes_unless_made_their_own(engine, tmp_path):
+    from engine import prepare_skills
+    shipped = tmp_path / "shipped"
+    for name in ("video", "video-kit", "mine"):
+        (shipped / name).mkdir(parents=True)
+        (shipped / name / "SKILL.md").write_text(f"---\nname: {name}\n---\nx")
+    prepare_skills(engine.home, shipped)
+    (engine.home / "skills" / "mine" / ".from-ken").unlink()  # they made this one their own
+    (engine.home / "skills" / "theirs").mkdir()  # and added one of their own
+    (engine.home / "skills" / "theirs" / "SKILL.md").write_text("---\nname: theirs\n---\ny")
+    import shutil
+    shutil.rmtree(shipped / "video-kit")
+    shutil.rmtree(shipped / "mine")
+    prepare_skills(engine.home, shipped)
+    assert sorted(p.name for p in (engine.home / "skills").iterdir() if not p.name.startswith(".")) == ["mine", "theirs", "video"]
+
+
 async def test_a_new_message_while_ken_is_busy_is_answered_at_once(engine):
     class Busy(FakeSession):  # the chat, stuck on a long piece of work
         steered = []

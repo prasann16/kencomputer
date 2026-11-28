@@ -92,7 +92,7 @@ They said the wrong price or name. Only with their own cloned voice.
 2. TTS the corrected phrase with their voice. Use `--speed` to match their pace (0.9 to 1.1).
 3. Cut it in with ffmpeg: audio before + new phrase + audio after, a 20 ms crossfade at each join
    (`acrossfade=d=0.02`), the picture untouched. If the new phrase is longer, slow the picture a little over that
-   stretch or cover it with a graphic (video skill). Send both versions' seconds so they can compare.
+   stretch or cover it with a graphic (`graphics.md`). Send both versions' seconds so they can compare.
 
 ## Change a voice (speech to speech)
 

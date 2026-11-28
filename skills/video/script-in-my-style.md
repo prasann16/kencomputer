@@ -50,7 +50,7 @@ edits go in word for word.
 
 ## 5. Make the audio
 
-- **Voice**: their clone if they have one (memory). No clone yet and they want their voice: `flows/voice.md` (one
+- **Voice**: their clone if they have one (memory). No clone yet and they want their voice: `voice.md` (one
   consent question in chat, then clone from their past videos). Or a stock voice they pick (`eleven.py voices`).
 - `<ken> --eleven tts --voice <id> --text-file videos/x/script.en.txt --out videos/x/vo.en.mp3`
   (`eleven_multilingual_v2`, the default, keeps their voice in other languages too).
@@ -65,7 +65,7 @@ Devanagari reads best. Same voice, same command, one file per language (`vo.hi.m
 `transcribe_media` and its `language`.
 
 This is cheaper than a dub and every word is theirs to approve. To translate a finished video they already made,
-use `flows/dub.md` instead.
+use `dub.md` instead.
 
 ## 7. Over their footage, with captions
 
