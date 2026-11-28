@@ -22,11 +22,11 @@ if sys.argv[1:2] in (["--video-setup"], ["--video-cut"], ["--video-preview"], ["
     video_kit.main(sys.argv[1:], Path(os.environ.get("KEN_HOME", str(Path.home() / ".ken"))))
     raise SystemExit(0)
 
-if sys.argv[1:2] == ["--eleven"]:  # the video-kit skill's ElevenLabs helper, run by Ken's own Python (the app has no other)
+if sys.argv[1:2] == ["--eleven"]:  # the video skill's ElevenLabs helper, run by Ken's own Python (the app has no other)
     import runpy
     from pathlib import Path
 
-    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "video-kit" / "scripts" / "eleven.py"
+    _script = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "skills" / "video" / "scripts" / "eleven.py"
     sys.argv = [str(_script), *sys.argv[2:]]
     runpy.run_path(str(_script), run_name="__main__")
     raise SystemExit(0)

@@ -42,7 +42,7 @@ Meta skips (Gujarati, Malayalam, Punjabi, Odia and more), or when they want cont
 
 The dub already speaks in their voice. If they want to control the words (fix slang, keep English tech words in a
 Hindi dub), write the translated script with them, then make it with their cloned voice and TTS
-and lay it over the cut: `flows/script-in-my-style.md`, steps 5 to 7. Slower, but every word is theirs.
+and lay it over the cut: `script-in-my-style.md`, steps 5 to 7. Slower, but every word is theirs.
 
 ## Lip sync
 

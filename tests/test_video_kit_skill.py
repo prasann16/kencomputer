@@ -1,4 +1,4 @@
-"""The video kit skill's ElevenLabs helper (skills/video-kit/scripts/eleven.py), with every HTTP call faked."""
+"""The video kit skill's ElevenLabs helper (skills/video/scripts/eleven.py), with every HTTP call faked."""
 import importlib.util
 import io
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "skills" / "video-kit" / "scripts" / "eleven.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "skills" / "video" / "scripts" / "eleven.py"
 spec = importlib.util.spec_from_file_location("eleven", SCRIPT)
 eleven = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(eleven)
@@ -759,11 +759,12 @@ def test_over_refuses_mixed_hdr_clips_and_a_bed_with_several_clips(tmp_path, cap
     assert code == 1 and "--bed" in err
 
 
-def test_every_flow_in_the_skill_table_exists():
+def test_every_file_the_video_skill_names_exists():
     kit = SCRIPT.parent.parent
     import re
-    flows = set(re.findall(r"`(flows/[a-z-]+\.md)`", (kit / "SKILL.md").read_text()))
-    assert "flows/script-in-my-style.md" in flows and all((kit / f).exists() for f in flows)
+    named = set(re.findall(r"`([a-z-]+\.md)`", "".join(p.read_text() for p in kit.glob("*.md"))))
+    assert {"script-in-my-style.md", "talking.md", "clips.md", "design.md"} <= named
+    assert all((kit / f).exists() for f in named if f != "video-style.md")
 
 
 def test_a_key_without_the_clone_permission_says_its_a_setting_not_the_plan(api, tmp_path, capsys):

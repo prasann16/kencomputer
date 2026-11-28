@@ -409,6 +409,10 @@ def prepare_skills(home: Path, builtin: Path | None = None, others: dict[str, li
     skills, plugin = home / "skills", home / ".skills-plugin"
     try:
         skills.mkdir(parents=True, exist_ok=True)
+        shipped = {p.name for p in builtin.iterdir()} if builtin and builtin.is_dir() else set()
+        for old in skills.iterdir() if shipped else []:  # a skill Ken used to ship (merged into another): its copy goes
+            if old.is_dir() and old.name not in shipped and (old / ".from-ken").exists():
+                shutil.rmtree(old, ignore_errors=True)
         for src in sorted(builtin.iterdir()) if builtin and builtin.is_dir() else []:
             dest = skills / src.name
             removed = skills / f".removed-{src.name}"  # they removed it in Brain: it stays gone
